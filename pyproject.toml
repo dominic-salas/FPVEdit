@@ -1,0 +1,63 @@
+[project]
+name = "fpv-editor"
+version = "0.1.0.dev0"
+description = "One-command offline highlight editor for FPV freestyle recordings"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Dominic Salas" }]
+requires-python = ">=3.11"
+classifiers = [
+    "Environment :: Console",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Topic :: Multimedia :: Video :: Non-Linear Editor",
+]
+# Runtime dependencies are added per milestone, each with a stated reason (see PLAN.md).
+dependencies = []
+
+[project.scripts]
+fpv-editor = "fpv_editor.cli:main"
+
+[dependency-groups]
+dev = [
+    "mypy>=1.15",
+    "pytest>=8.3",
+    "ruff>=0.11",
+]
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/fpv_editor"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests", "scripts"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "SIM", "PTH", "RUF"]
+ignore = [
+    "S603", # subprocess calls are reviewed; argument lists only, never shell=True
+    "S607", # ffmpeg/ffprobe/git are resolved from PATH by design
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+files = ["src", "tests", "scripts"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["--strict-markers", "-m", "not model"]
+markers = [
+    "integration: runs real ffmpeg/ffprobe on generated fixtures (no downloads, no GPU)",
+    "model: runs real model inference; downloads weights; opt-in with -m model",
+]

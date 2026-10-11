@@ -1,0 +1,16 @@
+# Normalize line endings so Windows and Linux checkouts produce identical diffs.
+* text=auto eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Media and model files must never be committed (see scripts/check_staged.py),
+# but mark them binary in case one slips through a review.
+*.ts binary
+*.mp4 binary
+*.mov binary
+*.mkv binary
+*.safetensors binary
+*.onnx binary
+*.pt binary
+*.bin binary

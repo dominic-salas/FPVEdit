@@ -1,0 +1,10 @@
+#!/bin/sh
+# Opt-in: git config core.hooksPath .githooks
+# Blocks commits containing footage, renders, model weights, credentials or files over 5 MB.
+if command -v uv >/dev/null 2>&1; then
+    exec uv run --no-sync python scripts/check_staged.py
+elif command -v python3 >/dev/null 2>&1; then
+    exec python3 scripts/check_staged.py
+else
+    exec python scripts/check_staged.py
+fi
