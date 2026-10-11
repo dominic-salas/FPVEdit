@@ -1,0 +1,57 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Video, audio and generated output: never commit footage or renders.
+*.ts
+*.m2ts
+*.mts
+*.mp4
+*.m4v
+*.mov
+*.mkv
+*.avi
+*.webm
+*.wav
+*.mp3
+*.aac
+*_highlight*.mp4
+*.partial.mp4
+output/
+outputs/
+footage/
+work/
+
+# Model weights and caches
+*.safetensors
+*.onnx
+*.pt
+*.pth
+*.ckpt
+*.bin
+*.gguf
+models/
+.cache/
+
+# Secrets and local config
+.env
+.env.*
+*.pem
+*.key
+.claude/settings.local.json
+
+# OS / editor
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
