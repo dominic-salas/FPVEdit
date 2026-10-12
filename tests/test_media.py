@@ -59,17 +59,37 @@ def test_parse_probe_reads_rotation_and_swaps_display_aspect() -> None:
     assert info.display_aspect == pytest.approx(9 / 16)
 
 
-def test_audio_lead_from_stream_start_times() -> None:
+def test_stream_indexes_with_audio_first() -> None:
     data = {
         "format": {"start_time": "1.4"},
         "streams": [
-            {**PROBE["streams"][0], "index": 0, "start_time": "1.921"},  # type: ignore[index]
-            {**PROBE["streams"][1], "index": 1, "start_time": "1.400"},  # type: ignore[index]
+            {**PROBE["streams"][1], "index": 0},  # type: ignore[index]
+            {**PROBE["streams"][0], "index": 1},  # type: ignore[index]
         ],
     }
     info = media.parse_probe(Path("dvr.ts"), data)
-    assert info.audio_lead == pytest.approx(0.521)
-    assert (info.video.index, info.audio.index) == (0, 1)  # type: ignore[union-attr]
+    assert (info.video.index, info.audio.index) == (1, 0)  # type: ignore[union-attr]
+
+
+@pytest.mark.parametrize(
+    ("stream", "rate", "colour_range"),
+    [
+        ({"r_frame_rate": "60/1", "avg_frame_rate": "1526940000/25448999"}, Fraction(60), None),
+        ({"r_frame_rate": "90000/1", "avg_frame_rate": "30000/1001"}, Fraction(30000, 1001), None),
+        ({"r_frame_rate": "0/0", "avg_frame_rate": "1526940000/25448999"}, Fraction(60), None),
+        ({"r_frame_rate": "0/0", "avg_frame_rate": "27182/907"}, Fraction(30000, 1001), None),
+        ({"r_frame_rate": "0/0", "pix_fmt": "yuvj420p"}, Fraction(60000, 1001), "pc"),
+        ({"r_frame_rate": "0/0", "avg_frame_rate": "0/0"}, None, None),
+        ({"r_frame_rate": "25/1", "color_range": "tv"}, Fraction(25), "tv"),
+    ],
+)
+def test_nominal_rate_and_colour_range(
+    stream: dict[str, str], rate: Fraction | None, colour_range: str | None
+) -> None:
+    data = {"format": {}, "streams": [{**PROBE["streams"][0], **stream}]}  # type: ignore[index]
+    info = media.parse_probe(Path("dvr.ts"), data)
+    assert info.video.nominal_rate == rate
+    assert info.video.color_range == colour_range
 
 
 @pytest.mark.parametrize(
@@ -87,6 +107,8 @@ def test_parse_ratio(value: str, expected: Fraction | None) -> None:
         ("ffmpeg version 9.0.2-full_build-www.gyan.dev Copyright", 9),
         ("ffmpeg version n7.1 Copyright", 7),
         ("ffmpeg version N-118000-g1234 Copyright", None),
+        ("ffmpeg version N-112000-gabc\nlibavfilter     9. 12.100 /  9. 12.100", 6),
+        ("ffmpeg version 2026-10-01-git-abc\nlibavfilter    12.  1.102 / 12.  1.102", 9),
     ],
 )
 def test_parse_ffmpeg_major(text: str, major: int | None) -> None:
@@ -118,3 +140,12 @@ def test_probe_rejects_missing_file(tmp_path: Path) -> None:
     tools = media.Tools("ffmpeg", "ffprobe", 6)
     with pytest.raises(InvalidInputError, match="not found"):
         media.probe(tools, tmp_path / "missing.ts")
+
+
+def test_variable_frame_rate_is_detected() -> None:
+    steady = media.parse_probe(Path("a.ts"), PROBE).video
+    assert not media.is_variable_rate(steady)
+    phone = {"codec_type": "video", "codec_name": "h264", "width": 1920, "height": 1080}
+    phone |= {"r_frame_rate": "30/1", "avg_frame_rate": "2700/119"}
+    data = {"format": {}, "streams": [phone]}
+    assert media.is_variable_rate(media.parse_probe(Path("phone.mp4"), data).video)

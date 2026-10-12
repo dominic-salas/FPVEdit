@@ -53,34 +53,37 @@ def make_flight(
     width: int = 320,
     height: int = 180,
     fps: int = 30,
-    audio_lead: float = 0.0,
-    gated_audio: bool = False,
+    full_range: bool = False,
+    pillarbox: bool = False,
+    osd: bool = False,
 ) -> Path:
-    """Write an H.264 (+ AAC) MPEG-TS or MP4 file, chosen by ``path``'s suffix.
+    """Write an H.264 (+ AAC tone) MPEG-TS or MP4 file, chosen by ``path``'s suffix.
 
-    ``audio_lead`` starts the audio that many seconds before the first video frame (as
-    in many DVR recordings) while keeping sound and picture in sync. With
-    ``gated_audio`` the tone only plays during ``active`` spans, so sync can be checked.
+    ``full_range`` writes full-range ("yuvj") video, as analog DVR goggles record it.
+    ``pillarbox`` shrinks the picture to 4:3 between black bars, and ``osd`` burns in
+    static white-on-black boxes like a flight controller's on-screen display.
     """
     args = ["ffmpeg", "-nostdin", "-hide_banner", "-v", "error", "-y"]
     for span in spans:
         args += ["-f", "lavfi", "-i", _source(span.kind, span.seconds, width, height, fps)]
     total = sum(span.seconds for span in spans)
     if audio:
-        gate = "1"
-        if gated_audio:
-            windows = [
-                f"between(t-{audio_lead},{start},{end})"
-                for kind, start, end in ground_truth(spans)
-                if kind == "active"
-            ]
-            gate = "(" + "+".join(windows or ["0"]) + ")"
-        source = f"aevalsrc=exprs='0.5*sin(2*PI*440*t)*{gate}':s=48000:d={total + audio_lead}"
-        args += ["-f", "lavfi", "-i", source]
+        args += ["-f", "lavfi", "-i", f"sine=frequency=440:sample_rate=48000:d={total}"]
+    overlay = ""
+    if osd:
+        boxes = [(0.05, 0.05), (0.75, 0.05), (0.05, 0.85), (0.70, 0.85), (0.40, 0.08)]
+        overlay = "".join(
+            f"drawbox=x=iw*{x}:y=ih*{y}:w=iw*0.18:h=ih*0.07:color=black:t=fill,"
+            f"drawbox=x=iw*{x}+2:y=ih*{y}+2:w=iw*0.18-4:h=ih*0.07-4:color=white:t=fill,"
+            for x, y in boxes
+        )
+    if pillarbox:
+        overlay += f"scale={height * 4 // 3}:{height},pad={width}:{height}:(ow-iw)/2:0:black,"
+    pixel_format = "scale=out_range=pc,format=yuvj420p" if full_range else "format=yuv420p"
     inputs = "".join(f"[{index}:v]" for index in range(len(spans)))
     args += [
         "-filter_complex",
-        f"{inputs}concat=n={len(spans)}:v=1:a=0,format=yuv420p,setpts=PTS+{audio_lead}/TB[v]",
+        f"{inputs}concat=n={len(spans)}:v=1:a=0,{overlay}{pixel_format}[v]",
         "-map",
         "[v]",
     ]

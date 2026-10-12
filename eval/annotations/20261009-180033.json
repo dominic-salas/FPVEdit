@@ -1,24 +1,119 @@
 {
-  "flight": "20261009-180033",
-  "source_file": "20261009-180033.mp4",
-  "duration_s": 259.32,
-  "annotator": "Dom",
-  "annotated_on": "2026-10-11",
-  "complete": false,
-  "notes": "Times are m:ss from the start of the recording, at 1 s resolution. 'complete: false' means unlabelled footage is not necessarily boring.",
-  "events": [
-    {"start": "0:24", "end": "0:36", "label": "weave", "keep": "include", "note": "weaving through an obstacle, disarming onto a playground slide"},
-    {"start": "0:37", "end": "0:51", "label": "weave", "keep": "include", "continuous": true, "note": "weaving and flip trick session, flow"},
-    {"start": "0:52", "end": "1:00", "label": "flip", "keep": "include", "note": "2 consecutive flip tricks"},
-    {"start": "1:01", "end": "1:05", "label": "failed", "keep": "exclude", "note": "FAILED flip trick, tapped the ground; should NOT be in the edited video"},
-    {"start": "1:08", "end": "1:14", "label": "failed", "keep": "exclude", "note": "FAILED dive after a successful weave through an obstacle; drop the successful part too if it would look cut short"},
-    {"start": "1:19", "end": "1:32", "label": "weave", "keep": "include", "continuous": true, "note": "weave through an obstacle, flip through an obstacle, another weave"},
-    {"start": "1:49", "end": "1:57", "label": "spin", "keep": "include", "note": "trippy spin"},
-    {"start": "2:08", "end": "2:17", "label": "spin", "keep": "include", "note": "trippy spin"},
-    {"start": "2:26", "end": "2:33", "label": "spin", "keep": "optional", "note": "trippy spin but kinda sketchy"},
-    {"start": "2:38", "end": "2:47", "label": "weave", "keep": "include", "continuous": true, "note": "weaving through an obstacle consecutively and flip trick, flow"},
-    {"start": "3:08", "end": "3:19", "label": "spin", "keep": "include", "note": "trippy spin"},
-    {"start": "3:29", "end": "3:37", "label": "weave", "keep": "include", "uncertain": true, "note": "obstacle weaving above and through an object; Dom wrote '3:29 to 3:27', end time guessed from the footage, to confirm"},
-    {"start": "3:58", "end": "4:07", "label": "failed", "keep": "exclude", "note": "FAILED disarm into slide, didn't arm fast enough and the quad needed manual help"}
-  ]
+ "flight": "20261009-180033",
+ "source_file": "20261009-180033.mp4",
+ "duration_s": 259.32,
+ "annotator": "Dom",
+ "annotated_on": "2026-10-11",
+ "complete": false,
+ "notes": "Times are m:ss from the start of the recording, at 1 s resolution. 'complete: false' means unlabelled footage is not necessarily boring. 2026-10-12: added two unlabelled crashes (Dom: crashes should be cut), extended the 3:58 failure to the end, and set the uncertain 3:29 weave to 'ignore'.",
+ "events": [
+  {
+   "start": "0:24",
+   "end": "0:36",
+   "label": "weave",
+   "keep": "include",
+   "note": "weaving through an obstacle, disarming onto a playground slide"
+  },
+  {
+   "start": "0:37",
+   "end": "0:51",
+   "label": "weave",
+   "keep": "include",
+   "continuous": true,
+   "note": "weaving and flip trick session, flow"
+  },
+  {
+   "start": "0:52",
+   "end": "1:00",
+   "label": "flip",
+   "keep": "include",
+   "note": "2 consecutive flip tricks"
+  },
+  {
+   "start": "1:01",
+   "end": "1:05",
+   "label": "failed",
+   "keep": "exclude",
+   "note": "FAILED flip trick, tapped the ground; should NOT be in the edited video"
+  },
+  {
+   "start": "1:08",
+   "end": "1:14",
+   "label": "failed",
+   "keep": "exclude",
+   "note": "FAILED dive after a successful weave through an obstacle; drop the successful part too if it would look cut short"
+  },
+  {
+   "start": "1:14",
+   "end": "1:19.25",
+   "label": "failed",
+   "keep": "exclude",
+   "note": "crash with disarm (second dome attempt); not labelled by Dom, found on screen; Dom 2026-10-12: crashes should be cut"
+  },
+  {
+   "start": "1:19",
+   "end": "1:32",
+   "label": "weave",
+   "keep": "include",
+   "continuous": true,
+   "note": "weave through an obstacle, flip through an obstacle, another weave"
+  },
+  {
+   "start": "1:49",
+   "end": "1:57",
+   "label": "spin",
+   "keep": "include",
+   "note": "trippy spin"
+  },
+  {
+   "start": "2:08",
+   "end": "2:17",
+   "label": "spin",
+   "keep": "include",
+   "note": "trippy spin"
+  },
+  {
+   "start": "2:26",
+   "end": "2:33",
+   "label": "spin",
+   "keep": "optional",
+   "note": "trippy spin but kinda sketchy"
+  },
+  {
+   "start": "2:38",
+   "end": "2:47",
+   "label": "weave",
+   "keep": "include",
+   "continuous": true,
+   "note": "weaving through an obstacle consecutively and flip trick, flow"
+  },
+  {
+   "start": "2:51",
+   "end": "3:00",
+   "label": "failed",
+   "keep": "exclude",
+   "note": "crash into picnic bench, turtle mode, re-arm; not labelled by Dom, found on screen; Dom 2026-10-12: crashes should be cut"
+  },
+  {
+   "start": "3:08",
+   "end": "3:19",
+   "label": "spin",
+   "keep": "include",
+   "note": "trippy spin"
+  },
+  {
+   "start": "3:29",
+   "end": "3:37",
+   "label": "weave",
+   "keep": "ignore",
+   "note": "Dom wrote '3:29 to 3:27'; unsure (maybe 3:29-3:37, footage suggests 3:24-3:30). Left out of scoring per Dom."
+  },
+  {
+   "start": "3:58",
+   "end": "4:19.3",
+   "label": "failed",
+   "keep": "exclude",
+   "note": "FAILED disarm into slide, didn't arm fast enough and the quad needed manual help; extended to end of file (re-arm cycles, crash into mound, static), seen on screen 2026-10-11"
+  }
+ ]
 }

@@ -4,16 +4,23 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess
+from fractions import Fraction
 from pathlib import Path
 
-import numpy as np
 import pytest
 
 from fpv_editor.cli import PipelineConfig, main, run
-from fpv_editor.errors import InvalidInputError, NoFlightContentError, OutputExistsError
+from fpv_editor.errors import (
+    InvalidInputError,
+    NoFlightContentError,
+    OutputExistsError,
+    ValidationError,
+)
 from fpv_editor.media import find_tools, probe
-from fpv_editor.render import EncodeConfig
+from fpv_editor.render import EncodeConfig, validate_output
+from fpv_editor.sampling import SamplingConfig
 from media_fixtures import Span, ffmpeg_available, ground_truth, make_flight
 
 pytestmark = [
@@ -64,7 +71,8 @@ def test_end_to_end_keeps_flying_and_cuts_idle(flight: Path) -> None:
     assert idle_kept / idle_total <= 0.2
 
     info = probe(find_tools(), result.output)
-    assert info.video.codec == "h264" and info.audio is not None and info.audio.codec == "aac"
+    assert info.video.codec == "h264"
+    assert info.audio is None, "goggle audio is never carried into the edit"
     assert (info.video.width, info.video.height) == (320, 180)
     assert info.duration == pytest.approx(result.edited_duration, abs=0.5)
 
@@ -143,36 +151,40 @@ def test_garbage_input_fails_cleanly(tmp_path: Path, capsys: pytest.CaptureFixtu
     assert sorted(p.name for p in tmp_path.iterdir()) == ["notes.ts"]
 
 
-def audio_envelope(path: Path, rate: int = 8000) -> np.ndarray:
-    """RMS of the first audio stream in 50 ms windows."""
-    raw = subprocess.run(
-        [
-            *("ffmpeg", "-v", "error", "-i", str(path), "-map", "0:a:0"),
-            *("-ac", "1", "-ar", str(rate), "-f", "f32le", "-"),
-        ],
-        check=True,
-        capture_output=True,
-    ).stdout
-    samples = np.frombuffer(raw, dtype=np.float32)
-    window = rate // 20
-    usable = len(samples) // window * window
-    return np.sqrt((samples[:usable].reshape(-1, window) ** 2).mean(axis=1))
-
-
-def test_audio_starting_before_video_stays_in_sync(tmp_path: Path) -> None:
-    # DVR-style file: audio starts 0.5 s before the first video frame. The tone plays
-    # exactly while the picture is "flying", so a timeline mismatch moves the tone.
-    spans = [Span("idle", 8), Span("active", 8), Span("idle", 8)]
-    source = make_flight(tmp_path / "dvr.ts", spans, audio_lead=0.5, gated_audio=True)
-    info = probe(find_tools(), source)
-    assert info.audio_lead == pytest.approx(0.5, abs=0.05)
+def test_full_range_60fps_dvr_footage_renders_limited_range_at_60fps(tmp_path: Path) -> None:
+    # Analog goggles record full-range ("yuvj") 60 fps MPEG-TS. FFmpeg 7's concat
+    # filter used to write 25 fps, and the range tag differed between versions.
+    spans = [
+        Span("idle", 4),
+        Span("active", 4),
+        Span("idle", 8),
+        Span("active", 4),
+        Span("idle", 3),
+    ]
+    source = make_flight(tmp_path / "dvr.ts", spans, fps=60, full_range=True)
+    tools = find_tools()
+    assert probe(tools, source).video.color_range == "pc"
 
     result = run(source, config=FAST)
-    first = result.selection.intervals[0]
-    expected_onset = 8.0 - first.start  # active span starts at 8 s of video
-    envelope = audio_envelope(result.output)
-    onset = float(np.argmax(envelope > 0.1)) * 0.05
-    assert onset == pytest.approx(expected_onset, abs=0.1)
+    info = probe(tools, result.output, count_frames=True)
+    assert info.video.nominal_rate == 60
+    assert (info.video.pix_fmt, info.video.color_range) == ("yuv420p", "tv")
+    assert info.video.frame_count == round(result.edited_duration * 60)
+    assert len(result.selection.intervals) >= 2
+
+
+def test_validation_rejects_a_wrong_frame_rate(tmp_path: Path) -> None:
+    clip = tmp_path / "clip.mp4"
+    subprocess.run(
+        [
+            *("ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc2=s=160x90:r=25:d=2"),
+            *("-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p"),
+            *("-color_range", "tv", str(clip)),
+        ],
+        check=True,
+    )
+    with pytest.raises(ValidationError, match="frame rate"):
+        validate_output(find_tools(), clip, expected_duration=2.0, rate=Fraction(60))
 
 
 def test_rotated_odd_sized_input_renders(tmp_path: Path) -> None:
@@ -196,3 +208,110 @@ def test_rotated_odd_sized_input_renders(tmp_path: Path) -> None:
     result = run(rotated, config=FAST)
     info = probe(find_tools(), result.output)
     assert (info.video.width, info.video.height) == (180, 320)
+
+
+def test_pillarboxed_osd_flight_is_analysed_inside_the_picture(tmp_path: Path) -> None:
+    source = make_flight(
+        tmp_path / "goggles.ts", FLIGHT, width=320, height=180, pillarbox=True, osd=True
+    )
+    result = run(source, analyze_only=True, config=FAST)
+    assert result.output == tmp_path / "goggles.analysis.json"
+    assert not (tmp_path / "goggles_highlight.mp4").exists(), "analyze-only writes no video"
+    document = json.loads(result.output.read_text())
+    x, y, width, height = document["picture"]["active_area"]
+    assert abs(x - 40) <= 3 and abs(width - 240) <= 6 and (y, height) == (0, 180)
+    assert 0.02 < document["picture"]["overlay_fraction"] < 0.3
+
+    kept = [(i.start, i.end) for i in result.selection.intervals]
+    for kind, start, end in ground_truth(FLIGHT):
+        if kind == "active":
+            assert overlap(kept, start, end) / (end - start) >= 0.9
+
+
+def test_cache_reuses_measurements_and_gives_the_same_edit(flight: Path, tmp_path: Path) -> None:
+    cache = tmp_path / "cache"
+    first = run(flight, analyze_only=True, cache_dir=cache, config=FAST)
+    assert not first.from_cache
+    assert len(list(cache.glob("*.features.npz"))) == 1
+    second = run(flight, analyze_only=True, force=True, cache_dir=cache, config=FAST)
+    assert second.from_cache
+    assert second.selection == first.selection
+
+    # A changed recording (new modification time) is measured again.
+    os.utime(flight, ns=(flight.stat().st_atime_ns, flight.stat().st_mtime_ns + 10**9))
+    assert not run(flight, analyze_only=True, force=True, cache_dir=cache, config=FAST).from_cache
+
+    # A different measurement setting must not reuse the old file.
+    other = PipelineConfig(
+        sampling=SamplingConfig(fps=4.0), encode=EncodeConfig(preset="ultrafast")
+    )
+    run(flight, analyze_only=True, force=True, cache_dir=cache, config=other)
+    assert len(list(cache.glob("*.features.npz"))) == 3
+
+
+def test_analyze_only_refuses_to_replace_an_analysis_without_force(flight: Path) -> None:
+    run(flight, analyze_only=True, config=FAST)
+    with pytest.raises(OutputExistsError):
+        run(flight, analyze_only=True, config=FAST)
+
+
+def test_damaged_cache_file_is_measured_again(flight: Path, tmp_path: Path) -> None:
+    cache = tmp_path / "cache"
+    run(flight, analyze_only=True, cache_dir=cache, config=FAST)
+    (cached,) = cache.glob("*.features.npz")
+    cached.write_bytes(cached.read_bytes()[:100])  # truncated, e.g. by a full disk
+    result = run(flight, analyze_only=True, force=True, cache_dir=cache, config=FAST)
+    assert not result.from_cache
+    assert run(flight, analyze_only=True, force=True, cache_dir=cache, config=FAST).from_cache
+
+
+def test_unwritable_cache_only_warns(flight: Path, tmp_path: Path) -> None:
+    blocker = tmp_path / "not-a-folder"
+    blocker.write_text("x")
+    result = run(flight, analyze_only=True, cache_dir=blocker, config=FAST)
+    assert any("measurement cache" in warning for warning in result.warnings)
+
+
+def test_analyze_only_name_does_not_depend_on_existing_videos(flight: Path) -> None:
+    flight.with_name("flight_highlight.mp4").write_bytes(b"earlier edit")
+    result = run(flight, analyze_only=True, config=FAST)
+    assert result.output == flight.with_name("flight.analysis.json")
+    assert flight.with_name("flight_highlight.mp4").read_bytes() == b"earlier edit"
+
+
+LIMITED = ("-vf", "scale=out_range=tv,format=yuv420p", "-color_range", "tv", "-colorspace", "bt709")
+
+
+def _encode(path: Path, *extra: str) -> Path:
+    subprocess.run(
+        [
+            *("ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc2=s=160x90:r=60:d=2"),
+            *extra,
+            *("-c:v", "libx264", "-preset", "ultrafast", str(path)),
+        ],
+        check=True,
+    )
+    return path
+
+
+def test_validation_rejects_full_range_output(tmp_path: Path) -> None:
+    clip = _encode(tmp_path / "full.mp4", "-vf", "scale=out_range=pc,format=yuvj420p")
+    with pytest.raises(ValidationError, match="range"):
+        validate_output(find_tools(), clip, expected_duration=2.0, rate=Fraction(60))
+
+
+def test_validation_rejects_an_audio_track(tmp_path: Path) -> None:
+    clip = _encode(
+        tmp_path / "sound.mp4",
+        *("-f", "lavfi", "-i", "sine=d=2", *LIMITED, "-c:a", "aac"),
+    )
+    with pytest.raises(ValidationError, match="audio"):
+        validate_output(find_tools(), clip, expected_duration=2.0, rate=Fraction(60))
+
+
+def test_validation_rejects_a_wrong_frame_count(tmp_path: Path) -> None:
+    clip = _encode(tmp_path / "ok.mp4", *LIMITED)
+    tools = find_tools()
+    validate_output(tools, clip, expected_duration=2.0, rate=Fraction(60), expected_frames=120)
+    with pytest.raises(ValidationError, match="frames"):
+        validate_output(tools, clip, expected_duration=2.0, rate=Fraction(60), expected_frames=200)

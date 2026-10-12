@@ -34,6 +34,21 @@ check_staged = _load()
         ".env",
         "config/.env.local",
         "deploy.pem",
+        "res/testdata1/notes.txt",
+        "work/proxies/list.txt",
+        "logs/LOG00012.BFL",
+        "btfl_001.bbl",
+        "logs/btfl_all.csv",
+        "flight.SRT",
+        "DJIG0001.osd",
+        "track.gpx",
+        "flight_highlight.analysis.json",
+        "cache/flight.abc.features.npz",
+        "edit.drp",
+        "logs/LOG00001.01.csv",
+        "logs/LOG00001.01.event",
+        "scripts/work/tmp.txt",
+        "eval/frames/f1.png",
     ],
 )
 def test_prohibited_paths_are_refused(path: str) -> None:
@@ -42,7 +57,15 @@ def test_prohibited_paths_are_refused(path: str) -> None:
 
 @pytest.mark.parametrize(
     "path",
-    ["src/fpv_editor/cli.py", "README.md", "tests/fixtures/annotations.json", "docs/env.md"],
+    [
+        "src/fpv_editor/cli.py",
+        "README.md",
+        "tests/fixtures/annotations.json",
+        "docs/env.md",
+        "eval/annotations/20261010-203859.json",
+        "scripts/match_edit.py",
+        "docs/research.md",
+    ],
 )
 def test_ordinary_source_files_are_allowed(path: str) -> None:
     assert check_staged.classify(path, size=10) is None

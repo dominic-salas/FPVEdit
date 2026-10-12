@@ -2,6 +2,7 @@
 
 Usage:
     python scripts/evaluate.py ANNOTATION.json ANALYSIS.json [ANNOTATION.json ANALYSIS.json ...]
+    python scripts/evaluate.py --random 1000 ANNOTATION.json ANALYSIS.json ...
 
 ANALYSIS.json is the ``--keep-intermediates`` file written by fpv-editor; only its
 ``selection.intervals`` list is used. Annotation times are m:ss strings (1 s resolution) or
@@ -10,18 +11,34 @@ seconds, so event edges get ``EDGE_TOLERANCE_S`` of slack before a cut counts as
 Two kinds of annotation file exist. Hand-labelled moments (``keep``: include, optional,
 exclude) are scored per event. A ``"kind": "reference_edit"`` file lists the stretches a human
 editor used (include) and left out (editor_cut); it is scored as time overlap with that edit.
+
+With ``--random N``, each edit is also compared with N random edits that keep exactly as
+much footage in the same number and lengths of segments, placed at random. A score is
+only evidence of a good edit if it beats most of those: keeping more footage raises
+recall on its own.
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import json
+import random
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 EDGE_TOLERANCE_S = 0.5
 HIT_COVERAGE = 0.8
+# Metrics where a lower value is better; retention and segment count are not compared.
+LOWER_IS_BETTER = {
+    "exclude_time_kept",
+    "continuous_broken",
+    "unlabelled_kept_share",
+    "median_cut_error_s",
+}
+NOT_COMPARED = {"retention", "segments"}
 
 
 @dataclass(frozen=True)
@@ -94,7 +111,11 @@ def evaluate_reference_edit(
     flight: str, duration: float, events: list[Event], intervals: list[tuple[float, float]]
 ) -> dict[str, float]:
     reference = [(e.start, e.end) for e in events if e.keep == "include"]
-    kept = sum(b - a for a, b in intervals)
+    # Unmatched stretches (keep "ignore") are neither kept nor cut by the editor as far as
+    # we know, so time the edit keeps there is not counted at all.
+    ignored = sum(overlap(intervals, e.start, e.end) for e in events if e.keep == "ignore")
+    total_kept = sum(b - a for a, b in intervals)
+    kept = total_kept - ignored
     ref_total = sum(b - a for a, b in reference)
     common = sum(overlap(intervals, a, b) for a, b in reference)
     union = kept + ref_total - common
@@ -102,8 +123,8 @@ def evaluate_reference_edit(
     ref_edges = [edge for a, b in reference for edge in (a, b) if 0.5 < edge < duration - 0.5]
     errors = [min((abs(edge - other) for other in edges), default=duration) for edge in ref_edges]
     print(
-        f"\n== {flight} (reference edit): kept {fmt(kept)} of {fmt(duration)} "
-        f"({kept / duration:.0%}) in {len(intervals)} segments; editor kept {fmt(ref_total)} "
+        f"\n== {flight} (reference edit): kept {fmt(total_kept)} of {fmt(duration)} "
+        f"({total_kept / duration:.0%}) in {len(intervals)} segments; editor kept {fmt(ref_total)} "
         f"({ref_total / duration:.0%}) in {len(reference)} segments"
     )
     for a, b in reference:
@@ -112,7 +133,7 @@ def evaluate_reference_edit(
             f"{cuts_inside(intervals, a, b)} cut(s) inside"
         )
     summary = {
-        "retention": kept / duration,
+        "retention": total_kept / duration,
         "precision": common / kept if kept else float("nan"),
         "recall": common / ref_total if ref_total else float("nan"),
         "iou": common / union if union else float("nan"),
@@ -124,8 +145,11 @@ def evaluate_reference_edit(
 
 
 def evaluate(annotation: Path, analysis: Path) -> dict[str, float]:
+    return evaluate_intervals(annotation, load_intervals(analysis))
+
+
+def evaluate_intervals(annotation: Path, intervals: list[tuple[float, float]]) -> dict[str, float]:
     flight, duration, events = load_events(annotation)
-    intervals = load_intervals(analysis)
     if json.loads(annotation.read_text(encoding="utf-8")).get("kind") == "reference_edit":
         return evaluate_reference_edit(flight, duration, events, intervals)
     kept = sum(b - a for a, b in intervals)
@@ -180,14 +204,70 @@ def evaluate(annotation: Path, analysis: Path) -> dict[str, float]:
     return summary
 
 
+def random_edit(
+    intervals: list[tuple[float, float]], duration: float, rng: random.Random
+) -> list[tuple[float, float]]:
+    """Same segment lengths in a random order, with the gaps between them at random."""
+    lengths = [b - a for a, b in intervals]
+    rng.shuffle(lengths)
+    free = max(0.0, duration - sum(lengths))
+    cuts = sorted(rng.uniform(0.0, free) for _ in lengths)
+    result = []
+    used = 0.0
+    for cut, length in zip(cuts, lengths, strict=True):
+        start = cut + used
+        result.append((start, start + length))
+        used += length
+    return result
+
+
+def compare_with_random(
+    annotation: Path, intervals: list[tuple[float, float]], trials: int, seed: int
+) -> dict[str, float]:
+    """Share of random same-length edits each metric beats (ties count half)."""
+    actual = evaluate_intervals(annotation, intervals)
+    _, duration, _ = load_events(annotation)
+    rng = random.Random(seed)  # noqa: S311 - reproducible baseline, not security
+    samples: dict[str, list[float]] = {key: [] for key in actual if key not in NOT_COMPARED}
+    with contextlib.redirect_stdout(io.StringIO()):
+        for _ in range(trials):
+            scores = evaluate_intervals(annotation, random_edit(intervals, duration, rng))
+            for key, values in samples.items():
+                values.append(scores[key])
+    beaten: dict[str, float] = {}
+    print(f"  vs {trials} random edits of the same length (share beaten, random mean):")
+    for key, values in samples.items():
+        mine = actual[key]
+        if mine != mine:  # NaN: metric undefined for this file
+            continue
+        sign = -1.0 if key in LOWER_IS_BETTER else 1.0
+        defined = [v for v in values if v == v]  # NaN: metric undefined for that trial
+        if not defined:
+            continue
+        wins = sum(sign * mine > sign * v for v in defined)
+        ties = sum(mine == v for v in defined)
+        share = (wins + 0.5 * ties) / len(defined)
+        mean = sum(defined) / len(defined)
+        beaten[key] = share
+        print(f"    {key:<22} {mine:6.2f}  beats {share:4.0%}  (random mean {mean:.2f})")
+    return beaten
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("pairs", nargs="+", type=Path, help="ANNOTATION ANALYSIS pairs")
+    parser.add_argument(
+        "--random", type=int, default=0, metavar="N", help="compare with N random edits"
+    )
+    parser.add_argument("--seed", type=int, default=0, help="seed for the random edits")
     args = parser.parse_args(argv)
     if len(args.pairs) % 2:
         parser.error("pass annotation and analysis files in pairs")
     for annotation, analysis in zip(args.pairs[::2], args.pairs[1::2], strict=True):
-        evaluate(annotation, analysis)
+        if args.random > 0:
+            compare_with_random(annotation, load_intervals(analysis), args.random, args.seed)
+        else:
+            evaluate(annotation, analysis)
     return 0
 
 

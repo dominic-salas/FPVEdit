@@ -1,4 +1,4 @@
-"""Refuse to commit footage, renders, model weights, secrets or oversized files.
+"""Refuse to commit footage, flight logs, analysis output, weights, secrets or big files.
 
 Usage:
     python scripts/check_staged.py            # check files staged for commit
@@ -11,6 +11,7 @@ Exits 1 and lists every offending path when something is prohibited.
 from __future__ import annotations
 
 import argparse
+import re
 import subprocess
 import sys
 from collections.abc import Iterable, Sequence
@@ -30,7 +31,22 @@ PROHIBITED_SUFFIXES: dict[str, str] = {
         "model weights",
     ),
     **dict.fromkeys((".pem", ".key", ".p12", ".pfx"), "credential"),
+    # DVR sidecars and flight-controller logs can hold GPS positions and pilot data.
+    **dict.fromkeys((".srt", ".osd"), "DVR sidecar"),
+    **dict.fromkeys((".bbl", ".bfl", ".bbs", ".event"), "blackbox flight log"),
+    **dict.fromkeys((".gpx", ".kml"), "GPS track"),
+    **dict.fromkeys((".drp", ".drt"), "editor project"),
+    **dict.fromkeys((".npy", ".npz"), "analysis output"),
 }
+
+# Folders refused at the top of the repository / at any depth (mirrors .gitignore).
+TOP_LEVEL_DIRECTORIES: dict[str, str] = {"res": "local test footage folder"}
+ANY_LEVEL_DIRECTORIES: dict[str, str] = {
+    **dict.fromkeys(("work", "output", "outputs", "footage", "frames"), "local working folder"),
+    ".cache": "cache folder",
+}
+# blackbox_decode writes LOG00001.01.csv, LOG00001.01.gps.csv, ... next to the log.
+BLACKBOX_CSV = re.compile(r"^(btfl_.*|log\d+.*)\.csv$")
 
 PROHIBITED_NAMES: dict[str, str] = {
     ".env": "credential",
@@ -53,6 +69,16 @@ def classify(path: str, size: int | None) -> str | None:
         return PROHIBITED_NAMES[name]
     if name.startswith(".env."):
         return "credential"
+    if name.endswith(".analysis.json"):
+        return "analysis output"
+    if BLACKBOX_CSV.match(name):
+        return "blackbox flight log"
+    folders = [part.lower() for part in pure.parts[:-1]]
+    if folders and folders[0] in TOP_LEVEL_DIRECTORIES:
+        return TOP_LEVEL_DIRECTORIES[folders[0]]
+    for folder in folders:
+        if folder in ANY_LEVEL_DIRECTORIES:
+            return ANY_LEVEL_DIRECTORIES[folder]
     suffix = pure.suffix.lower()
     if suffix in PROHIBITED_SUFFIXES:
         return PROHIBITED_SUFFIXES[suffix]

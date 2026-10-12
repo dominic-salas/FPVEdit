@@ -1,0 +1,22 @@
+{
+  "flight": "20261010-203859",
+  "source_file": "20261010-203859.ts",
+  "duration_s": 200.08,
+  "annotator": "Dom",
+  "annotated_on": "2026-10-12",
+  "complete": false,
+  "notes": "Raw HDZero BoxPro+ DVR recording (analog feed), MPEG-TS. Times are m:ss at 1 s resolution. Dom: crashes should in general be cut; tricks right before a crash may be cut too, cutting in dead space where possible.",
+  "events": [
+    {"start": "0:16", "end": "0:22", "label": "failed", "keep": "exclude", "note": "FAILED flip trick trying to weave between gates; it followed a successful weave trick"},
+    {"start": "0:23", "end": "0:32", "label": "failed", "keep": "exclude", "note": "FAILED flow"},
+    {"start": "0:45", "end": "1:14", "label": "weave", "keep": "include", "continuous": true, "note": "flow, lots of weaving and some flips"},
+    {"start": "1:19", "end": "1:29", "label": "weave", "keep": "include", "note": "some weaving and a small dive"},
+    {"start": "1:34", "end": "1:43", "label": "spin", "keep": "include", "note": "trippy spins and weaving around flagpoles"},
+    {"start": "1:43", "end": "1:46", "label": "flip", "keep": "include", "note": "throttle pump and flip"},
+    {"start": "1:52", "end": "2:02", "label": "flip", "keep": "include", "continuous": true, "note": "flow, flips through gates"},
+    {"start": "2:03", "end": "2:07", "label": "failed", "keep": "exclude", "note": "FAILED attempted flip through gate, hit the top and crashed"},
+    {"start": "2:25", "end": "2:29", "label": "flip", "keep": "include", "note": "backflip"},
+    {"start": "2:48", "end": "2:59", "label": "spin", "keep": "include", "note": "yaw spins (contains the 2:52-2:57 side flip)"},
+    {"start": "2:52", "end": "2:57", "label": "flip", "keep": "include", "note": "big side flip"}
+  ]
+}
