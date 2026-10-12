@@ -30,6 +30,35 @@ output/
 outputs/
 footage/
 work/
+/res/
+frames/
+sheets/
+# Upper-case variants (case-sensitive file systems)
+*.TS
+*.MP4
+*.MOV
+*.MKV
+*.AVI
+# DVR sidecars, flight logs (may contain GPS) and editor projects
+*.srt
+*.SRT
+*.osd
+*.OSD
+*.bbl
+*.BBL
+*.bfl
+*.BFL
+*.bbs
+*.BBS
+btfl_*.csv
+*.gpx
+*.kml
+*.drp
+*.drt
+# Analysis outputs
+*.analysis.json
+*.npy
+*.npz
 
 # Model weights and caches
 *.safetensors

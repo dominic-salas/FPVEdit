@@ -1,0 +1,79 @@
+{
+ "flight": "clip2",
+ "source_file": "clip 2.mp4",
+ "duration_s": 183.87,
+ "annotator": "Dom (derived from his own edit)",
+ "annotated_on": "2026-10-11",
+ "kind": "reference_edit",
+ "complete": true,
+ "notes": "Derived by matching every frame of Dom's 'finished edit.mp4' (DaVinci Resolve, 141.6 s, hard cuts, music replaces source audio, no speed changes) to clip 1 / clip 2 with normalized 64x48 grayscale fingerprints at 60 fps (median correlation 0.998). Times in seconds. 'include' = used in the edit, 'editor_cut' = left out (boring, repetitive or failed: reason unknown).",
+ "events": [
+  {
+   "start": 0.0,
+   "end": 25.07,
+   "label": "editor_cut",
+   "keep": "editor_cut",
+   "note": "not used in Dom's finished edit"
+  },
+  {
+   "start": 25.07,
+   "end": 41.5,
+   "label": "editor_kept",
+   "keep": "include",
+   "continuous": true,
+   "note": "finished edit 82.57-99.00 s"
+  },
+  {
+   "start": 41.5,
+   "end": 67.9,
+   "label": "editor_cut",
+   "keep": "editor_cut",
+   "note": "not used in Dom's finished edit"
+  },
+  {
+   "start": 67.9,
+   "end": 83.28,
+   "label": "editor_kept",
+   "keep": "include",
+   "continuous": true,
+   "note": "finished edit 99.00-114.38 s"
+  },
+  {
+   "start": 83.28,
+   "end": 113.23,
+   "label": "editor_cut",
+   "keep": "editor_cut",
+   "note": "not used in Dom's finished edit"
+  },
+  {
+   "start": 113.23,
+   "end": 121.8,
+   "label": "editor_kept",
+   "keep": "include",
+   "continuous": true,
+   "note": "finished edit 114.38-122.95 s"
+  },
+  {
+   "start": 121.8,
+   "end": 133.58,
+   "label": "editor_cut",
+   "keep": "editor_cut",
+   "note": "not used in Dom's finished edit"
+  },
+  {
+   "start": 133.58,
+   "end": 152.2,
+   "label": "editor_kept",
+   "keep": "include",
+   "continuous": true,
+   "note": "finished edit 122.95-141.57 s"
+  },
+  {
+   "start": 152.2,
+   "end": 183.87,
+   "label": "editor_cut",
+   "keep": "editor_cut",
+   "note": "not used in Dom's finished edit"
+  }
+ ]
+}

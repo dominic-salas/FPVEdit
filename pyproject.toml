@@ -15,7 +15,10 @@ classifiers = [
     "Topic :: Multimedia :: Video :: Non-Linear Editor",
 ]
 # Runtime dependencies are added per milestone, each with a stated reason (see PLAN.md).
-dependencies = []
+dependencies = [
+    "numpy>=2.0",
+    "opencv-python-headless>=4.10,<6",  # 5.x verified; re-check before a major upgrade
+]
 
 [project.scripts]
 fpv-editor = "fpv_editor.cli:main"

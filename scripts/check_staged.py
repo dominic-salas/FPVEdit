@@ -84,12 +84,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     root = Path.cwd()
-    if args.paths:
-        paths = list(args.paths)
-    elif args.all:
-        paths = _git_paths(["ls-files"], root)
-    else:
-        paths = _git_paths(["diff", "--cached", "--name-only", "--diff-filter=ACMR"], root)
+    try:
+        if args.paths:
+            paths = list(args.paths)
+        elif args.all:
+            paths = _git_paths(["ls-files"], root)
+        else:
+            paths = _git_paths(["diff", "--cached", "--name-only", "--diff-filter=ACMR"], root)
+    except (OSError, subprocess.CalledProcessError) as exc:
+        detail = getattr(exc, "stderr", "") or str(exc)
+        print(f"could not list files with git: {detail.strip()}", file=sys.stderr)
+        return 2
 
     violations = find_violations(paths, root)
     for violation in violations:
