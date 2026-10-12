@@ -1,0 +1,23 @@
+{
+  "flight": "20261009-182156",
+  "source_file": "20261009-182156.mp4",
+  "duration_s": 282.77,
+  "annotator": "Dom",
+  "annotated_on": "2026-10-11",
+  "complete": false,
+  "notes": "Times are m:ss from the start of the recording, at 1 s resolution. 'complete: false' means unlabelled footage is not necessarily boring.",
+  "events": [
+    {"start": "0:26", "end": "0:41", "label": "landscape", "keep": "include", "note": "landscape shot"},
+    {"start": "1:17", "end": "1:21", "label": "flip", "keep": "include", "note": "flip trick"},
+    {"start": "1:22", "end": "1:25", "label": "flip", "keep": "include", "note": "flip trick"},
+    {"start": "1:31", "end": "1:32", "label": "flip", "keep": "include", "note": "flip trick"},
+    {"start": "2:37", "end": "2:44", "label": "flip", "keep": "include", "note": "2 consecutive flip tricks"},
+    {"start": "2:57", "end": "3:02", "label": "orbit", "keep": "include", "note": "orbiting an object"},
+    {"start": "3:11", "end": "3:18", "label": "landscape", "keep": "include", "note": "high throttle into landscape shot, followed by dive"},
+    {"start": "3:21", "end": "3:24", "label": "flip", "keep": "include", "note": "flip trick"},
+    {"start": "3:25", "end": "3:29", "label": "flip", "keep": "include", "note": "flip trick"},
+    {"start": "3:31", "end": "3:34", "label": "flip", "keep": "include", "note": "flip trick"},
+    {"start": "4:02", "end": "4:06", "label": "flip", "keep": "include", "note": "flip trick"},
+    {"start": "4:07", "end": "4:28", "label": "flip", "keep": "include", "continuous": true, "note": "flip trick session, consecutive flips that shouldn't have a cut between them or it would remove the flow"}
+  ]
+}

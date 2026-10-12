@@ -74,3 +74,11 @@ def test_main_passes_clean_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     (tmp_path / "ok.py").write_text("x = 1\n")
     monkeypatch.chdir(tmp_path)
     assert check_staged.main(["ok.py"]) == 0
+
+
+def test_git_failure_is_reported_without_traceback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.chdir(tmp_path)  # not a git repository
+    assert check_staged.main(["--all"]) == 2
+    assert "could not list files with git" in capsys.readouterr().err

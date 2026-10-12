@@ -1,0 +1,39 @@
+"""Error types shown to the user as one-line messages by the CLI."""
+
+from __future__ import annotations
+
+
+class FPVEditError(Exception):
+    """Base class for expected, user-facing failures."""
+
+
+class ToolNotFoundError(FPVEditError):
+    """FFmpeg or ffprobe is not installed or not on PATH."""
+
+
+class MediaToolError(FPVEditError):
+    """An ffmpeg/ffprobe invocation failed."""
+
+    def __init__(self, action: str, returncode: int, stderr: str) -> None:
+        tail = "\n".join(stderr.strip().splitlines()[-8:])
+        detail = f":\n{tail}" if tail else ""
+        super().__init__(f"{action} failed (exit code {returncode}){detail}")
+        self.action = action
+        self.returncode = returncode
+        self.stderr = stderr
+
+
+class InvalidInputError(FPVEditError):
+    """The input is missing, not a file, or has no usable video stream."""
+
+
+class NoFlightContentError(FPVEditError):
+    """Analysis found nothing but idle or blank footage."""
+
+
+class OutputExistsError(FPVEditError):
+    """The requested output already exists and --force was not given."""
+
+
+class ValidationError(FPVEditError):
+    """The rendered file failed post-render validation."""
