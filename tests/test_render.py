@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from fractions import Fraction
 from pathlib import Path
 
 import pytest
@@ -9,8 +10,10 @@ from fpv_editor.highlights import Interval
 from fpv_editor.render import (
     build_filter_graph,
     default_output_path,
+    expected_frame_count,
     finalize_output,
     resolve_output_path,
+    snap_to_frames,
     temporary_output,
 )
 
@@ -58,39 +61,48 @@ def test_output_folder_must_exist(tmp_path: Path) -> None:
         resolve_output_path(tmp_path / "a.ts", tmp_path / "missing" / "o.mp4", force=False)
 
 
-def test_filter_graph_with_audio() -> None:
+def test_filter_graph_selects_frames_and_writes_limited_range_at_source_rate() -> None:
     graph = build_filter_graph(
-        [Interval(1.0, 4.5), Interval(10.0, 12.0)], video_index=0, audio_index=1
+        [Interval(1.0, 4.5), Interval(10.0, 12.0)], video_index=0, rate=Fraction(60)
     )
-    assert (
-        "[0:0]setpts=PTS-STARTPTS,trim=start=1.000000:end=4.500000,setpts=PTS-STARTPTS,"
-        "crop=trunc(iw/2)*2:trunc(ih/2)*2:0:0[v0]"
-    ) in graph
-    assert "[0:1]asetpts=PTS-STARTPTS,atrim=start=10.000000:end=12.000000" in graph
-    assert "afade=t=out:st=1.990000" in graph
-    assert graph.endswith("[v0][a0][v1][a1]concat=n=2:v=1:a=1[v][a]")
+    assert graph.startswith("[0:0]setpts=PTS-STARTPTS,select='")
+    # Half a frame (1/120 s) of margin before each boundary.
+    assert "between(t,0.991667,4.491667)+between(t,9.991667,11.991667)" in graph
+    assert "setpts=N*1/60/TB" in graph
+    assert "out_range=tv" in graph and "out_color_matrix=bt709" in graph
+    assert graph.endswith("format=yuv420p[v]")
+    assert "[a]" not in graph and "atrim" not in graph
 
 
-def test_filter_graph_shifts_audio_by_its_lead() -> None:
-    graph = build_filter_graph([Interval(0.2, 3.0)], video_index=1, audio_index=0, audio_lead=0.5)
-    assert "[0:1]setpts=PTS-STARTPTS,trim=start=0.200000:end=3.000000" in graph
-    assert "atrim=start=0.700000:end=3.500000" in graph
-
-
-def test_filter_graph_clamps_audio_that_starts_after_video() -> None:
-    graph = build_filter_graph([Interval(0.2, 3.0)], video_index=0, audio_index=1, audio_lead=-0.5)
-    assert "atrim=start=0.000000:end=2.500000" in graph
-
-
-def test_filter_graph_without_audio() -> None:
-    graph = build_filter_graph([Interval(0.0, 3.0)], video_index=0)
-    assert "atrim" not in graph
-    assert graph.endswith("[v0]concat=n=1:v=1:a=0[v]")
+def test_filter_graph_keeps_ntsc_rates_exact() -> None:
+    graph = build_filter_graph([Interval(0.0, 3.0)], video_index=1, rate=Fraction(30000, 1001))
+    assert graph.startswith("[0:1]")
+    assert "setpts=N*1001/30000/TB" in graph
 
 
 def test_filter_graph_requires_intervals() -> None:
     with pytest.raises(ValueError):
-        build_filter_graph([], video_index=0)
+        build_filter_graph([], video_index=0, rate=Fraction(60))
+
+
+def test_snap_moves_boundaries_to_the_nearest_frame() -> None:
+    snapped = snap_to_frames(
+        [Interval(1.005, 2.0), Interval(3.0, 3.001), Interval(5.012, 5.04)], Fraction(60)
+    )
+    assert snapped[0] == Interval(1.0, 2.0)
+    # 3.0-3.001 holds no frame once rounded; 5.012-5.04 holds the frame at 5.0167 s.
+    assert snapped[1:] == (Interval(301 / 60, 302 / 60),)
+
+
+def test_snap_tolerates_float_noise_on_frame_times() -> None:
+    snapped = snap_to_frames([Interval(2.0000000001, 3.9999999)], Fraction(60))
+    assert snapped == (Interval(2.0, 4.0),)
+
+
+def test_expected_frame_count() -> None:
+    rate = Fraction(60)
+    intervals = snap_to_frames([Interval(0.0, 1.0), Interval(2.5, 2.75)], rate)
+    assert expected_frame_count(intervals, rate) == 60 + 15
 
 
 def test_finalize_moves_temporary_into_place(tmp_path: Path) -> None:

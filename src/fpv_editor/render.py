@@ -1,24 +1,38 @@
-"""Render selected intervals to an H.264/AAC MP4, validate it, then move it into place.
+"""Render selected intervals to a video-only H.264 MP4, validate it, then move it into place.
 
-Cuts are made with FFmpeg's trim/atrim + concat filters and re-encoded, which is
-frame-accurate at any cut point. Stream copy is not used because H.264 can only be
-cut cleanly at keyframes, which rarely coincide with the chosen boundaries.
+The recording's audio is not used: on FPV DVRs it is goggle audio (receiver noise and
+beeps) that has nothing to do with the flight, and pilots add their own music.
+
+The source is decoded once and a ``select`` filter keeps the frames inside the
+intervals, so memory use does not grow with the number of cuts (separate trim chains
+per segment made FFmpeg 6 buffer gigabytes). Frames get new
+timestamps at the source's own frame rate, which keeps the rate identical on FFmpeg 6,
+7 and 9 (FFmpeg 7's concat defaulted to 25 fps). Cuts are frame-accurate; stream copy
+is not used because H.264 can only be cut cleanly at keyframes.
+
+Output is standard limited-range BT.709 H.264, whatever range the source used (analog
+DVRs often record full-range "yuvj" video), so every player shows the same levels.
 """
 
 from __future__ import annotations
 
+import math
 import os
 import tempfile
 from collections.abc import Sequence
 from dataclasses import dataclass
+from fractions import Fraction
 from pathlib import Path
 
 from fpv_editor.errors import InvalidInputError, OutputExistsError, ValidationError
 from fpv_editor.highlights import Interval
 from fpv_editor.media import MediaInfo, Tools, probe, run_tool
 
-AUDIO_FADE_S = 0.01  # prevents clicks at cut points; not an audible effect
 OUTPUT_SUFFIX = "_highlight"
+DEFAULT_RATE = Fraction(30)  # only for sources that report no usable frame rate
+# A boundary belongs to the frame nearest to it: frames are selected from half a frame
+# before each boundary, which absorbs timestamp rounding (1 ms timebases in MKV/MP4).
+BOUNDARY_FRAMES = 0.5
 
 
 @dataclass(frozen=True)
@@ -26,7 +40,6 @@ class EncodeConfig:
     video_codec: str = "libx264"
     preset: str = "medium"
     crf: int = 18
-    audio_bitrate: str = "192k"
 
 
 def default_output_path(source: Path) -> Path:
@@ -65,52 +78,55 @@ def _same_file(a: Path, b: Path) -> bool:
     return os.path.normcase(a) == os.path.normcase(b.resolve())
 
 
-def build_filter_graph(
-    intervals: Sequence[Interval],
-    *,
-    video_index: int,
-    audio_index: int | None = None,
-    audio_lead: float = 0.0,
-) -> str:
-    """Filter graph that cuts ``intervals`` from input 0 and joins them.
+def output_rate(info: MediaInfo) -> Fraction:
+    return info.video.nominal_rate or DEFAULT_RATE
 
-    Interval times are on the analysis timeline: seconds since the first video frame.
-    Each stream is rebased to its own first timestamp before trimming, so the result
-    does not depend on how FFmpeg picks the zero point when streams start at different
-    times. ``audio_lead`` is how many seconds the audio starts before the video
-    (negative if it starts after), so audio is cut at the matching moments.
+
+def snap_to_frames(intervals: Sequence[Interval], rate: Fraction) -> tuple[Interval, ...]:
+    """Move each boundary to the nearest frame time.
+
+    The edit's duration and frame count are then exact, which validation relies on.
+    """
+    snapped = []
+    for interval in intervals:
+        start = _next_frame(interval.start, rate)
+        end = _next_frame(interval.end, rate)
+        if end > start:
+            snapped.append(Interval(float(start), float(end)))
+    return tuple(snapped)
+
+
+def _next_frame(seconds: float, rate: Fraction) -> Fraction:
+    index = math.ceil(seconds * float(rate) - BOUNDARY_FRAMES)
+    return Fraction(max(0, index)) / rate
+
+
+def expected_frame_count(intervals: Sequence[Interval], rate: Fraction) -> int:
+    """Frames a constant-rate source has inside frame-snapped ``intervals``."""
+    return sum(round(Fraction(i.end) * rate) - round(Fraction(i.start) * rate) for i in intervals)
+
+
+def build_filter_graph(intervals: Sequence[Interval], *, video_index: int, rate: Fraction) -> str:
+    """Filter graph that keeps ``intervals`` of input 0 as one continuous ``[v]``.
+
+    Interval times are on the analysis timeline (seconds since the first video frame)
+    and should already be snapped to frame times (`snap_to_frames`).
     """
     if not intervals:
         raise ValueError("at least one interval is required")
+    margin = BOUNDARY_FRAMES / float(rate)
+    keep = "+".join(f"between(t,{i.start - margin:.6f},{i.end - margin:.6f})" for i in intervals)
     # yuv420p H.264 needs even dimensions; uses the post-rotation size, so it is safe
     # for footage with rotation metadata.
     crop = "crop=trunc(iw/2)*2:trunc(ih/2)*2:0:0"
-    chains = []
-    pads = []
-    for index, interval in enumerate(intervals):
-        chains.append(
-            f"[0:{video_index}]setpts=PTS-STARTPTS,"
-            f"trim=start={interval.start:.6f}:end={interval.end:.6f},"
-            f"setpts=PTS-STARTPTS,{crop}[v{index}]"
-        )
-        pads.append(f"[v{index}]")
-        if audio_index is not None:
-            audio_start = max(0.0, interval.start + audio_lead)
-            audio_end = max(audio_start, interval.end + audio_lead)
-            fade_out = max(0.0, interval.duration - AUDIO_FADE_S)
-            chains.append(
-                f"[0:{audio_index}]asetpts=PTS-STARTPTS,"
-                f"atrim=start={audio_start:.6f}:end={audio_end:.6f},asetpts=PTS-STARTPTS,"
-                f"afade=t=in:st=0:d={AUDIO_FADE_S},"
-                f"afade=t=out:st={fade_out:.6f}:d={AUDIO_FADE_S}[a{index}]"
-            )
-            pads.append(f"[a{index}]")
-    has_audio = audio_index is not None
-    outputs = "[v][a]" if has_audio else "[v]"
-    chains.append(
-        f"{''.join(pads)}concat=n={len(intervals)}:v=1:a={1 if has_audio else 0}{outputs}"
+    colour = (
+        "scale=in_range=auto:out_range=tv:in_color_matrix=auto:out_color_matrix=bt709,"
+        "format=yuv420p"
     )
-    return ";\n".join(chains)
+    return (
+        f"[0:{video_index}]setpts=PTS-STARTPTS,select='{keep}',"
+        f"setpts=N*{rate.denominator}/{rate.numerator}/TB,{crop},{colour}[v]"
+    )
 
 
 def render(
@@ -122,14 +138,9 @@ def render(
     encode: EncodeConfig,
     work_dir: Path,
 ) -> None:
-    """Encode the intervals to ``destination`` (a temporary path owned by the caller)."""
-    has_audio = info.audio is not None
-    graph = build_filter_graph(
-        intervals,
-        video_index=info.video.index,
-        audio_index=info.audio.index if info.audio is not None else None,
-        audio_lead=info.audio_lead,
-    )
+    """Encode frame-snapped ``intervals`` to ``destination``, a temporary path the caller owns."""
+    rate = output_rate(info)
+    graph = build_filter_graph(intervals, video_index=info.video.index, rate=rate)
     script = work_dir / "filter_graph.txt"
     script.write_text(graph, encoding="utf-8")
     args = [
@@ -145,6 +156,8 @@ def render(
         str(script),
         "-map",
         "[v]",
+        "-r",
+        f"{rate.numerator}/{rate.denominator}",
         "-c:v",
         encode.video_codec,
         "-preset",
@@ -153,29 +166,54 @@ def render(
         str(encode.crf),
         "-pix_fmt",
         "yuv420p",
+        *("-color_range", "tv", "-colorspace", "bt709"),
+        *("-color_primaries", "bt709", "-color_trc", "bt709"),
+        *("-an", "-sn", "-dn"),
+        *("-movflags", "+faststart", "-f", "mp4", str(destination)),
     ]
-    if has_audio:
-        args += ["-map", "[a]", "-c:a", "aac", "-b:a", encode.audio_bitrate]
-    args += ["-movflags", "+faststart", "-f", "mp4", str(destination)]
     run_tool(args, action="rendering the highlight video")
 
 
 def validate_output(
-    tools: Tools, path: Path, *, expected_duration: float, expect_audio: bool
+    tools: Tools,
+    path: Path,
+    *,
+    expected_duration: float,
+    rate: Fraction | None = None,
+    expected_frames: int | None = None,
+    segments: int = 1,
 ) -> MediaInfo:
-    """Check streams and duration with ffprobe, then decode the whole file."""
+    """Check the stream, frame rate, frame count, colour range and duration, then decode it all."""
     try:
-        info = probe(tools, path)
+        info = probe(tools, path, count_frames=True)
     except InvalidInputError as exc:
         raise ValidationError(f"rendered file is not readable: {exc}") from exc
-    if info.video.codec != "h264":
-        raise ValidationError(f"rendered video codec is {info.video.codec}, expected h264")
-    if expect_audio and (info.audio is None or info.audio.codec != "aac"):
-        raise ValidationError("rendered file is missing its AAC audio track")
+    video = info.video
+    if video.codec != "h264":
+        raise ValidationError(f"rendered video codec is {video.codec}, expected h264")
+    if rate is not None and video.nominal_rate != rate:
+        raise ValidationError(
+            f"rendered frame rate is {video.nominal_rate} fps, expected {rate} fps"
+        )
+    if video.pix_fmt != "yuv420p" or video.color_range != "tv":
+        raise ValidationError(
+            f"rendered video is {video.pix_fmt} / {video.color_range} range, "
+            "expected yuv420p limited (tv) range"
+        )
+    if info.audio is not None:
+        raise ValidationError("rendered file has an audio track; expected video only")
+    if expected_frames is not None and video.frame_count is not None:
+        # Recordings with dropped frames have a few fewer frames than their timestamps
+        # promise; a wrong output rate changes the count by far more.
+        tolerance = max(2 * segments, round(0.01 * expected_frames))
+        if abs(video.frame_count - expected_frames) > tolerance:
+            raise ValidationError(
+                f"rendered video has {video.frame_count} frames, expected about {expected_frames}"
+            )
     if info.duration is None:
         raise ValidationError("rendered file has no duration")
-    tolerance = max(0.5, 0.02 * expected_duration)
-    if abs(info.duration - expected_duration) > tolerance:
+    tolerance_s = max(0.5, 0.02 * expected_duration)
+    if abs(info.duration - expected_duration) > tolerance_s:
         raise ValidationError(
             f"rendered duration {info.duration:.2f} s differs from the expected "
             f"{expected_duration:.2f} s"

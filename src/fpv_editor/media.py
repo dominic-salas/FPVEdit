@@ -47,6 +47,10 @@ class VideoStream:
     frame_rate: float | None
     start_time: float | None = None
     rotation: int = 0  # degrees from the display matrix, e.g. 90 for portrait phone video
+    nominal_rate: Fraction | None = None  # e.g. 60/1 or 30000/1001; None if unknown
+    pix_fmt: str | None = None
+    color_range: str | None = None  # "tv" (limited), "pc" (full) or None if unspecified
+    frame_count: int | None = None  # only filled when probing with count_frames=True
 
 
 @dataclass(frozen=True)
@@ -68,17 +72,6 @@ class MediaInfo:
     audio: AudioStream | None
 
     @property
-    def audio_lead(self) -> float:
-        """Seconds the audio starts before the first video frame (negative if after).
-
-        MPEG-TS DVR files often start audio and video at different times; the analysis
-        timeline begins at the first video frame, so audio cuts are shifted by this.
-        """
-        if self.audio is None or self.audio.start_time is None or self.video.start_time is None:
-            return 0.0
-        return self.video.start_time - self.audio.start_time
-
-    @property
     def display_aspect(self) -> float:
         """Width/height as displayed, after sample aspect ratio and rotation."""
         aspect = self.video.width * float(self.video.sample_aspect_ratio) / self.video.height
@@ -96,9 +89,16 @@ def find_tools() -> Tools:
 
 
 def parse_ffmpeg_major(version_output: str) -> int | None:
-    """Major version from `ffmpeg -version`; None for git builds without a release number."""
+    """Major version from `ffmpeg -version`.
+
+    Git builds have no release number, so their libavfilter version decides
+    (libavfilter 9 shipped with FFmpeg 6, 10 with FFmpeg 7, and so on).
+    """
     match = re.search(r"version n?(\d+)\.", version_output)
-    return int(match.group(1)) if match else None
+    if match:
+        return int(match.group(1))
+    libavfilter = re.search(r"libavfilter\s+(\d+)\.", version_output)
+    return int(libavfilter.group(1)) - 3 if libavfilter else None
 
 
 def run_tool(args: list[str], *, action: str) -> subprocess.CompletedProcess[str]:
@@ -113,23 +113,19 @@ def run_tool(args: list[str], *, action: str) -> subprocess.CompletedProcess[str
     return result
 
 
-def probe(tools: Tools, path: Path) -> MediaInfo:
+def probe(tools: Tools, path: Path, *, count_frames: bool = False) -> MediaInfo:
+    """Describe ``path``; with ``count_frames`` also count video packets (reads the file)."""
     path = path.resolve()
     if not path.is_file():
         raise InvalidInputError(f"input not found or not a file: {path}")
+    args = [tools.ffprobe, "-v", "error", "-print_format", "json", "-show_format", "-show_streams"]
+    if count_frames:
+        # One packet per frame for the H.264 MP4 files this tool writes; far cheaper
+        # than decoding, which validation does separately.
+        args.append("-count_packets")
     try:
         result = run_tool(
-            [
-                tools.ffprobe,
-                "-v",
-                "error",
-                "-print_format",
-                "json",
-                "-show_format",
-                "-show_streams",
-                "-i",
-                str(path),
-            ],
+            [*args, "-i", str(path)],
             action=f"ffprobe {path.name}",
         )
     except MediaToolError as exc:
@@ -171,6 +167,10 @@ def parse_probe(path: Path, data: dict[str, Any]) -> MediaInfo:
             or _fraction_to_float(video.get("r_frame_rate")),
             start_time=_float(video.get("start_time")),
             rotation=_rotation(video),
+            nominal_rate=_nominal_rate(video),
+            pix_fmt=_str(video.get("pix_fmt")),
+            color_range=_color_range(video),
+            frame_count=_int(video.get("nb_read_packets")),
         ),
         audio=None
         if audio is None
@@ -182,6 +182,57 @@ def parse_probe(path: Path, data: dict[str, Any]) -> MediaInfo:
             start_time=_float(audio.get("start_time")),
         ),
     )
+
+
+def _nominal_rate(stream: dict[str, Any]) -> Fraction | None:
+    """The stream's regular frame rate, preferring the container's base rate.
+
+    ``r_frame_rate`` is exact for constant-rate DVR footage (60/1). ``avg_frame_rate``
+    drifts by a few parts per million when a frame is missing, so it is the fallback.
+    Absurd values (some MPEG-TS files report 90000/1) fall through to the average.
+    """
+    for key in ("r_frame_rate", "avg_frame_rate"):
+        rate = parse_ratio(stream.get(key))
+        if rate is not None and 1 <= rate <= 240:
+            return _standard_rate(rate)
+    return None
+
+
+STANDARD_RATES = tuple(
+    Fraction(n, d)
+    for n, d in (
+        (24000, 1001), (24, 1), (25, 1), (30000, 1001), (30, 1), (48, 1), (50, 1),
+        (60000, 1001), (60, 1), (90, 1), (100, 1), (120000, 1001), (120, 1), (240, 1),
+    )
+)  # fmt: skip
+
+
+def _standard_rate(rate: Fraction) -> Fraction:
+    """Snap to a standard rate within 0.5 % (an averaged rate drifts slightly)."""
+    nearest = min(STANDARD_RATES, key=lambda standard: abs(standard - rate))
+    if abs(nearest - rate) <= nearest * Fraction(5, 1000):
+        return nearest
+    return rate.limit_denominator(1001)
+
+
+def is_variable_rate(stream: VideoStream) -> bool:
+    """True when the average rate is far from the nominal one (phones, screen captures)."""
+    if stream.nominal_rate is None or stream.frame_rate is None:
+        return False
+    return abs(stream.frame_rate - float(stream.nominal_rate)) > 0.02 * float(stream.nominal_rate)
+
+
+def _color_range(stream: dict[str, Any]) -> str | None:
+    value = _str(stream.get("color_range"))
+    if value in ("tv", "pc"):
+        return value
+    # Older FFmpeg builds report JPEG-range pixel formats instead of a range tag.
+    pix_fmt = _str(stream.get("pix_fmt")) or ""
+    return "pc" if pix_fmt.startswith("yuvj") else None
+
+
+def _str(value: object) -> str | None:
+    return value if isinstance(value, str) and value and value != "unknown" else None
 
 
 def _rotation(stream: dict[str, Any]) -> int:

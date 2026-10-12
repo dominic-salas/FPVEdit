@@ -3,16 +3,17 @@
 Living plan for FPVEdit. Original rationale and model research: `docs/plan-proposal.md` (approved by Dom 2026-10-11).
 Revised 2026-10-11 after testing on Dom's first real flights (see "Real-flight review" below).
 
-## Approach (revised 2026-10-11, awaiting Dom's OK)
+## Approach (revised 2026-10-11, approved by Dom 2026-10-12)
 - **Flight state first.** Split the recording into armed flight, landed/disarmed, OSD menus and stats screens, and no-signal static. Read this from the burned-in Betaflight OSD when present (the "armed" text and stats screen); otherwise fall back to stillness. Downtime, menus and static never reach the edit, and the edit never starts or ends on them.
 - **Measure what pilots do, at full frame rate.** One FFmpeg decode of every frame (60 fps) at ~240 px of the active 4:3 picture, with the OSD and props masked automatically. From it:
   - camera rotation (pitch/yaw/roll rate and accumulated rotation) for flips, rolls and spins;
   - flow expansion (things rushing at the camera) for weaving and gap passes, ranked within the flight;
   - the existing cheap features, subsampled to 8 fps.
-- **Edit in sessions, like Dom does.** Strong moments are seeds. Each gets a lead-in and aftermath, and seeds closer than ~8 s join into one session that is never cut inside. Whole sessions, ranked by peak, fill a soft target of ~40-45 % of flight time (band 30-55 %). Segments are at least ~5 s, in chronological order, with hard cuts and a short audio crossfade at joins.
-- **Failures are excluded where they can be seen.** Crash-disarms and repeated re-arming (from the OSD) remove the failure and a short "cut short" remainder before it. Video alone cannot see every failure (a ground tap with no disarm looks like a flip). An optional `--exclude m:ss-m:ss` list covers these without making flags required.
+- **Edit in sessions, like Dom does.** Strong moments are seeds. Each gets a lead-in and aftermath, and seeds closer than ~8 s join into one session that is never cut inside. There is no length target (Dom, 2026-10-12: edit length doesn't matter, keeping each flight's best moments does), so every session that clears a within-flight quality bar is kept. Segments are at least ~5 s, in chronological order, with hard cuts.
+- **Failures are excluded where they can be seen.** Crash-disarms and repeated re-arming (from the OSD) remove the failure and a short "cut short" remainder before it. Video alone cannot see every failure (a ground tap with no disarm looks like a flip). An optional `--exclude m:ss-m:ss` list covers these without making flags required. When a good trick runs into a crash, the cut goes in dead space before the failure if the trick still looks complete; otherwise the trick goes too.
 - **ML has to earn its place.** SigLIP 2 (Apache-2.0) is tested after the CV pipeline is solid. It has two candidate jobs: scenery, and learning Dom's own keep/cut preferences from his finished edits. It is kept only if it beats the CV pipeline on held-out recordings.
-- **One FFmpeg render pass** that behaves the same on FFmpeg 6, 7 and 9: a select-based chain, source frame rate kept, standard limited-range H.264, audio padded when it starts after the video. Temp file, then validate (fps, frame count, duration, range), then atomic move. Source never written.
+- **Picture enhancement, on by default** (Dom, 2026-10-12). It runs after the edit is chosen, on the kept frames only (plus 3 neighbouring frames at each cut), so it costs a fraction of the flight. Recipe from the 2026-10-12 blind test: motion-compensated fusion of ±3 frames with an OSD guard, horizontal destriping, cross-colour (rainbow) removal, a tone curve and vibrance, a 1440x1080 upscale with luma-guided chroma, and clamped sharpening. Classical CV only: AI upscalers (Real-ESRGAN, BSRGAN, SwinIR, SCUNet) looked painted and lost the blind test. `--no-enhance` gives a fast plain render. CPU cost is ~2 CPU-s per frame; a CUDA version is planned so default runs stay practical.
+- **One FFmpeg render pass** that behaves the same on FFmpeg 6, 7 and 9: a select-based chain, source frame rate kept, standard limited-range BT.709 H.264, no audio. Temp file, then validate (fps, frame count, duration, range), then atomic move. Source never written.
 
 ## Dependencies
 | Dependency | Reason | Added in |
@@ -28,15 +29,16 @@ Revised 2026-10-11 after testing on Dom's first real flights (see "Real-flight r
 |---|---|---|
 | M1 | Repository and safeguards | done (Linux + Windows checks passed; CI not yet run on GitHub) |
 | M2 | CV-only end-to-end baseline | done; real-flight result: close to chance on 3 of 4 recordings (see review) |
-| M2.5 | Fixes and evaluation harness | next |
+| M2.5 | Fixes and evaluation harness | in progress (started 2026-10-12) |
 | M4 | Editing quality on real flights (moved before M3) | not started |
+| ME | Picture enhancement, default on | prototype done (blind-tested 2026-10-12) |
 | M3 | ML (SigLIP 2) as a measured addition | after M4 |
 | M5 | Reliability, Windows and NVIDIA validation | not started |
 | M6 | Release readiness | not started |
 
 ### Acceptance criteria
 - **M2.5**:
-  - Render keeps the source fps on FFmpeg 6.1/7/9, writes limited range, pads late audio, and stays under ~500 MB RAM on a 5-minute 720p60 flight.
+  - Render keeps the source fps on FFmpeg 6.1/7/9, writes limited range, has no audio track, and stays under ~500 MB RAM on a 5-minute 720p60 flight.
   - Validation checks fps, frame count and the colour-range tag.
   - `.gitignore` and `check_staged.py` block `res/`, blackbox logs, .srt/.osd and analysis outputs, with tests.
   - Analysis is cropped to the active picture with an automatic OSD mask.
@@ -48,8 +50,13 @@ Revised 2026-10-11 after testing on Dom's first real flights (see "Real-flight r
   - 0 s kept of labelled failures that end in a crash-disarm.
   - No cut inside a continuous session.
   - No downtime, menu, stats or static at the start or end.
-  - Retention 30-55 %.
+  - Event recall ≥ 0.9 on labelled include moments (no length target).
   - Dom's blind rating of 3 new edits ≥ his rating of the M2 edits.
+- **ME**:
+  - Enhancement is applied to the cut edit only, by default; `--no-enhance` renders exactly as M2.5 does.
+  - No OSD damage, no visible flicker or ghosting at cuts or in fast flips (checked on night and day flights).
+  - Dom judges the enhanced edit better than the plain one.
+  - Runtime per 3-minute flight measured on Dom's CPU and on the RTX 4070 Ti, reported in the validation log; the CUDA path is used automatically when it works and falls back to CPU otherwise.
 - **M3**: SigLIP 2 kept only if it improves M4's held-out metrics by a pre-registered margin. Otherwise it is dropped and documented.
 - **M5**: VFR, PTS discontinuities, truncated input, FFmpeg failures, 25/30 fps and interlaced DVRs, NVENC and CPU fallback each tested or documented with an exact manual command.
 - **M6**: README, CONTRIBUTING, CODE_OF_CONDUCT, SECURITY, model provenance, ADRs, validation report; CI green; three reviews reconciled.
@@ -90,7 +97,7 @@ Details and per-claim evidence: `docs/review-2026-10-11.md`.
 - Failures without a disarm (ground taps) are invisible to video-only detection. Covered by `--exclude` for now; blackbox data could close it later.
 - Digital systems (DJI/Walksnail/HDZero), PAL OSD, no OSD, 25/30 fps DVRs and stabilised video are untested; each needs a fallback.
 - Lens field of view is unknown, so rotation degrees are approximate; thresholds are relative to the flight.
-- MPEG-TS PTS discontinuities and a declared-but-empty audio stream are not handled yet (M5).
+- MPEG-TS PTS discontinuities are not handled yet (M5).
 - NVENC and the `--device` flag arrive with M3/M5.
 
 ## Decisions
@@ -98,11 +105,16 @@ Details and per-claim evidence: `docs/review-2026-10-11.md`.
 - 2026-10-11: Claude works in Dom's local folder; Dom commits. Claude GitHub app not yet installed on FPVEdit (needed later for CI/PRs from Claude).
 - 2026-10-11: M3 (ML) waited for real flights; after the review it moves after M4 (proposed, needs Dom's OK).
 - 2026-10-11: audio is not used for analysis (Dom).
+- 2026-10-12: the output has no audio. The recorded track is goggle audio, "completely irrelevant for the edit" (Dom); he adds music himself. This replaces the spec's H.264/AAC output.
 - 2026-10-11: blackbox logs are not a product input for now. The format is open; the common decoders are GPL-3.0 (blackbox-tools, orangebox), so the MIT core may only call them as external programs (the Rust `blackbox-log` crate is MIT/Apache-2.0). Their main use is ground truth for checking rotation and failure detection.
+- 2026-10-12: revised approach and milestone order approved; M2.5 started (Dom).
+- 2026-10-12: no edit-length target; keep each flight's best moments. Crashes are cut, using dead space before them where possible (Dom).
+- 2026-10-12: the uncertain 180033 3:29-3:37 weave is left out of scoring (Dom: "if you aren't confident leave it out").
+- 2026-10-12: picture enhancement (mcfuse recipe) is on by default and runs after cutting (Dom). Footage is analog, recorded by HDZero BoxPro+ goggles, always 60 fps.
 - Open: enable proposed hooks (`docs/automation.md`)? Allow huggingface.co + download.pytorch.org for the cloud environment (M3)?
 
 ## Evaluation data
-- Hand labels: `eval/annotations/20261009-182156.json`, `20261009-180033.json` (Dom's timestamps; incomplete; corrections proposed and waiting for Dom).
+- Hand labels: `eval/annotations/20261009-182156.json`, `20261009-180033.json`, `20261010-203859.json` (Dom's timestamps, incomplete; 180033 corrections applied 2026-10-12 after Dom's answers; 203859 is a raw `.ts` as the tool is meant to accept).
 - Reference edits: `eval/annotations/clip1.json`, `clip2.json` (from Dom's `finished edit.mp4`).
 - Footage stays on Dom's PC (`D:\FPVEdit\res\testdata1`, gitignored). Only annotations are committed.
 - Wanted: more finished edits plus their raws (any number), flights from other conditions (daytime cinematic, gates, a digital system), and optionally 2-3 flights with blackbox logs for ground truth.

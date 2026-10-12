@@ -1,7 +1,7 @@
 # FPVEdit — project rules for Claude
 
 One-command, offline CLI (`fpv-editor flight.ts`) that edits FPV freestyle recordings into one
-H.264/AAC highlight MP4. Plan and status: `PLAN.md`. Python ≥ 3.11, FFmpeg ≥ 6 on PATH.
+H.264 highlight MP4 (video only: the DVR's goggle audio is irrelevant). Plan and status: `PLAN.md`. Python ≥ 3.11, FFmpeg ≥ 6 on PATH.
 
 ## Commands
 - Install dev env: `uv sync`
@@ -10,7 +10,8 @@ H.264/AAC highlight MP4. Plan and status: `PLAN.md`. Python ≥ 3.11, FFmpeg ≥
 - Prohibited-file check: `uv run python scripts/check_staged.py` (staged) or `--all`
 
 ## Architecture
-`src/fpv_editor/`: `cli` (orchestration) → `media` (ffprobe/ffmpeg) → `sampling` → `features` (CV)
+`src/fpv_editor/`: `cli` (orchestration) → `media` (ffprobe/ffmpeg) → `analysis` (runs the next
+steps, optional feature cache): `picture` (active area, OSD mask) → `sampling` → `features` (CV)
 → `models` (optional ML, behind a small protocol) → `scoring` → `highlights` (intervals → EDL)
 → `render` (EDL → MP4 → validate). Analysis never renders; rendering reads only the EDL.
 

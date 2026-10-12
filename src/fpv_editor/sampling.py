@@ -18,6 +18,7 @@ from numpy.typing import NDArray
 
 from fpv_editor.errors import MediaToolError
 from fpv_editor.media import MediaInfo, Tools
+from fpv_editor.picture import Area, decoded_size
 
 GrayFrame = NDArray[np.uint8]
 
@@ -36,16 +37,25 @@ class SamplingReport:
     warnings: list[str] = field(default_factory=list)
 
 
-def analysis_size(info: MediaInfo, width: int) -> tuple[int, int]:
-    """Even-sized analysis resolution that keeps the display aspect ratio."""
-    height = max(2, round(width / info.display_aspect / 2) * 2)
+def analysis_size(info: MediaInfo, width: int, area: Area | None = None) -> tuple[int, int]:
+    """Even-sized analysis resolution that keeps the display aspect ratio of ``area``."""
+    aspect = info.display_aspect
+    if area is not None:
+        full_width, full_height = decoded_size(info)
+        aspect *= (area.width / full_width) / (area.height / full_height)
+    height = max(2, round(width / aspect / 2) * 2)
     return width, height
 
 
 def iter_gray_frames(
-    tools: Tools, info: MediaInfo, config: SamplingConfig, report: SamplingReport
+    tools: Tools,
+    info: MediaInfo,
+    config: SamplingConfig,
+    report: SamplingReport,
+    area: Area | None = None,
 ) -> Generator[GrayFrame, None, None]:
-    width, height = analysis_size(info, config.width)
+    width, height = analysis_size(info, config.width, area)
+    crop = f"{area.crop_filter}," if area is not None else ""
     frame_bytes = width * height
     args = [
         tools.ffmpeg,
@@ -61,7 +71,8 @@ def iter_gray_frames(
         "-sn",
         "-dn",
         "-vf",
-        f"fps={config.fps},scale={width}:{height}:flags=area,format=gray",
+        # round=up: sample i is the first frame at or after i / fps.
+        f"{crop}fps={config.fps}:round=up,scale={width}:{height}:flags=area,format=gray",
         "-f",
         "rawvideo",
         "-pix_fmt",

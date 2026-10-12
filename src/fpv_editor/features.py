@@ -46,9 +46,22 @@ class FeatureSeries:
 
 
 def compute_features(
-    frames: Iterable[GrayFrame], fps: float, config: FeatureConfig | None = None
+    frames: Iterable[GrayFrame],
+    fps: float,
+    config: FeatureConfig | None = None,
+    ignore: NDArray[np.bool_] | None = None,
 ) -> FeatureSeries:
+    """Features per frame; pixels where ``ignore`` is True (burned-in OSD) are left out."""
     config = config or FeatureConfig()
+    keep: NDArray[np.bool_] | None = None
+    keep_u8: NDArray[np.uint8] | None = None
+    keep_half: NDArray[np.bool_] | None = None
+    if ignore is not None and not ignore.all():
+        keep = ~ignore
+        keep_u8 = keep.astype(np.uint8)
+        half = (int(ignore.shape[1]) // 2, int(ignore.shape[0]) // 2)
+        resized = cv2.resize(keep_u8, half, interpolation=cv2.INTER_NEAREST)
+        keep_half = np.asarray(resized, dtype=bool)
     window = max(1, round(config.novelty_window_s * fps))
     recent: deque[NDArray[np.float32]] = deque(maxlen=window)
     motion: list[float] = []
@@ -60,16 +73,19 @@ def compute_features(
 
     for frame in frames:
         smooth = np.asarray(cv2.GaussianBlur(frame, (5, 5), 0), dtype=np.uint8)
-        histogram = _histogram(smooth)
-        brightness.append(float(frame.mean()) / 255.0)
-        contrast.append(float(frame.std()) / 255.0)
+        histogram = _histogram(smooth, keep_u8)
+        visible = frame[keep] if keep is not None else frame
+        brightness.append(float(visible.mean()) / 255.0)
+        contrast.append(float(visible.std()) / 255.0)
         if previous is None:
             motion.append(0.0)
             change.append(0.0)
             novelty.append(0.0)
         else:
-            motion.append(_flow_speed(previous, smooth) * fps)
-            change.append(float(cv2.absdiff(previous, smooth).mean()) / 255.0)
+            motion.append(_flow_speed(previous, smooth, keep_half) * fps)
+            difference = np.asarray(cv2.absdiff(previous, smooth))
+            visible_difference = difference[keep] if keep is not None else difference
+            change.append(float(visible_difference.mean()) / 255.0)
             reference = np.mean(np.stack(recent), axis=0)
             novelty.append(0.5 * float(np.abs(histogram - reference).sum()))
         recent.append(histogram)
@@ -90,7 +106,9 @@ def compute_features(
     )
 
 
-def _flow_speed(previous: NDArray[np.uint8], current: NDArray[np.uint8]) -> float:
+def _flow_speed(
+    previous: NDArray[np.uint8], current: NDArray[np.uint8], keep: NDArray[np.bool_] | None
+) -> float:
     """Median dense optical-flow magnitude, in frame widths per sample step.
 
     Flow is computed at half the analysis resolution: the median global speed is
@@ -113,10 +131,12 @@ def _flow_speed(previous: NDArray[np.uint8], current: NDArray[np.uint8]) -> floa
     )
     vectors = np.asarray(flow, dtype=np.float64)
     magnitude = np.hypot(vectors[..., 0], vectors[..., 1])
+    if keep is not None and keep.shape == magnitude.shape:
+        magnitude = magnitude[keep]
     return float(np.median(magnitude)) / size[0]
 
 
-def _histogram(frame: NDArray[np.uint8]) -> NDArray[np.float32]:
-    histogram = cv2.calcHist([frame], [0], None, [HISTOGRAM_BINS], [0, 256]).ravel()
+def _histogram(frame: NDArray[np.uint8], keep: NDArray[np.uint8] | None) -> NDArray[np.float32]:
+    histogram = cv2.calcHist([frame], [0], keep, [HISTOGRAM_BINS], [0, 256]).ravel()
     total = float(histogram.sum())
     return (histogram / total if total > 0 else histogram).astype(np.float32)

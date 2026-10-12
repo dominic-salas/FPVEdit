@@ -51,6 +51,9 @@ sheets/
 *.bbs
 *.BBS
 btfl_*.csv
+LOG[0-9]*.csv
+log[0-9]*.csv
+*.event
 *.gpx
 *.kml
 *.drp
@@ -68,7 +71,7 @@ btfl_*.csv
 *.ckpt
 *.bin
 *.gguf
-models/
+/models/
 .cache/
 
 # Secrets and local config
