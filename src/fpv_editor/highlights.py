@@ -1,19 +1,36 @@
-"""Choose which parts of the flight to keep, as a list of time intervals.
+"""Choose which parts of a recording to keep, as a list of time intervals.
 
-Selection works on boolean masks over the analysis samples, which keeps every step
-(idle cleanup, hysteresis, context padding, gap merging, minimum length) small and
-independently testable. The policy is conservative:
+The edit is built by removing what is not worth watching, in this order:
 
-1. Idle or blank stretches of at least ``min_idle_s`` are cut.
-2. Everything else is kept, with short context into idle stretches at the edges.
-3. Only if that keeps more than ``max_retention`` of the flight, and the interest score
-   actually varies, are the least interesting stretches trimmed, using hysteresis so
-   the cut points do not flicker. The retention bound is a soft target: when the
-   score is flat (low confidence), nothing more is cut and a warning is reported.
+1. Everything outside armed flight: boot and menus, time before arming, stats screens
+   after a disarm, and static or no signal (from `flight.py`). Without a detectable OSD
+   the whole recording counts as flight.
+2. Sitting armed on the ground, except the moment before lift-off.
+3. Crashes: a disarm right after fast, tumbling motion is a crash. The failed move that
+   led to it goes too, back to the calmest moment a few seconds earlier, so the edit
+   does not run into a crash it then hides. Several disarms in a short time (re-arm
+   churn after a failed landing or a stuck quad) are cut as a whole.
+   A quick, gentle disarm and re-arm (landing on a slide or a car roof) is part of the
+   flying and stays.
+4. Long dull stretches: flying without any trick, spin or close pass for ``dull_s``
+   seconds. A margin is kept at each end so sessions do not start or stop abruptly.
+5. Leftover pieces shorter than ``min_segment_s``.
+6. Short pieces in which the camera hardly turns (median under ``flying_rate``): a quad
+   on a desk or carried by hand, not flying. Long pieces between an arm and a disarm are
+   exempt, as a long calm cruise with one flip in it is still a flight. Without any arm
+   or disarm on screen (no OSD, or none shown) there is no other proof of flight, so
+   every piece must turn that much and last at least ``unconfirmed_min_s``.
+
+Tricks are found from the camera rotation (`motion.py`): a flip turns the camera through
+180 degrees or more within a second, a fast snap shows as a very high rotation rate, and
+spins and orbits as sustained turning well above the flight's usual level. Close passes
+are the top approach-rate (expansion) moments of the flight. These only protect footage
+from the dull-stretch rule; they never bring back footage that steps 1-3 removed.
 """
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 from itertools import pairwise
@@ -22,6 +39,9 @@ import numpy as np
 from numpy.typing import NDArray
 
 from fpv_editor.errors import NoFlightContentError
+from fpv_editor.flight import FlightState, Screen, ScreenEvent, rolling_median, runs
+from fpv_editor.measure import Measurements
+from fpv_editor.motion import DIVERGENCE, PITCH, ROLL, SPEED
 
 FloatArray = NDArray[np.float64]
 BoolArray = NDArray[np.bool_]
@@ -38,34 +58,78 @@ class Interval:
 
 
 class SelectionMode(Enum):
-    SHORT_INPUT = "short-input"
-    ALL_CONTENT = "all-content"
-    FLAT_SCORE = "flat-score"
-    TRIMMED = "trimmed"
+    SHORT_INPUT = "short-input"  # too short to edit: kept whole
+    FLIGHT_STATE = "flight-state"  # arm/disarm read from the OSD
+    NO_OSD = "no-osd"  # no OSD found: the whole recording counted as flight
+
+
+class CutReason(Enum):
+    NOT_FLYING = "not flying"  # boot, menus, disarmed, stats screen
+    STATIC = "static"
+    ON_GROUND = "on the ground"
+    CRASH = "crash"
+    REARM_CHURN = "repeated disarms"
+    DULL = "dull"
+    SHORT = "short leftover"
+    NOT_CLEARLY_FLYING = "not clearly flying"
+
+
+@dataclass(frozen=True)
+class Cut:
+    start: float
+    end: float
+    reason: CutReason
 
 
 @dataclass(frozen=True)
 class SelectionConfig:
-    min_idle_s: float = 2.0
-    idle_median_s: float = 1.0
-    idle_pad_s: float = 0.5
-    lead_in_s: float = 1.5
-    aftermath_s: float = 1.5
-    merge_gap_s: float = 3.0
-    min_segment_s: float = 3.0
-    max_retention: float = 0.65
-    flat_score_spread: float = 0.08
-    hysteresis_gap: float = 0.05
     short_input_s: float = 6.0
+    # on the ground
+    still_speed: float = 0.1  # median image speed (widths/s) below which the camera is still
+    still_rate: float = 12.0  # deg/s
+    still_min_s: float = 3.0  # a calm hover can look still for a second; not for this long
+    # A shorter still run counts when the picture barely changes either: a hover still
+    # shakes (frame change ~0.004 and up), a quad on the ground does not (~0.001).
+    still_change: float = 0.002
+    still_quiet_min_s: float = 1.0
+    liftoff_keep_s: float = 0.5
+    landing_still_s: float = 3.0  # stillness this close to a landing re-arm is part of it
+    static_min_s: float = 1.0  # shorter static (analog breakup) stays in the edit
+    # crashes
+    crash_speed: float = 1.2  # 90th percentile image speed just before a disarm ...
+    crash_rate: float = 90.0  # ... or mean rotation rate (deg/s): a crash, not a landing
+    crash_window_s: tuple[float, float] = (1.5, 0.2)  # measured this long before the disarm
+    landing_rearm_s: float = 3.0  # a landing disarm re-armed this fast is part of the flight
+    crash_lead_s: float = 3.5  # the failed move starts at least this long before the disarm
+    crash_lookback_s: float = 8.0  # ... and at most this long
+    calm_slack: float = 20.0  # deg/s above the calmest moment that still counts as calm
+    crash_after_s: float = 12.0  # a crash is over by the re-arm or take-off within this
+    churn_disarms: int = 3  # this many disarms ...
+    churn_window_s: float = 15.0  # ... within this time are cut as a whole
+    calm_rate: float = 60.0  # deg/s: calm flying that ends a churn cut ...
+    calm_hold_s: float = 2.0  # ... once held this long
+    # what protects flying from the dull-stretch rule
+    flip_deg_1s: float = 180.0
+    turn_deg_4s: float = 270.0
+    snap_rate: float = 400.0  # deg/s
+    spin_factor: float = 1.6  # sustained turning this many times the flight's median
+    pass_quantile: float = 0.9  # approach rate above this quantile of the flight
+    protect_margin_s: float = 1.5
+    # dull stretches and leftovers
+    dull_s: float = 15.0
+    dull_margin_s: float = 1.0
+    min_segment_s: float = 3.0
+    flying_rate: float = 18.0  # median rotation rate (deg/s) of a kept piece ...
+    flying_check_s: float = 20.0  # ... shorter than this
+    unconfirmed_min_s: float = 6.0  # shortest piece without arm/disarm events
 
 
 @dataclass(frozen=True)
 class Selection:
     intervals: tuple[Interval, ...]
-    idle: tuple[Interval, ...]
+    cuts: tuple[Cut, ...]
     mode: SelectionMode
     retention: float
-    threshold: float | None = None
     warnings: tuple[str, ...] = field(default_factory=tuple)
 
     @property
@@ -73,175 +137,319 @@ class Selection:
         return sum(interval.duration for interval in self.intervals)
 
 
-def runs(mask: BoolArray) -> list[tuple[int, int]]:
-    """Half-open index ranges [start, end) of consecutive True values."""
-    padded = np.concatenate(([False], mask.astype(bool), [False]))
-    edges = np.flatnonzero(np.diff(padded.astype(np.int8)))
-    return [(int(start), int(end)) for start, end in zip(edges[::2], edges[1::2], strict=True)]
-
-
-def remove_short_runs(mask: BoolArray, min_length: int) -> BoolArray:
-    result = mask.copy()
-    for start, end in runs(mask):
-        if end - start < min_length:
-            result[start:end] = False
-    return result
-
-
-def fill_short_gaps(mask: BoolArray, max_gap: int) -> BoolArray:
-    """Set False gaps shorter than ``max_gap`` that lie between True runs to True."""
-    result = mask.copy()
-    kept = runs(mask)
-    for (_, previous_end), (next_start, _) in pairwise(kept):
-        if next_start - previous_end < max_gap:
-            result[previous_end:next_start] = True
-    return result
-
-
-def dilate(mask: BoolArray, before: int, after: int) -> BoolArray:
-    result = mask.copy()
-    for start, end in runs(mask):
-        result[max(0, start - before) : min(len(mask), end + after)] = True
-    return result
-
-
-def median_filter(mask: BoolArray, window: int) -> BoolArray:
-    """Majority vote over an odd window, repeating edge values."""
-    if window <= 1 or len(mask) == 0:
-        return mask.copy()
-    window += 1 - window % 2
-    half = window // 2
-    padded = np.pad(mask.astype(np.int32), half, mode="edge")
-    sums = np.convolve(padded, np.ones(window, dtype=np.int32), mode="valid")
-    return np.asarray(sums > half, dtype=np.bool_)
-
-
-def hysteresis(score: FloatArray, high: float, low: float) -> BoolArray:
-    """Keep stretches where the score stays >= low and somewhere reaches >= high."""
-    candidate = score >= low
-    result = np.zeros_like(candidate)
-    for start, end in runs(candidate):
-        if np.any(score[start:end] >= high):
-            result[start:end] = True
-    return result
-
-
-def extend_short_runs(mask: BoolArray, min_length: int) -> BoolArray:
-    """Grow runs shorter than ``min_length`` symmetrically (clipped to the bounds)."""
-    result = mask.copy()
-    n = len(mask)
-    for start, end in runs(mask):
-        if end - start >= min_length:
-            continue
-        new_start = max(0, start - (min_length - (end - start)) // 2)
-        new_end = min(n, new_start + min_length)
-        new_start = max(0, new_end - min_length)
-        result[new_start:new_end] = True
-    return result
-
-
-def clean_idle(raw_idle: BoolArray, fps: float, config: SelectionConfig) -> BoolArray:
-    smoothed = median_filter(raw_idle, round(config.idle_median_s * fps))
-    return remove_short_runs(smoothed, round(config.min_idle_s * fps))
-
-
-def finalize(keep: BoolArray, idle: BoolArray, fps: float, config: SelectionConfig) -> BoolArray:
-    """Add context around kept stretches, merge small gaps, enforce a minimum length."""
-    context = dilate(keep, round(config.lead_in_s * fps), round(config.aftermath_s * fps))
-    padded = keep | (context & ~idle)
-    pad = round(config.idle_pad_s * fps)
-    padded = dilate(padded, pad, pad)
-    merged = fill_short_gaps(padded, round(config.merge_gap_s * fps))
-    return extend_short_runs(merged, round(config.min_segment_s * fps))
+def window_sum(values: FloatArray, window: int) -> FloatArray:
+    """Sum over a centred window of ``window`` samples (truncated at the edges)."""
+    count = len(values)
+    totals = np.concatenate((np.zeros((1, *values.shape[1:])), np.cumsum(values, axis=0)))
+    index = np.arange(count)
+    low = np.clip(index - window // 2, 0, count)
+    high = np.clip(index + window - window // 2, 0, count)
+    return np.asarray(totals[high] - totals[low], dtype=np.float64)
 
 
 def mask_to_intervals(mask: BoolArray, fps: float) -> tuple[Interval, ...]:
     return tuple(Interval(start / fps, end / fps) for start, end in runs(mask))
 
 
-def select_highlights(
-    score: FloatArray, raw_idle: BoolArray, fps: float, config: SelectionConfig
-) -> Selection:
-    n = len(score)
-    if not np.isfinite(score).all():
-        raise ValueError("interest score contains NaN or infinite values")
-    if n == 0:
-        raise NoFlightContentError("no analysis samples")
-    everything = np.ones(n, dtype=np.bool_)
+def time_mask(count: int, fps: float, start: float, end: float) -> BoolArray:
+    mask = np.zeros(count, dtype=bool)
+    mask[max(0, round(start * fps)) : min(count, round(end * fps))] = True
+    return mask
 
-    if n / fps < config.short_input_s:
+
+class _Motion:
+    """Per-frame motion summaries used by the policy."""
+
+    def __init__(self, measurements: Measurements) -> None:
+        fps = measurements.fps
+        motion = np.nan_to_num(measurements.motion)
+        self.fps = fps
+        self.rotation = motion[:, PITCH : ROLL + 1]
+        self.rate = np.linalg.norm(self.rotation, axis=1)
+        self.speed = motion[:, SPEED]
+        self.divergence = motion[:, DIVERGENCE]
+        half = max(1, round(0.5 * fps))
+        self.rate_smooth = rolling_median(self.rate, half)
+        self.speed_smooth = rolling_median(self.speed, half)
+        self.change_smooth = rolling_median(np.nan_to_num(measurements.change), half)
+        second = max(1, round(fps))
+        self.rate_1s = window_sum(self.rate, second) / second
+
+
+def select_highlights(
+    measurements: Measurements, flight: FlightState, config: SelectionConfig | None = None
+) -> Selection:
+    config = config or SelectionConfig()
+    fps = measurements.fps
+    count = len(measurements)
+    if count == 0:
+        raise NoFlightContentError("no frames to analyse")
+    if count / fps < config.short_input_s:
         return Selection(
-            intervals=mask_to_intervals(everything, fps),
-            idle=(),
+            intervals=(Interval(0.0, count / fps),),
+            cuts=(),
             mode=SelectionMode.SHORT_INPUT,
             retention=1.0,
             warnings=(f"input is shorter than {config.short_input_s:g} s; kept all of it",),
         )
+    motion = _Motion(measurements)
+    cuts: list[Cut] = []
 
-    idle = clean_idle(raw_idle, fps, config)
-    if idle.all():
-        raise NoFlightContentError("the recording contains only idle or blank footage")
-    active = ~idle
-    base = finalize(active, idle, fps, config)
-    idle_intervals = mask_to_intervals(idle, fps)
-    base_retention = float(base.mean())
+    def cut(mask: BoolArray, removed: BoolArray, reason: CutReason) -> BoolArray:
+        for start, end in runs(mask & removed):
+            cuts.append(Cut(start / fps, end / fps, reason))
+        return mask & ~removed
 
-    if base_retention <= config.max_retention:
-        return Selection(
-            intervals=mask_to_intervals(base, fps),
-            idle=idle_intervals,
-            mode=SelectionMode.ALL_CONTENT,
-            retention=base_retention,
+    events = list(flight.events)
+    landings = _landing_rearms(events, motion, config)
+    keep = np.ones(count, dtype=bool)
+    keep = cut(keep, _not_flying(events, flight, landings, count, fps), CutReason.NOT_FLYING)
+    keep = cut(keep, _long_runs(flight.static, round(config.static_min_s * fps)), CutReason.STATIC)
+    keep = cut(keep, _on_ground(motion, landings, config), CutReason.ON_GROUND)
+    crash, churn = _failures(events, motion, keep.copy(), _still(motion, config), config)
+    keep = cut(keep, crash, CutReason.CRASH)
+    keep = cut(keep, churn, CutReason.REARM_CHURN)
+    landed = np.zeros(count, dtype=bool)
+    for start, end in landings:
+        landed |= time_mask(
+            count, fps, start - config.landing_still_s, end + config.landing_still_s
         )
+    keep = cut(keep, _dull(motion, keep, landed, config), CutReason.DULL)
+    short = np.zeros(count, dtype=bool)
+    for start, end in runs(keep):
+        if (end - start) / fps < config.min_segment_s:
+            short[start:end] = True
+    keep = cut(keep, short, CutReason.SHORT)
+    confirmed = any(e.kind in (Screen.ARMED, Screen.LOGO, Screen.STATS) for e in events)
+    unsure = np.zeros(count, dtype=bool)
+    for start, end in runs(keep):
+        seconds = (end - start) / fps
+        calm = float(np.median(motion.rate[start:end])) < config.flying_rate
+        if confirmed:
+            not_flying = calm and seconds < config.flying_check_s
+        else:
+            not_flying = calm or seconds < config.unconfirmed_min_s
+        if not_flying:
+            unsure[start:end] = True
+    keep = cut(keep, unsure, CutReason.NOT_CLEARLY_FLYING)
 
-    active_scores = score[active]
-    spread = float(np.subtract(*np.percentile(active_scores, [75, 25])))
-    if spread < config.flat_score_spread:
-        return Selection(
-            intervals=mask_to_intervals(base, fps),
-            idle=idle_intervals,
-            mode=SelectionMode.FLAT_SCORE,
-            retention=base_retention,
-            warnings=(
-                f"interest score is nearly flat (spread {spread:.3f}); kept all flight "
-                f"footage ({base_retention:.0%}) rather than cutting on weak evidence",
-            ),
+    if not keep.any():
+        raise NoFlightContentError(
+            "found no flying worth keeping (no armed flight, or only crashes, static or "
+            "time on the ground)"
         )
-
-    threshold, trimmed = _trim_to_retention(score, active, idle, fps, config)
-    retention = float(trimmed.mean())
     warnings: tuple[str, ...] = ()
-    if retention > config.max_retention + 0.05:
-        warnings = (f"kept {retention:.0%}, above the {config.max_retention:.0%} soft target",)
+    if not flight.has_osd:
+        warnings = (
+            "no Betaflight OSD found, so arming and disarming could not be detected; only "
+            "static, time on the ground and dull stretches were cut",
+        )
+    elif not confirmed:
+        warnings = (
+            "the OSD never showed arming or disarming, so the whole recording was treated "
+            "as one flight",
+        )
     return Selection(
-        intervals=mask_to_intervals(trimmed, fps),
-        idle=idle_intervals,
-        mode=SelectionMode.TRIMMED,
-        retention=retention,
-        threshold=threshold,
+        intervals=mask_to_intervals(keep, fps),
+        cuts=tuple(sorted(cuts, key=lambda c: c.start)),
+        mode=SelectionMode.FLIGHT_STATE if flight.has_osd else SelectionMode.NO_OSD,
+        retention=float(keep.mean()),
         warnings=warnings,
     )
 
 
-def _trim_to_retention(
-    score: FloatArray, active: BoolArray, idle: BoolArray, fps: float, config: SelectionConfig
-) -> tuple[float, BoolArray]:
-    """Lowest hysteresis threshold whose final selection keeps <= max_retention."""
-    candidates = np.unique(np.percentile(score[active], np.arange(0, 100, 2.5)))
-    best: tuple[float, BoolArray] | None = None
-    low, high = 0, len(candidates) - 1
-    while low <= high:
-        middle = (low + high) // 2
-        threshold = float(candidates[middle])
-        keep = hysteresis(score, threshold, threshold - config.hysteresis_gap) & active
-        selected = finalize(keep, idle, fps, config)
-        if selected.mean() <= config.max_retention:
-            best = (threshold, selected)
-            high = middle - 1
-        else:
-            low = middle + 1
-    if best is None:
-        threshold = float(candidates[-1])
-        keep = hysteresis(score, threshold, threshold - config.hysteresis_gap) & active
-        best = (threshold, finalize(keep, idle, fps, config))
-    return best
+def _not_flying(
+    events: Sequence[ScreenEvent],
+    flight: FlightState,
+    landings: Sequence[tuple[float, float]],
+    count: int,
+    fps: float,
+) -> BoolArray:
+    armed = np.zeros(count, dtype=bool)
+    for start, end in (*flight.armed, *landings):
+        armed |= time_mask(count, fps, start, end)
+    down = ~armed
+    for event in events:
+        if any(start <= event.start < end for start, end in landings):
+            continue
+        index = min(count - 1, max(0, round(event.start * fps)))
+        screen = event.kind in (Screen.BOOT, Screen.LOGO, Screen.STATS)
+        # A short clear screen while armed is an OSD glitch, not downtime.
+        idle_screen = event.kind in (Screen.ARMED, Screen.BLANK) and not armed[index]
+        if screen or idle_screen:
+            down |= time_mask(count, fps, event.start, event.end)
+    return down
+
+
+def _long_runs(mask: BoolArray, min_length: int) -> BoolArray:
+    result = np.zeros(len(mask), dtype=bool)
+    for start, end in runs(mask):
+        if end - start >= min_length:
+            result[start:end] = True
+    return result
+
+
+def _still(motion: _Motion, config: SelectionConfig) -> BoolArray:
+    return np.asarray(
+        (motion.speed_smooth < config.still_speed) & (motion.rate_smooth < config.still_rate)
+    )
+
+
+def _on_ground(
+    motion: _Motion, landings: Sequence[tuple[float, float]], config: SelectionConfig
+) -> BoolArray:
+    """Camera still for a while: sitting on the ground. Keep the moment before lift-off.
+
+    The stop of a quick landing and re-arm (on a car roof, say) is part of that stunt.
+    """
+    fps = motion.fps
+    count = len(motion.rate)
+    still = _still(motion, config)
+    for start, end in landings:
+        still &= ~time_mask(
+            count, fps, start - config.landing_still_s, end + config.landing_still_s
+        )
+    quiet = still & (motion.change_smooth < config.still_change)
+    result = np.zeros(len(still), dtype=bool)
+    keep_end = round(config.liftoff_keep_s * fps)
+    for mask, min_s in ((still, config.still_min_s), (quiet, config.still_quiet_min_s)):
+        for start, end in runs(mask):
+            if (end - start) / fps >= min_s:
+                result[start : max(start, end - keep_end)] = True
+    return result
+
+
+def _is_crash(disarm: float, motion: _Motion, config: SelectionConfig) -> bool:
+    fps = motion.fps
+    before, after = config.crash_window_s
+    start, end = round((disarm - before) * fps), round((disarm - after) * fps)
+    if start < 0 or end <= start:
+        return False
+    fast = float(np.percentile(motion.speed[start:end], 90)) >= config.crash_speed
+    tumbling = float(motion.rate[start:end].mean()) >= config.crash_rate
+    return fast or tumbling
+
+
+def _landing_rearms(
+    events: Sequence[ScreenEvent], motion: _Motion, config: SelectionConfig
+) -> list[tuple[float, float]]:
+    """Quick, gentle disarm and re-arm, as (stats start, ARMED end) spans to keep."""
+    spans = []
+    for event, following in pairwise(events):
+        if (
+            event.kind is Screen.STATS
+            and following.kind is Screen.ARMED
+            and following.end - event.start <= config.landing_rearm_s
+            and not _is_crash(event.start, motion, config)
+        ):
+            spans.append((event.start, following.end))
+    return spans
+
+
+def _failure_start(
+    disarm: float, motion: _Motion, flying: BoolArray, config: SelectionConfig
+) -> float:
+    """The calmest recent moment before a crash: where the failed move began."""
+    fps = motion.fps
+    high = round((disarm - config.crash_lead_s) * fps)
+    low = max(0, round((disarm - config.crash_lookback_s) * fps))
+    candidates = np.flatnonzero(flying[low : max(low, high)]) + low
+    if len(candidates) == 0:
+        return low / fps
+    calm = motion.rate_1s[candidates]
+    latest = candidates[np.flatnonzero(calm <= float(np.min(calm)) + config.calm_slack)[-1]]
+    return float(latest) / fps
+
+
+def _crash_end(
+    disarm: float,
+    events: Sequence[ScreenEvent],
+    still: BoolArray,
+    fps: float,
+    config: SelectionConfig,
+) -> float:
+    """When the crash is over: the re-arm, or the end of lying still (turtle mode, getting
+    the quad upright) before it takes off again, whichever is later."""
+    horizon = disarm + config.crash_after_s
+    end = disarm + 0.5
+    for event in events:
+        if event.kind is Screen.ARMED and disarm < event.start <= horizon:
+            end = max(end, event.end)
+    first, last = round(disarm * fps), min(len(still), round(horizon * fps))
+    for start, stop in runs(still[first:last]):
+        if (stop - start) / fps >= config.still_quiet_min_s:
+            end = max(end, (first + stop) / fps - config.liftoff_keep_s)
+    return end
+
+
+def _failures(
+    events: Sequence[ScreenEvent],
+    motion: _Motion,
+    flying: BoolArray,
+    still: BoolArray,
+    config: SelectionConfig,
+) -> tuple[BoolArray, BoolArray]:
+    """Masks of crashes (with the failed move before them) and of re-arm churn."""
+    fps = motion.fps
+    count = len(flying)
+    crash = np.zeros(count, dtype=bool)
+    churn = np.zeros(count, dtype=bool)
+    disarms = [e.start for e in events if e.kind is Screen.STATS and e.start > 0]
+    crashes = {t for t in disarms if _is_crash(t, motion, config)}
+    for disarm in crashes:
+        start = _failure_start(disarm, motion, flying, config)
+        crash |= time_mask(count, fps, start, _crash_end(disarm, events, still, fps, config))
+    calm = (
+        (motion.rate_smooth < config.calm_rate)
+        & (motion.speed_smooth >= config.still_speed)
+        & flying
+    )
+    hold = max(1, round(config.calm_hold_s * fps))
+    calm_held = window_sum(calm.astype(np.float64), hold) >= hold - 1
+    for first in disarms:
+        group = [t for t in disarms if first <= t <= first + config.churn_window_s]
+        if len(group) < config.churn_disarms:
+            continue
+        start = _failure_start(first, motion, flying, config)
+        index = round(group[-1] * fps)
+        while index < count and not calm_held[index]:
+            index += 1
+        churn |= time_mask(count, fps, start, index / fps)
+    return crash, churn
+
+
+def _dull(
+    motion: _Motion, keep: BoolArray, landed: BoolArray, config: SelectionConfig
+) -> BoolArray:
+    """Kept stretches of at least ``dull_s`` without a trick, spin, close pass or stunt
+    landing."""
+    fps = motion.fps
+    count = len(keep)
+    if not keep.any():
+        return np.zeros(count, dtype=bool)
+    turned_1s = np.linalg.norm(window_sum(motion.rotation, round(fps)), axis=1) / fps
+    turned_4s = np.linalg.norm(window_sum(motion.rotation, round(4 * fps)), axis=1) / fps
+    half = max(1, round(0.5 * fps))
+    smoothed = window_sum(motion.rotation, half) / half
+    sustained = window_sum(np.linalg.norm(smoothed, axis=1), round(4 * fps)) / fps
+    snap = rolling_median(motion.rate, 3) >= config.snap_rate
+    approach = rolling_median(motion.divergence, max(1, round(0.25 * fps)))
+    interesting = (
+        (turned_1s >= config.flip_deg_1s)
+        | (turned_4s >= config.turn_deg_4s)
+        | snap
+        | (sustained >= config.spin_factor * float(np.median(sustained[keep])))
+        | (approach >= float(np.quantile(approach[keep], config.pass_quantile)))
+        | landed
+    ) & keep
+    reach = round(2 * config.protect_margin_s * fps)
+    protected = window_sum(interesting.astype(np.float64), reach) > 0
+    margin = round(config.dull_margin_s * fps)
+    dull = np.zeros(count, dtype=bool)
+    for start, end in runs(keep & ~protected):
+        if (end - start) / fps < config.dull_s:
+            continue
+        inner_start = start + margin if start > 0 and keep[start - 1] else start
+        inner_end = end - margin if end < count and keep[end] else end
+        dull[inner_start:inner_end] = True
+    return dull

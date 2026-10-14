@@ -3,6 +3,7 @@ from __future__ import annotations
 from fractions import Fraction
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from fpv_editor import media
@@ -149,3 +150,26 @@ def test_variable_frame_rate_is_detected() -> None:
     phone |= {"r_frame_rate": "30/1", "avg_frame_rate": "2700/119"}
     data = {"format": {}, "streams": [phone]}
     assert media.is_variable_rate(media.parse_probe(Path("phone.mp4"), data).video)
+
+
+def _dvr_times() -> np.ndarray:
+    """60 fps for 40 s, 1.13 s of signal loss, then 35 frames at the 50 fps no-signal rate."""
+    flight = np.arange(2400) / 60
+    tail = flight[-1] + 1.13 + np.arange(35) / 50
+    return np.concatenate([flight, tail])
+
+
+def test_steady_recording_with_signal_loss_is_constant_rate() -> None:
+    # Dom's 20261008-134959: its average rate is 2.9 % low only because of the ending.
+    stream = media.parse_probe(Path("a.ts"), PROBE).video
+    times = _dvr_times()
+    assert media.regular_step_share(times, Fraction(60)) > 0.98
+    assert not media.is_variable_rate(stream, times)
+    gaps = media.frame_gaps(times, Fraction(60))
+    assert len(gaps) == 1 and gaps[0][1] == pytest.approx(1.13)
+
+
+def test_jittery_frame_times_are_variable_rate() -> None:
+    stream = media.parse_probe(Path("a.ts"), PROBE).video
+    steps = np.random.default_rng(1).uniform(0.010, 0.030, 3000)  # a phone at ~50 fps
+    assert media.is_variable_rate(stream, np.cumsum(steps))

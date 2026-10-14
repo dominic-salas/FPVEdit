@@ -123,13 +123,14 @@ def evaluate_reference_edit(
     ref_edges = [edge for a, b in reference for edge in (a, b) if 0.5 < edge < duration - 0.5]
     errors = [min((abs(edge - other) for other in edges), default=duration) for edge in ref_edges]
     print(
-        f"\n== {flight} (reference edit): kept {fmt(total_kept)} of {fmt(duration)} "
-        f"({total_kept / duration:.0%}) in {len(intervals)} segments; editor kept {fmt(ref_total)} "
-        f"({ref_total / duration:.0%}) in {len(reference)} segments"
+        f"\n== {flight} (reference edit): fpv-editor kept {fmt(total_kept)} of {fmt(duration)} "
+        f"({total_kept / duration:.0%}) in {len(intervals)} segments; the human edit kept "
+        f"{fmt(ref_total)} ({ref_total / duration:.0%}) in {len(reference)} segments"
     )
     for a, b in reference:
         print(
-            f"  editor {fmt(a)}-{fmt(b)} kept {overlap(intervals, a, b) / (b - a):4.0%}, "
+            f"  human edit {fmt(a)}-{fmt(b)}: "
+            f"fpv-editor kept {overlap(intervals, a, b) / (b - a):4.0%}, "
             f"{cuts_inside(intervals, a, b)} cut(s) inside"
         )
     summary = {

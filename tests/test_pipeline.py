@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import itertools
 import json
 import os
 import subprocess
@@ -11,16 +12,17 @@ from pathlib import Path
 
 import pytest
 
-from fpv_editor.cli import PipelineConfig, main, run
+from fpv_editor.cli import PipelineConfig, _render_and_validate, main, run
 from fpv_editor.errors import (
     InvalidInputError,
     NoFlightContentError,
     OutputExistsError,
     ValidationError,
 )
-from fpv_editor.media import find_tools, probe
+from fpv_editor.highlights import Interval
+from fpv_editor.measure import MeasureConfig
+from fpv_editor.media import find_tools, frame_times, is_variable_rate, probe
 from fpv_editor.render import EncodeConfig, validate_output
-from fpv_editor.sampling import SamplingConfig
 from media_fixtures import Span, ffmpeg_available, ground_truth, make_flight
 
 pytestmark = [
@@ -80,13 +82,14 @@ def test_end_to_end_keeps_flying_and_cuts_idle(flight: Path) -> None:
 def test_cli_prints_summary_and_writes_analysis(
     flight: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    assert main([str(flight), "--keep-intermediates"]) == 0
+    assert main([str(flight), "--trim", "--keep-intermediates"]) == 0
     out = capsys.readouterr().out
     for label in ("Output:", "Original:", "Edited:", "retained", "Time:"):
         assert label in out
     analysis = json.loads(flight.with_name("flight_highlight.analysis.json").read_text())
     assert analysis["selection"]["intervals"]
-    assert len(analysis["samples"]["score"]) == pytest.approx(36 * 8, abs=2)
+    assert len(analysis["signals"]["image_speed"]) == pytest.approx(36 * 10, abs=2)
+    assert analysis["selection"]["mode"] == "no-osd"
 
 
 def test_existing_output_gets_a_new_name_and_is_untouched(flight: Path) -> None:
@@ -154,11 +157,12 @@ def test_garbage_input_fails_cleanly(tmp_path: Path, capsys: pytest.CaptureFixtu
 def test_full_range_60fps_dvr_footage_renders_limited_range_at_60fps(tmp_path: Path) -> None:
     # Analog goggles record full-range ("yuvj") 60 fps MPEG-TS. FFmpeg 7's concat
     # filter used to write 25 fps, and the range tag differed between versions.
+    # Without an OSD, only pieces of at least 6 s of clear flying are kept.
     spans = [
         Span("idle", 4),
-        Span("active", 4),
+        Span("active", 7),
         Span("idle", 8),
-        Span("active", 4),
+        Span("active", 7),
         Span("idle", 3),
     ]
     source = make_flight(tmp_path / "dvr.ts", spans, fps=60, full_range=True)
@@ -232,7 +236,7 @@ def test_cache_reuses_measurements_and_gives_the_same_edit(flight: Path, tmp_pat
     cache = tmp_path / "cache"
     first = run(flight, analyze_only=True, cache_dir=cache, config=FAST)
     assert not first.from_cache
-    assert len(list(cache.glob("*.features.npz"))) == 1
+    assert len(list(cache.glob("*.measurements.npz"))) == 1
     second = run(flight, analyze_only=True, force=True, cache_dir=cache, config=FAST)
     assert second.from_cache
     assert second.selection == first.selection
@@ -243,10 +247,10 @@ def test_cache_reuses_measurements_and_gives_the_same_edit(flight: Path, tmp_pat
 
     # A different measurement setting must not reuse the old file.
     other = PipelineConfig(
-        sampling=SamplingConfig(fps=4.0), encode=EncodeConfig(preset="ultrafast")
+        measure=MeasureConfig(height=240), encode=EncodeConfig(preset="ultrafast")
     )
     run(flight, analyze_only=True, force=True, cache_dir=cache, config=other)
-    assert len(list(cache.glob("*.features.npz"))) == 3
+    assert len(list(cache.glob("*.measurements.npz"))) == 3
 
 
 def test_analyze_only_refuses_to_replace_an_analysis_without_force(flight: Path) -> None:
@@ -258,7 +262,7 @@ def test_analyze_only_refuses_to_replace_an_analysis_without_force(flight: Path)
 def test_damaged_cache_file_is_measured_again(flight: Path, tmp_path: Path) -> None:
     cache = tmp_path / "cache"
     run(flight, analyze_only=True, cache_dir=cache, config=FAST)
-    (cached,) = cache.glob("*.features.npz")
+    (cached,) = cache.glob("*.measurements.npz")
     cached.write_bytes(cached.read_bytes()[:100])  # truncated, e.g. by a full disk
     result = run(flight, analyze_only=True, force=True, cache_dir=cache, config=FAST)
     assert not result.from_cache
@@ -292,6 +296,39 @@ def _encode(path: Path, *extra: str) -> Path:
         check=True,
     )
     return path
+
+
+def test_recording_with_signal_loss_renders_and_validates(tmp_path: Path) -> None:
+    # Like Dom's converted DVR clips: steady 60 fps, 1.13 s of frames missing (signal
+    # loss), then frames at the 50 fps no-signal rate. In MP4 the frame before the gap
+    # carries the gap as its duration, which once made the encoder repeat it ~60 times.
+    source = tmp_path / "gap.mp4"
+    retime = "setpts='if(gte(T,7),7+(T-7)*1.2,T)/TB'"
+    subprocess.run(
+        [
+            *("ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc2=s=320x240:r=60:d=8"),
+            *("-vf", f"select='not(between(t,4.0,5.13))',{retime}", "-fps_mode", "passthrough"),
+            *("-c:v", "libx264", "-preset", "ultrafast", str(source)),
+        ],
+        check=True,
+    )
+    tools = find_tools()
+    info = probe(tools, source)
+    times = frame_times(tools, info)
+    assert times is not None and not is_variable_rate(info.video, times)
+    for end in (5.5, 7.9):  # just after the gap, and into the 50 fps tail
+        output = tmp_path / f"out{end}.mp4"
+        _render_and_validate(
+            tools, info, (Interval(1.0, end),), output, force=False, config=FAST, times=times
+        )
+        digests = subprocess.run(
+            ["ffmpeg", "-v", "error", "-i", str(output), "-f", "framemd5", "-"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.splitlines()
+        frames = [line.split(",")[-1] for line in digests if not line.startswith("#")]
+        assert all(a != b for a, b in itertools.pairwise(frames)), "a frame was repeated"
 
 
 def test_validation_rejects_full_range_output(tmp_path: Path) -> None:
