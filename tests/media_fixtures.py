@@ -3,6 +3,7 @@
 Each flight is a sequence of labelled spans with known ground truth:
 - ``idle``: a static textured scene with sensor noise (drone sitting on the ground)
 - ``active``: a large test pattern panned and rolled across the frame (flying)
+- ``flip``: like ``active``, with a full 360-degree roll in one second at the middle
 - ``black``: black frames (no video signal)
 """
 
@@ -15,7 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-SpanKind = Literal["idle", "active", "black"]
+SpanKind = Literal["idle", "active", "flip", "black"]
 
 
 @dataclass(frozen=True)
@@ -35,12 +36,13 @@ def _source(kind: SpanKind, seconds: float, width: int, height: int, fps: int) -
             "geq=lum='128+60*sin(X/7)*cos(Y/5)':cb=128:cr=128,"
             "noise=alls=6:allf=t"
         )
-    if kind == "active":
+    if kind in ("active", "flip"):
+        roll = f"+2*PI*clip(t-{seconds / 2 - 0.5},0,1)" if kind == "flip" else ""
         return (
             f"testsrc2=s={width * 4}x{height * 4}:r={fps}:d={seconds},"
             f"crop={width}:{height}:x='{width * 1.5}+{width * 1.2}*sin(t*0.8)'"
             f":y='{height * 1.5}+{height}*sin(t*1.3)',"
-            f"rotate=a='0.6*sin(t*1.1)':ow={width}:oh={height}"
+            f"rotate=a='0.6*sin(t*1.1){roll}':ow={width}:oh={height}"
         )
     return f"color=c=black:s={width}x{height}:r={fps}:d={seconds}"
 

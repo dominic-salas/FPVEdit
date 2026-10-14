@@ -116,6 +116,21 @@ def test_annotation_marks_weak_matches_as_unknown(tmp_path: Path) -> None:
     assert document["complete"] is False
 
 
+def test_frames_with_no_counterpart_are_left_out() -> None:
+    assert match_edit.classify(_segment(10, 20)) == "kept"
+    assert match_edit.classify(_segment(10, 10.2)) == "unsure"  # too short
+    assert match_edit.classify(_segment(10, 20, correlation=0.7)) == "unsure"  # transition
+    assert match_edit.classify(_segment(10, 20, correlation=0.1)) == "none"  # title card
+
+
+def test_stray_transition_frames_are_dropped() -> None:
+    kept = [_segment(28, 148), _segment(149, 160)]
+    stray = _segment(15.7, 15.75, correlation=0.8)  # one cross-fade frame, far away
+    beside = _segment(160.1, 160.3, correlation=0.9)  # brief, right after kept footage
+    long_weak = _segment(60, 63, correlation=0.85)  # may really have been used
+    assert match_edit.drop_strays([stray, beside, long_weak], kept) == [beside, long_weak]
+
+
 def test_only_reference_edits_count_as_replaceable(tmp_path: Path) -> None:
     hand = tmp_path / "hand.json"
     hand.write_text(json.dumps({"flight": "x", "events": []}))

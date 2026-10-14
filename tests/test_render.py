@@ -3,6 +3,7 @@ from __future__ import annotations
 from fractions import Fraction
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from fpv_editor.errors import InvalidInputError, OutputExistsError
@@ -39,14 +40,14 @@ def test_explicit_existing_output_requires_force(tmp_path: Path) -> None:
 def test_output_may_never_be_the_input(tmp_path: Path) -> None:
     source = tmp_path / "a.mp4"
     source.write_bytes(b"x")
-    with pytest.raises(InvalidInputError, match="same as the input"):
+    with pytest.raises(InvalidInputError, match="same as an input"):
         resolve_output_path(source, source, force=True)
     link = tmp_path / "b.mp4"
     try:
         link.hardlink_to(source)
     except OSError:
         pytest.skip("hard links not supported here")
-    with pytest.raises(InvalidInputError, match="same as the input"):
+    with pytest.raises(InvalidInputError, match="same as an input"):
         resolve_output_path(source, link, force=True)
 
 
@@ -68,7 +69,7 @@ def test_filter_graph_selects_frames_and_writes_limited_range_at_source_rate() -
     assert graph.startswith("[0:0]setpts=PTS-STARTPTS,select='")
     # Half a frame (1/120 s) of margin before each boundary.
     assert "between(t,0.991667,4.491667)+between(t,9.991667,11.991667)" in graph
-    assert "setpts=N*1/60/TB" in graph
+    assert "setpts=N*1/60/TB,fps=60/1" in graph
     assert "out_range=tv" in graph and "out_color_matrix=bt709" in graph
     assert graph.endswith("format=yuv420p[v]")
     assert "[a]" not in graph and "atrim" not in graph
@@ -77,7 +78,7 @@ def test_filter_graph_selects_frames_and_writes_limited_range_at_source_rate() -
 def test_filter_graph_keeps_ntsc_rates_exact() -> None:
     graph = build_filter_graph([Interval(0.0, 3.0)], video_index=1, rate=Fraction(30000, 1001))
     assert graph.startswith("[0:1]")
-    assert "setpts=N*1001/30000/TB" in graph
+    assert "setpts=N*1001/30000/TB,fps=30000/1001" in graph
 
 
 def test_filter_graph_requires_intervals() -> None:
@@ -103,6 +104,14 @@ def test_expected_frame_count() -> None:
     rate = Fraction(60)
     intervals = snap_to_frames([Interval(0.0, 1.0), Interval(2.5, 2.75)], rate)
     assert expected_frame_count(intervals, rate) == 60 + 15
+
+
+def test_expected_frame_count_allows_for_missing_frames() -> None:
+    rate = Fraction(60)
+    times = np.concatenate([np.arange(240) / 60, 5.0 + np.arange(120) / 60])  # 1 s gap
+    intervals = snap_to_frames([Interval(1.0, 6.0)], rate)
+    assert expected_frame_count(intervals, rate) == 300
+    assert expected_frame_count(intervals, rate, times) == 180 + 60
 
 
 def test_finalize_moves_temporary_into_place(tmp_path: Path) -> None:

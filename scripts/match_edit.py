@@ -10,11 +10,14 @@ gets a ``"kind": "reference_edit"`` annotation, ``<raw name>.reference.json``, l
 what the editor kept (include) and left out (editor_cut), which ``scripts/evaluate.py``
 scores against.
 
-The match assumes hard cuts at normal speed, which is how Dom edits. Titles,
-transitions, speed ramps, crops or colour grades show up as weak or short matches.
-They are reported, and the raw time they point to is marked ``ignore`` (unknown)
-instead of being guessed at. An existing reference edit is only replaced with
-``--force``, and hand-made annotations are never replaced. Footage is only read.
+The match assumes hard cuts at normal speed, which is how Dom edits. Transitions,
+speed ramps, crops or colour grades show up as weak or short matches: they are
+reported, and the raw time they point to is marked ``ignore`` (unknown) instead of
+being guessed at. Edit footage with no counterpart at all (title cards, black frames,
+footage from other recordings) matches nothing well; it is reported and left out,
+because the raw time it happens to point to means nothing. An existing reference
+edit is only replaced with ``--force``, and hand-made annotations are never replaced.
+Footage is only read.
 """
 
 from __future__ import annotations
@@ -38,8 +41,10 @@ FingerprintArray = NDArray[np.float32]
 FINGERPRINT_SIZE = (48, 36)
 MAX_RATE = 60.0
 MIN_CORRELATION = 0.9  # a real match of the same frame scores ~0.99
+NO_MATCH = 0.5  # below this the edit frames have no counterpart in the raw recordings
 MIN_SEGMENT_S = 0.5
 JUMP_S = 0.75  # an offset change larger than this starts a new segment
+NEAR_KEPT_S = 2.0  # a brief weak match further than this from any kept footage is a stray
 CHUNK = 1000
 
 
@@ -126,6 +131,33 @@ def segments_from_matches(
             )
         )
     return result
+
+
+def classify(segment: Segment) -> str:
+    """'kept' (used in the edit), 'unsure' (weak or short match) or 'none' (no counterpart)."""
+    if segment.mean_correlation < NO_MATCH:
+        return "none"
+    if segment.duration >= MIN_SEGMENT_S and segment.mean_correlation >= MIN_CORRELATION:
+        return "kept"
+    return "unsure"
+
+
+def drop_strays(unsure: list[Segment], kept: list[Segment]) -> list[Segment]:
+    """Brief weak matches far from any kept footage: stray transition frames, not cuts.
+
+    A cross-fade frame blends two shots and can land anywhere in the raw recording. A
+    longer weak segment, or one right next to kept footage, may really have been used.
+    """
+    return [
+        weak
+        for weak in unsure
+        if weak.duration >= MIN_SEGMENT_S
+        or any(
+            weak.raw_start < used.raw_end + NEAR_KEPT_S
+            and used.raw_start - NEAR_KEPT_S < weak.raw_end
+            for used in kept
+        )
+    ]
 
 
 def annotation(
@@ -239,18 +271,24 @@ def main(argv: list[str] | None = None) -> int:
 
     kept: list[list[Segment]] = [[] for _ in raws]
     unsure: list[list[Segment]] = [[] for _ in raws]
+    status = {
+        "kept": "kept",
+        "unsure": "UNSURE (short or weak match, marked ignore)",
+        "none": "NO MATCH (title, black or other footage, left out)",
+    }
     for segment in found:
-        good = segment.duration >= MIN_SEGMENT_S and segment.mean_correlation >= MIN_CORRELATION
-        status = "kept" if good else "SKIPPED (short or weak match)"
+        verdict = classify(segment)
         print(
             f"edit {segment.edit_start:7.2f}-{segment.edit_end:7.2f}  "
             f"{raws[segment.raw].path.name} {segment.raw_start:7.2f}-{segment.raw_end:7.2f}  "
-            f"match {segment.mean_correlation:.3f}  {status}"
+            f"match {segment.mean_correlation:.3f}  {status[verdict]}"
         )
-        (kept if good else unsure)[segment.raw].append(segment)
+        if verdict != "none":
+            (kept if verdict == "kept" else unsure)[segment.raw].append(segment)
     median = float(np.median(score)) if len(score) else float("nan")
     print(f"median frame match {median:.3f}", file=sys.stderr)
 
+    unsure = [drop_strays(weak, used) for weak, used in zip(unsure, kept, strict=True)]
     args.out_dir.mkdir(parents=True, exist_ok=True)
     for raw, segments, weak, target in zip(raws, kept, unsure, targets, strict=True):
         document = annotation(raw, segments, edit, rate, weak)

@@ -1,0 +1,85 @@
+{
+ "flight": "hdz_0000",
+ "source_file": "hdz_0000.mp4",
+ "duration_s": 244.9,
+ "annotator": "derived from the finished edit goose.mp4",
+ "annotated_on": "2026-10-12",
+ "kind": "reference_edit",
+ "complete": false,
+ "notes": "Made by scripts/match_edit.py: every edit frame matched to the raw recordings with 48x36 normalised greyscale fingerprints at 24 fps. 'include' = used in the edit, 'editor_cut' = left out (reason unknown). Rebuilt from the 2026-10-12 match after match_edit.py learned to leave out title/black frames (match < 0.5) and stray cross-fade frames. goose.mp4 is a 24 fps export, so boundaries are accurate to about 1/24 s.",
+ "events": [
+  {
+   "start": 0.0,
+   "end": 28.29,
+   "label": "editor_cut",
+   "keep": "editor_cut",
+   "note": "not used in the edit"
+  },
+  {
+   "start": 28.29,
+   "end": 148.54,
+   "label": "editor_kept",
+   "keep": "include",
+   "continuous": true,
+   "note": "edit 0.00-120.25 s, match 0.966"
+  },
+  {
+   "start": 148.54,
+   "end": 149.0,
+   "label": "editor_cut",
+   "keep": "editor_cut",
+   "note": "not used in the edit"
+  },
+  {
+   "start": 149.0,
+   "end": 159.88,
+   "label": "editor_kept",
+   "keep": "include",
+   "continuous": true,
+   "note": "edit 120.71-131.58 s, match 0.949"
+  },
+  {
+   "start": 159.88,
+   "end": 160.12,
+   "label": "unmatched",
+   "keep": "ignore",
+   "note": "edit 131.62-131.88 s, match 0.899 (weak or short match: unknown whether it was used)"
+  },
+  {
+   "start": 160.12,
+   "end": 160.71,
+   "label": "editor_cut",
+   "keep": "editor_cut",
+   "note": "not used in the edit"
+  },
+  {
+   "start": 160.71,
+   "end": 163.04,
+   "label": "unmatched",
+   "keep": "ignore",
+   "note": "edit 132.42-134.75 s, match 0.891 (weak or short match: unknown whether it was used)"
+  },
+  {
+   "start": 163.04,
+   "end": 163.21,
+   "label": "editor_cut",
+   "keep": "editor_cut",
+   "note": "not used in the edit"
+  },
+  {
+   "start": 163.21,
+   "end": 242.38,
+   "label": "editor_kept",
+   "keep": "include",
+   "continuous": true,
+   "note": "edit 134.92-214.08 s, match 0.966"
+  },
+  {
+   "start": 242.38,
+   "end": 244.9,
+   "label": "editor_cut",
+   "keep": "editor_cut",
+   "note": "not used in the edit"
+  }
+ ]
+}

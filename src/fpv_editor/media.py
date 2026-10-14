@@ -15,6 +15,9 @@ from fractions import Fraction
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+from numpy.typing import NDArray
+
 from fpv_editor.errors import InvalidInputError, MediaToolError, ToolNotFoundError
 
 INSTALL_HINT = (
@@ -215,9 +218,63 @@ def _standard_rate(rate: Fraction) -> Fraction:
     return rate.limit_denominator(1001)
 
 
-def is_variable_rate(stream: VideoStream) -> bool:
-    """True when the average rate is far from the nominal one (phones, screen captures)."""
-    if stream.nominal_rate is None or stream.frame_rate is None:
+# A recording counts as constant-rate when this share of its frame steps is one frame
+# long. Signal loss on a DVR leaves a gap and sometimes a few frames at the receiver's
+# no-signal rate; phones and screen captures vary throughout.
+MIN_REGULAR_SHARE = 0.9
+GAP_FRAMES = 1.5  # a step longer than this many frames means frames are missing
+
+
+def frame_times(tools: Tools, info: MediaInfo) -> NDArray[np.float64] | None:
+    """Presentation time of every video frame, in seconds since the first one.
+
+    Read from the packets (no decoding), so it is cheap. None if ffprobe cannot list them.
+    """
+    args = [tools.ffprobe, "-v", "error", "-select_streams", f"{info.video.index}"]
+    args += ["-show_entries", "packet=pts_time", "-of", "default=nw=1:nk=1", "-i", str(info.path)]
+    try:
+        output = run_tool(args, action=f"listing the frames of {info.path.name}").stdout
+    except MediaToolError:
+        return None
+    values = []
+    for line in output.split():
+        try:
+            values.append(float(line))
+        except ValueError:
+            continue  # "N/A": a packet without a timestamp
+    if len(values) < 2:
+        return None
+    times = np.sort(np.array(values, dtype=np.float64))
+    return np.asarray(times - times[0], dtype=np.float64)
+
+
+def regular_step_share(times: NDArray[np.float64], rate: Fraction) -> float:
+    """Share of frame-to-frame steps within 10 % of one frame at ``rate``."""
+    steps = np.diff(times)
+    if len(steps) == 0:
+        return 1.0
+    frame = 1 / float(rate)
+    return float(np.mean(np.abs(steps - frame) <= 0.1 * frame))
+
+
+def frame_gaps(times: NDArray[np.float64], rate: Fraction) -> list[tuple[float, float]]:
+    """(start, length) of every stretch with missing frames, e.g. signal loss."""
+    steps = np.diff(times)
+    where = np.flatnonzero(steps > GAP_FRAMES / float(rate))
+    return [(float(times[i]), float(steps[i])) for i in where]
+
+
+def is_variable_rate(stream: VideoStream, times: NDArray[np.float64] | None = None) -> bool:
+    """True for footage whose frames do not come at a steady rate (phones, screen captures).
+
+    With the frame ``times`` the steps themselves decide, so a steady recording with a
+    gap is accepted. Without them the average rate must be within 2 % of the nominal one.
+    """
+    if stream.nominal_rate is None:
+        return False
+    if times is not None and len(times) > 2:
+        return regular_step_share(times, stream.nominal_rate) < MIN_REGULAR_SHARE
+    if stream.frame_rate is None:
         return False
     return abs(stream.frame_rate - float(stream.nominal_rate)) > 0.02 * float(stream.nominal_rate)
 

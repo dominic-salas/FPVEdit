@@ -4,12 +4,13 @@ Living plan for FPVEdit. Original rationale and model research: `docs/plan-propo
 Revised 2026-10-11 after testing on Dom's first real flights (see "Real-flight review" below).
 
 ## Approach (revised 2026-10-11, approved by Dom 2026-10-12)
+- **The product is a montage maker** (Dom, 2026-10-13). Dom gives it a selection of clips and gets back one montage of their best moments, not a trimmed copy of each flight. Each clip is cleaned with the flight-state rules below (no downtime, static, time on the ground, crashes or re-arm churn), then 8-15 s shots are built around the moments worth showing (flips, spins, close passes, fast flying), with cuts placed in calm moments so no trick is cut short. The best shots across all clips are picked up to a target length (90 s by default, `--length`), at most half from any one clip and never overlapping, and played in the order the clips were given, joined by hard cuts. The single-flight edit stays available as `--trim`.
 - **Flight state first.** Split the recording into armed flight, landed/disarmed, OSD menus and stats screens, and no-signal static. Read this from the burned-in Betaflight OSD when present (the "armed" text and stats screen); otherwise fall back to stillness. Downtime, menus and static never reach the edit, and the edit never starts or ends on them.
 - **Measure what pilots do, at full frame rate.** One FFmpeg decode of every frame (60 fps) at ~240 px of the active 4:3 picture, with the OSD and props masked automatically. From it:
   - camera rotation (pitch/yaw/roll rate and accumulated rotation) for flips, rolls and spins;
   - flow expansion (things rushing at the camera) for weaving and gap passes, ranked within the flight;
   - the existing cheap features, subsampled to 8 fps.
-- **Edit in sessions, like Dom does.** Strong moments are seeds. Each gets a lead-in and aftermath, and seeds closer than ~8 s join into one session that is never cut inside. There is no length target (Dom, 2026-10-12: edit length doesn't matter, keeping each flight's best moments does), so every session that clears a within-flight quality bar is kept. Segments are at least ~5 s, in chronological order, with hard cuts.
+- **Edit by removing, like Dom does** (changed in M4, 2026-10-13). Dom keeps long uncut stretches and drops what went wrong, so the edit starts from all armed flight and removes, in order: time not flying (boot, menus, stats screens, disarmed), static of 1 s or more, sitting on the ground (3 s of stillness, or 1 s when the picture does not change at all; the moment before lift-off is kept), crashes with the failed move before them, repeated disarms, dull stretches of 15 s or more with no flip, spin, close pass or landing stunt (1 s margins), leftovers under 3 s, and short pieces where the camera hardly turns (a quad on a desk or in a hand). Tricks only protect footage from the dull rule. There is no length target (Dom, 2026-10-12). Segments stay in order, joined by hard cuts. The seed-and-session prototype was dropped: it kept ~41 % and cut real flips Dom wanted.
 - **Failures are excluded where they can be seen.** Crash-disarms and repeated re-arming (from the OSD) remove the failure and a short "cut short" remainder before it. Video alone cannot see every failure (a ground tap with no disarm looks like a flip). An optional `--exclude m:ss-m:ss` list covers these without making flags required. When a good trick runs into a crash, the cut goes in dead space before the failure if the trick still looks complete; otherwise the trick goes too.
 - **ML has to earn its place.** SigLIP 2 (Apache-2.0) is tested after the CV pipeline is solid. It has two candidate jobs: scenery, and learning Dom's own keep/cut preferences from his finished edits. It is kept only if it beats the CV pipeline on held-out recordings.
 - **Picture enhancement, on by default** (Dom, 2026-10-12). It runs after the edit is chosen, on the kept frames only (plus 3 neighbouring frames at each cut), so it costs a fraction of the flight. Recipe from the 2026-10-12 blind test: motion-compensated fusion of ±3 frames with an OSD guard, horizontal destriping, cross-colour (rainbow) removal, a tone curve and vibrance, a 1440x1080 upscale with luma-guided chroma, and clamped sharpening. Classical CV only: AI upscalers (Real-ESRGAN, BSRGAN, SwinIR, SCUNet) looked painted and lost the blind test. `--no-enhance` gives a fast plain render. CPU cost is ~2 CPU-s per frame; a CUDA version is planned so default runs stay practical.
@@ -29,9 +30,12 @@ Revised 2026-10-11 after testing on Dom's first real flights (see "Real-flight r
 |---|---|---|
 | M1 | Repository and safeguards | done (Linux + Windows checks passed; CI not yet run on GitHub) |
 | M2 | CV-only end-to-end baseline | done; real-flight result: close to chance on 3 of 4 recordings (see review) |
-| M2.5 | Fixes and evaluation harness | in progress (started 2026-10-12) |
-| M4 | Editing quality on real flights (moved before M3) | not started |
-| ME | Picture enhancement, default on | prototype done (blind-tested 2026-10-12) |
+| M2.5 | Fixes and evaluation harness | done 2026-10-12 (Linux + Windows checks passed; render peak 520 MB on Dom's 24-thread PC, see log) |
+| M4 | Editing quality on real flights (moved before M3) | done 2026-10-13 (cloud and Windows checks passed). Dom's verdict on the blind pairs: per-flight trims "don't really look like a montage of anything", which led to the montage pivot |
+| MM | Montage engine: several clips in, one montage out (CLI) | done 2026-10-13 |
+| MR | Dom rates montages of his own clips; tune until he is happy | done 2026-10-14 (indoor shots left to the image model and the UI) |
+| UI | Local desktop app: drag clips in, preview and swap shots, render on the GPU | next |
+| ME | Picture enhancement, default on, with the GPU | prototype done (blind-tested 2026-10-12); after UI |
 | M3 | ML (SigLIP 2) as a measured addition | after M4 |
 | M5 | Reliability, Windows and NVIDIA validation | not started |
 | M6 | Release readiness | not started |
@@ -52,6 +56,14 @@ Revised 2026-10-11 after testing on Dom's first real flights (see "Real-flight r
   - No downtime, menu, stats or static at the start or end.
   - Event recall ≥ 0.9 on labelled include moments (no length target).
   - Dom's blind rating of 3 new edits ≥ his rating of the M2 edits.
+- **MM**, measured on every labelled recording and reference edit (one montage per recording):
+  - Montage time inside labelled include moments (or Dom's own edit) beats ≥ 80 % of same-length random shots from the cleaned footage on average, and no recording falls below the random mean by much.
+  - 0 s of labelled failures that end in a crash-disarm; failures without a disarm reported, not hidden.
+  - Every shot is 8-15 s, inside cleaned footage, and starts and ends in a calm moment.
+  - Junk clips (bench, no signal, menus, sitting still) contribute no shots; a selection of only junk is refused with a clear message.
+  - Clips of different sizes or frame rates are fitted to one output size and rate; the render passes validation on FFmpeg 6.1/7/9 and on Dom's PC.
+- **MR**: Dom rates montages from 4-5 of his clips and prefers them to what he would cut himself in the same time, or tells us what to change.
+- **UI**: runs locally on Windows with no internet; drag and drop of clips and folders; shows the chosen shots with thumbnails, lets Dom swap, remove, reorder and trim them, then renders with progress; footage never leaves the PC.
 - **ME**:
   - Enhancement is applied to the cut edit only, by default; `--no-enhance` renders exactly as M2.5 does.
   - No OSD damage, no visible flicker or ghosting at cuts or in fast flips (checked on night and day flights).
@@ -94,10 +106,16 @@ Conclusions:
 Details and per-claim evidence: `docs/review-2026-10-11.md`.
 
 ## Known gaps (tracked)
-- Failures without a disarm (ground taps) are invisible to video-only detection. Covered by `--exclude` for now; blackbox data could close it later.
+- Failures without a disarm (ground taps) are invisible to video-only detection. Covered by `--exclude` for now; blackbox data could close it later. Seen in M4: 180033 1:01-1:05 (ground tap) and 203859 0:16-0:32 (repeated failed gate attempts before a crash) are kept.
+- A crash cuts back at most 8 s before the disarm, to the calmest moment. A long failed move before that (180033 1:08-1:12, Dom: drop the weave before it too) is partly kept.
+- Dom's own clip edits (clip1/clip2) keep 32-43 %; the editor keeps 80-84 % of those flights. No measured signal predicts which flying he cut there (IoU at chance), so this is taste, not a rule. Goose (Dom kept 86 %) matches well (IoU 0.86).
+- OSD menus read as stats screens. Harmless so far (it is downtime either way), but a missed arm between two menu screens can mark a few seconds as armed; the 3 s minimum removes them.
+- Without any arm or disarm on screen (no OSD, or none ever shown), only pieces of 6 s or more with a median rotation of 18 deg/s or more are kept. Untested on real no-OSD flights (DJI/Walksnail DVRs record without OSD).
 - Digital systems (DJI/Walksnail/HDZero), PAL OSD, no OSD, 25/30 fps DVRs and stabilised video are untested; each needs a fallback.
 - Lens field of view is unknown, so rotation degrees are approximate; thresholds are relative to the flight.
-- MPEG-TS PTS discontinuities are not handled yet (M5).
+- MPEG-TS PTS discontinuities are not handled yet (M5). FFmpeg only repairs jumps of 10 s or more; a smaller backward jump (goggles resetting their clock mid-file) would make analysis and render disagree. Not seen in Dom's files.
+- Variable-frame-rate input (phones, screen captures) is refused with a clear message and a conversion command (M5). The check reads every frame's timestamp: footage counts as constant-rate when 90% of its frame steps are one frame long, so a steady DVR recording with signal loss is accepted. Gaps (missing frames) are reported and the edit plays straight across them; validation counts the frames that really exist.
+- `scripts/match_edit.py` keeps all fingerprints in memory (~7 kB per frame at 60 fps): fine for a few clips, ~2-3 GB for an hour of raw footage.
 - NVENC and the `--device` flag arrive with M3/M5.
 
 ## Decisions
@@ -111,17 +129,109 @@ Details and per-claim evidence: `docs/review-2026-10-11.md`.
 - 2026-10-12: no edit-length target; keep each flight's best moments. Crashes are cut, using dead space before them where possible (Dom).
 - 2026-10-12: the uncertain 180033 3:29-3:37 weave is left out of scoring (Dom: "if you aren't confident leave it out").
 - 2026-10-12: picture enhancement (mcfuse recipe) is on by default and runs after cutting (Dom). Footage is analog, recorded by HDZero BoxPro+ goggles, always 60 fps.
+- 2026-10-13: the tool becomes a montage maker from a selection of clips (Dom). Shots are long, 8-15 s (Dom's choice). The UI is a local desktop app with drag and drop that uses his GPU, not a website (Dom: "it doesn't need to be web based since it uses the gpu").
 - Open: enable proposed hooks (`docs/automation.md`)? Allow huggingface.co + download.pytorch.org for the cloud environment (M3)?
 
 ## Evaluation data
 - Hand labels: `eval/annotations/20261009-182156.json`, `20261009-180033.json`, `20261010-203859.json` (Dom's timestamps, incomplete; 180033 corrections applied 2026-10-12 after Dom's answers; 203859 is a raw `.ts` as the tool is meant to accept).
 - Reference edits: `eval/annotations/clip1.json`, `clip2.json` (from Dom's `finished edit.mp4`).
+- Reference edit `eval/annotations/hdz_0000.reference.json` (from Dom's `goose.mp4`, a 24 fps export: one take trimmed to 28.3-242.4 s with two small gaps, 86% kept). Raw and edit are in `D:\clips`.
+- `D:\clips` (Dom's dump, 2026-10-12): 133 clips, 5.4 h. Test material for junk detection (bench/no-signal, menus, sitting still, stats screen), not training data. The raws of `Timeline 1`, `barrhaven 7 batteries` and `bathrobe fpv` are not in it.
 - Footage stays on Dom's PC (`D:\FPVEdit\res\testdata1`, gitignored). Only annotations are committed.
 - Wanted: more finished edits plus their raws (any number), flights from other conditions (daytime cinematic, gates, a digital system), and optionally 2-3 flights with blackbox logs for ground truth.
 - Protocol: leave-one-recording-out tuning with at most a few tuned parameters, a same-length random-edit baseline on every metric, a sealed set of new recordings for milestone sign-off, and Dom's blind ratings as the final arbiter.
 
 ## Validation log
 (newest first; exact commands and outcomes)
+
+### 2026-10-14 — MR rating and close-pass change (cloud container; Dom's PC)
+- Dom's rating of the 5-clip montage: he likes it overall and the cut points are good. Two shots from indoors cruising (139.7-147.7 and 370.3-382.0), picked almost only for close passes, are not impressive: indoors everything is close, so doorways look like near misses.
+- Change: a close pass must also be `pass_prominence` (0.75) above the median approach over the 4 s around it. Labelled recordings: mean beats-random 75 % to 82 %, failure time kept unchanged (0.5 s). New unit test: a long stretch of steady closeness gives no passes, a short sudden one does. Dom's PC: ruff, format, mypy clean; pytest 188 passed.
+- It does not remove the two indoor shots (re-render picked the same 8 shots). Their passes stand out from their surroundings (prominence 0.95-3.75) and the indoor clip's motion statistics (approach, speed, turning, passes per minute) match the outdoor 204314 closely. Capping the score of passes per shot lowered the label score to 64-72 %. So motion alone cannot tell indoor doorways from outdoor gaps; recognising indoor footage waits for the image model, and the UI lets Dom drop or swap a shot by hand. Dom chose to move on to the UI (2026-10-14).
+
+### 2026-10-13 — MM montage engine (cloud container; Dom's PC)
+- Dom's PC (Windows, FFmpeg 9.0.2): ruff, format, mypy pass; pytest 187 passed. Montage of 5 testdata1 clips (204314, nighttime, low light, urban building dive, indoors cruising; 26:14 of usable footage, no cache): exit 0, 706 s, 8 shots / 88.4 s, shots from all 5 clips (4 from indoors cruising, at the half-per-clip cap), 1280x720 60 fps, 5304 frames, no warnings. Waiting on Dom's rating.
+- Fast checks: ruff, ruff format, mypy strict (37 files) pass; pytest 186 passed on FFmpeg 6.1.1. Render, pipeline and montage tests (44) also pass on FFmpeg 9.0.2. FFmpeg 7.0.2: not run; the static 7.0.2 build crashes (segfault) on any decode in this container, including a 3-second test file, so the result says nothing about the code.
+- New tests: moments (a flip is found, calm cruising gives none), usable footage (no shots before arming, on the ground, in a crash or on the stats screen), shots (8-15 s, inside usable footage, the flip shown whole with a lead-in), a flip that crashes gives no shot, a desk recording gives none, picking (target length, best first, no overlap, a 4 s gap within a clip, at most half per clip, clip order), and end to end: two clips of different size and rate (320x180 at 30 fps .ts and 480x360 at 60 fps .mp4) become one validated montage at 480x360 with shots from both, inputs unchanged; idle clips are left out with a warning, only idle clips are refused with no output, a clip given twice is used once, `--analyze-only` writes only the plan, `--trim` with two inputs and a negative `--length` are refused.
+- Shot picking on the labelled recordings (360p proxies, one 40 s montage per recording; share of montage time inside Dom's labelled moments or his own edit, vs 300 random sets of same-length shots from the same usable footage):
+
+| Recording | Shots | In Dom's moments | Random | Beats random | Failure time kept |
+|---|---|---|---|---|---|
+| 180033 | 4 (42 s) | 0.57 | 0.44 | 76 % | 0.0 s (random 1.1 s) |
+| 182156 | 3 (38 s) | 0.59 | 0.41 | 86 % | 0.0 s |
+| 203859 | 5 (44 s) | 0.94 | 0.54 | 99 % | 0.4 s (random 3.2 s) |
+| clip1 (Dom's edit) | 4 (43 s) | 0.46 | 0.49 | 44 % | - |
+| clip2 (Dom's edit) | 4 (42 s) | 0.61 | 0.40 | 89 % | - |
+| hdz_0000 (goose) | 4 (40 s) | 0.99 | 0.93 | 54 % | - |
+
+  Mean 75 % (criterion: 80 %). Weights were chosen from a small grid on these same six recordings (balanced for the fewest failures over the best mean), so this is not a held-out result; Dom's ratings decide. The 0.4 s is the edge of a failed gate attempt in 203859 that has no disarm (known gap). All 11 junk clips (bench, no signal, desk, car, crash-only) give no shots.
+- Five of Dom's best flights (145717, 201057, 204314, hdz_0053, nighttime; proxies) give an 89 s draft of 10 shots: 5 from 145717 (48 s, near the half-per-clip cap), 2 from 201057, 1 from 204314, 2 from nighttime, none from hdz_0053.
+
+### 2026-10-13 — M4 checks (cloud container on proxies; Dom's PC on the originals)
+- What changed:
+  - New `flight.py` reads flight state from the OSD: ARMED message, arming logo, stats screen (disarm), boot screen, static and the grey no-signal screen. A recording that opens on a boot screen starts disarmed; a stats screen while disarmed means an arm was missed.
+  - `highlights.py` is rewritten as the removal-based policy described under Approach.
+  - `analysis.py` now caches the per-frame measurements (`*.measurements.npz`) instead of the M2 samples.
+  - `sampling.py`, `features.py` and `scoring.py` are no longer used by the pipeline. They are kept until Dom OKs deleting them.
+  - `scripts/evaluate.py`: the reference-edit printout had the editor's and the human edit's numbers under each other's names (metrics were right).
+- OSD reading fixes:
+  - Glyphs are now bright pixels with a much darker pixel within 2 px. The old rule required near-black outlines and missed the OSD on 4 night/indoor clips; the OSD is now found on all 28 recordings that have one.
+  - When the stats screen stays up for a long stretch (3 of 30 recordings), its text no longer counts as part of the normal layout.
+- First run on Dom's PC (Windows, originals, earlier rules): ruff, ruff format (32 files), mypy (34 files) clean; pytest 168 passed in 152 s. Full-resolution scores were close to the proxies except 182156: include time 0.85, because calm hovers (a landscape shot at 0:26-0:41, a moment inside the 4:02 flip) were cut as "on the ground". Fix: one still second only counts as ground when the picture does not change at all (ground ~0.001 frame change, hover 0.004 and up); otherwise 3 s. Dull stretches were raised from 10 s to 15 s, which keeps every labelled good moment; a short piece must also show the camera turning (median 18 deg/s), which keeps the desk and no-OSD bench clips out.
+- Six evaluation recordings with the final rules (proxies), each compared with 1000 same-length random edits (share beaten in brackets):
+  | Recording | Kept | Result |
+  |---|---|---|
+  | 180033 | 79 % | event recall 1.00 (96 %), include time 1.00 (99 %), failure time kept 0.21 (98 %), no session cut |
+  | 182156 | 66 % | event recall 1.00 (99 %), include time 1.00 (100 %), no session cut |
+  | 203859 | 79 % | event recall 1.00 (94 %), include time 1.00 (99 %), failure time kept 0.71 (77 %), no session cut |
+  | clip1 | 85 % | IoU with Dom's edit 0.49 (53 %) |
+  | clip2 | 84 % | IoU 0.38 (58 %) |
+  | hdz_0000 (goose) | 88 % | IoU 0.87 (71 %) |
+- Failures that end in a crash-disarm keep at most 1 s: 180033 1:14-1:19 keeps 1.0 s (the re-arm), 2:51-3:00 0 s, 3:58-4:19 0.8 s; 203859 2:03-2:07 0.5 s. The failures that are kept have no disarm (see Known gaps).
+- M2 on the same proxies (2026-10-12): 180033 kept 73 % of failure time, 203859 kept 95 % of the flight, clip IoU 0.47/0.32.
+- 24 clips from `D:\clips` that were never used for tuning:
+  - All 11 junk clips give nothing (the CLI stops with "no flying worth keeping"): 5 bench/grey no-signal (two at 50 fps), 3 desk clips, 1 in a car, 2 without OSD, 1 short crash clip.
+  - The 13 real flights keep 17-87 %. Contact sheets of 9 were checked by eye: every edit starts at take-off and ends before the stats screen, and menus, reboots and ground time are cut. Indoor flights out of a window are kept.
+- The parameters were set by inspecting all six evaluation recordings, so this is not a leave-one-out result. The held-out evidence is the 24 untuned clips and Dom's blind rating.
+- Cloud, final rules: ruff, ruff format and mypy clean; pytest 169 passed.
+
+### 2026-10-12 — Frame timing fix (Linux cloud container, FFmpeg 6.1.1 / 7.0.2 / 9.0.2; Dom's PC)
+- Rate check over all 133 clips in `D:\clips` (on Dom's PC): the old average-rate check refused 1 clip, `20261008-134959` (average 58.27 fps); `hdz_0020` passed at 1.96%. Both are steady 60 fps that freeze ~1.13 s at the end (signal loss) and finish with ~35 frames at 50 fps. Clip length, not timing, decided the result.
+- A synthetic 60 fps TS with 1.13 s of frames missing failed the old render validation ("292 frames, expected about 360"). Now it renders and validates with exactly 292 frames.
+- Linux: `ruff check`, `ruff format --check`, `mypy` clean; `pytest`: 161 passed on FFmpeg 6.1.1; media/render/pipeline tests (66) pass on FFmpeg 9.0.2. A 5:00 HEVC MPEG-TS (looped 203859) still renders and validates: 18015/18015 frames, no false gap warning.
+- First Windows run: both real gap clips were accepted but failed validation (527 frames rendered, 495 expected; 1281 vs 1245). Cause: `setpts` renumbers frames but keeps their durations, so in MP4 the frame before the gap still lasts ~1.1 s and the constant-rate encoder repeated it ~60 times, then dropped later frames. The synthetic TS test missed it because enough frames followed the gap to even out the count. Fix: an `fps` filter after `setpts` resets every duration. The regression test now uses an MP4 with a gap and a 50 fps tail and checks that no frame repeats (it fails on the old graph: 248 frames vs 202). Same result on FFmpeg 6.1.1, 7.0.2 (MP4) and 9.0.2.
+- Windows after the fix (FFmpeg 9.0.2): ruff, ruff format (38 files), mypy (29 files) clean; pytest 161 passed in 24 s. `20261008-134959.mp4`: gap warning (1.13 s at 39.3 s), 0:41 → 0:08, 495/495 frames. `hdz_0020.mp4`: gap warning (1.14 s at 58.5 s), 1:00 → 0:21, 1245/1245 frames. `20261010-203859.ts`: no gap warning, 3:20 → 3:09, 11345 frames as before. framemd5: no frame repeats in any output. `check_staged.py --all` clean; nothing committed.
+- `scripts/match_edit.py`: title/black frames (match < 0.5) and stray cross-fade frames far from kept footage are left out instead of being marked `ignore` at random raw times.
+
+### 2026-10-12 — M2.5 checks on Dom's PC (Windows, Python 3.14.5, FFmpeg 9.0.2 gyan.dev full build)
+- `uv sync` OK; ruff, ruff format (38 files), mypy (29 files) clean; pytest 155 passed in 27 s.
+- Full-resolution real flights, `--keep-intermediates --cache-dir work\m25\cache` (memory sampled every second from Get-Process PeakWorkingSet64):
+  | Flight | Wall time | Render time / peak RAM | Edit | Output |
+  |---|---|---|---|---|
+  | 20261009-182156.mp4 | 117 s | ~76 s / 522 MB | 4:43 → 3:45 (79 %), 4 segments, flat-score warning | h264 1280x720 yuv420p tv bt709 60/1, 13472 frames |
+  | 20261009-180033.mp4 | 105 s | ~62 s / 520 MB | 4:19 → 2:33 (59 %), 5 segments | same format, 9173 frames |
+  | 20261010-203859.ts | 92 s | ~56 s / 522 MB | 3:20 → 3:09 (95 %), 1 segment, flat-score warning | same format, 11345 frames |
+- Frame counts equal edited duration × 60 in every output; video only. Analysis decode peaked at 111 MB, validation at 91 MB.
+- Active area [166, 0, 948, 720] on all three; OSD mask 10-11 % of the picture.
+- Cached `--analyze-only` re-run of 203859: 0.2 s, no FFmpeg started, same result.
+- `check_staged.py --all` clean; nothing in `res\` touched; nothing committed.
+- RAM: the ~500 MB target is met in spirit but not to the letter (520 MB). The peak comes from x264 and HEVC decoder threads scaling with the 24-thread CPU (213 MB on 4 cores); the old render peaked near 6 GB. Accepted; revisit only if it matters.
+- The plain render keeps the full 1280x720 frame with its pillarbox bars (like Dom's own edit). Cropping to the 4:3 picture comes with enhancement (ME), which outputs 1440x1080.
+
+### 2026-10-12 — M2.5 checks (Linux cloud container, Python 3.13, FFmpeg 6.1.1 / 7.0.2 / 9.0.2)
+- Fast checks: ruff, ruff format, mypy (29 files) clean; pytest 155 passed.
+- Render matrix (`render(...)` + `validate_output(...)`, preset ultrafast):
+  - Full-range HEVC MPEG-TS from Dom's 203859 flight looped to 5:00 (`-stream_loop`, stream copy), 30 cuts, 2:15 kept: 60/1 fps, 8107/8107 frames, yuv420p limited range, no audio, VALID on FFmpeg 6.1 (115 s, peak 213 MB) and 9.0 (107 s, peak 133 MB).
+  - Full-range H.264 MP4 with late audio, 4 cuts: VALID with identical frame counts on 6.1, 7.0.2 and 9.0 (peak 147 MB). The 7.0.2 test binary (static johnvansickle build) segfaults on any MPEG-TS or HEVC input here, so 7.x was only tested on MP4.
+- Independent reviews (video, code quality): no high-severity defects. Fixed: cache key now includes the measuring code and FFmpeg version; damaged cache files are re-measured; unwritable cache only warns; match_edit never replaces hand labels and marks weak matches as unknown; cut boundaries snap to the nearest frame (robust to 1 ms timebases); analysis samples aligned to i/fps; averaged frame rates snap to standard rates; git builds pick the right filter-script option; variable-frame-rate input refused clearly; more prohibited paths (blackbox CSV/event, nested work/frames/output folders).
+- Picture: active area 472x360 in the 640x360 proxies and 948x720 at full resolution (true picture 480/960 wide; ~0.6 % trimmed per side); OSD mask 6-13 % of the picture, visually only OSD elements.
+- Edit matching reproduces Dom's 9 segments of `finished edit.mp4` exactly (37 s on proxies).
+- The M2 selector on the 640x360 proxies (now cropped and OSD-masked), with 1000 same-length random edits as baseline:
+  - 182156: 79 % kept, event recall 1.00 (beats 96 % of random edits).
+  - 180033: 65 % kept, event recall 0.78 (beats 89 %), but 73 % of failure time kept (random keeps 60 %).
+  - 203859: kept 95 % (flat score), so it does not beat chance.
+  - clip1/clip2: IoU with Dom's edit 0.47/0.32, at chance.
+  - Small analysis changes move these numbers a lot, which is expected from the M2 selector. Choosing moments well is M4's job.
 
 ### 2026-10-11 — Real-flight review (cloud container, 640x360 60 fps proxies of Dom's originals)
 | Command | Result |

@@ -1,7 +1,7 @@
 # FPVEdit — project rules for Claude
 
-One-command, offline CLI (`fpv-editor flight.ts`) that edits FPV freestyle recordings into one
-H.264 highlight MP4 (video only: the DVR's goggle audio is irrelevant). Plan and status: `PLAN.md`. Python ≥ 3.11, FFmpeg ≥ 6 on PATH.
+One-command, offline CLI (`fpv-editor a.ts b.ts ...`) that turns FPV freestyle recordings into one
+H.264 montage of their best shots (`--trim`: one recording edited as a whole flight) (video only: the DVR's goggle audio is irrelevant). Plan and status: `PLAN.md`. Python ≥ 3.11, FFmpeg ≥ 6 on PATH.
 
 ## Commands
 - Install dev env: `uv sync`
@@ -11,9 +11,11 @@ H.264 highlight MP4 (video only: the DVR's goggle audio is irrelevant). Plan and
 
 ## Architecture
 `src/fpv_editor/`: `cli` (orchestration) → `media` (ffprobe/ffmpeg) → `analysis` (runs the next
-steps, optional feature cache): `picture` (active area, OSD mask) → `sampling` → `features` (CV)
-→ `models` (optional ML, behind a small protocol) → `scoring` → `highlights` (intervals → EDL)
-→ `render` (EDL → MP4 → validate). Analysis never renders; rendering reads only the EDL.
+steps, optional measurement cache): `picture` (active area, OSD mask) → `measure` + `motion`
+(per-frame signals) → `flight` (OSD flight state) → `highlights` (clean flight, `--trim` edit)
+→ `montage` (moments, shots, picking across clips) → `render` (shots → MP4 parts → join →
+validate). Analysis never renders; rendering reads only the shot list. `sampling`, `features`
+and `scoring` are the unused M2 pipeline.
 
 ## Conventions
 - Type hints everywhere (mypy strict), `pathlib`, frozen dataclasses for config/results, no global mutable state.

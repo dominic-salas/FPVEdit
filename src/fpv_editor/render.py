@@ -24,6 +24,9 @@ from dataclasses import dataclass
 from fractions import Fraction
 from pathlib import Path
 
+import numpy as np
+from numpy.typing import NDArray
+
 from fpv_editor.errors import InvalidInputError, OutputExistsError, ValidationError
 from fpv_editor.highlights import Interval
 from fpv_editor.media import MediaInfo, Tools, probe, run_tool
@@ -33,6 +36,7 @@ DEFAULT_RATE = Fraction(30)  # only for sources that report no usable frame rate
 # A boundary belongs to the frame nearest to it: frames are selected from half a frame
 # before each boundary, which absorbs timestamp rounding (1 ms timebases in MKV/MP4).
 BOUNDARY_FRAMES = 0.5
+READ_MARGIN_S = 2.0  # decoding stops this long after the last kept frame
 
 
 @dataclass(frozen=True)
@@ -42,24 +46,28 @@ class EncodeConfig:
     crf: int = 18
 
 
-def default_output_path(source: Path) -> Path:
+def default_output_path(source: Path, suffix: str = OUTPUT_SUFFIX) -> Path:
     """`<stem>_highlight.mp4` beside the source, or `_highlight-2` etc. if taken."""
-    first = source.with_name(f"{source.stem}{OUTPUT_SUFFIX}.mp4")
+    first = source.with_name(f"{source.stem}{suffix}.mp4")
     if not first.exists():
         return first
     for index in range(2, 1000):
-        candidate = source.with_name(f"{source.stem}{OUTPUT_SUFFIX}-{index}.mp4")
+        candidate = source.with_name(f"{source.stem}{suffix}-{index}.mp4")
         if not candidate.exists():
             return candidate
     raise OutputExistsError(f"too many existing outputs next to {source.name}; use --output")
 
 
-def resolve_output_path(source: Path, requested: Path | None, force: bool) -> Path:
-    output = (requested or default_output_path(source)).resolve()
-    if _same_file(output, source):
-        raise InvalidInputError(
-            "the output path is the same as the input; refusing to overwrite it"
-        )
+def resolve_output_path(
+    source: Path | Sequence[Path],
+    requested: Path | None,
+    force: bool,
+    suffix: str = OUTPUT_SUFFIX,
+) -> Path:
+    sources = [source] if isinstance(source, Path) else list(source)
+    output = (requested or default_output_path(sources[0], suffix)).resolve()
+    if any(_same_file(output, path) for path in sources):
+        raise InvalidInputError("the output path is the same as an input; refusing to overwrite it")
     if output.suffix.lower() != ".mp4":
         raise InvalidInputError(f"output must be an .mp4 file: {output}")
     if output.exists() and not force:
@@ -101,32 +109,70 @@ def _next_frame(seconds: float, rate: Fraction) -> Fraction:
     return Fraction(max(0, index)) / rate
 
 
-def expected_frame_count(intervals: Sequence[Interval], rate: Fraction) -> int:
-    """Frames a constant-rate source has inside frame-snapped ``intervals``."""
-    return sum(round(Fraction(i.end) * rate) - round(Fraction(i.start) * rate) for i in intervals)
+def expected_frame_count(
+    intervals: Sequence[Interval], rate: Fraction, times: NDArray[np.float64] | None = None
+) -> int:
+    """Frames the render keeps from frame-snapped ``intervals``.
+
+    With the source's frame ``times`` (`media.frame_times`) the frames are counted the way
+    the render selects them, so gaps from signal loss are allowed for. Without them the
+    source is assumed to be perfectly constant-rate.
+    """
+    if times is None:
+        return sum(
+            round(Fraction(i.end) * rate) - round(Fraction(i.start) * rate) for i in intervals
+        )
+    margin = BOUNDARY_FRAMES / float(rate)
+    return sum(
+        int(np.searchsorted(times, i.end - margin) - np.searchsorted(times, i.start - margin))
+        for i in intervals
+    )
 
 
-def build_filter_graph(intervals: Sequence[Interval], *, video_index: int, rate: Fraction) -> str:
+@dataclass(frozen=True)
+class Fit:
+    """Output frame size and rate for a montage of clips that may differ in both."""
+
+    width: int
+    height: int
+    rate: Fraction
+
+
+def build_filter_graph(
+    intervals: Sequence[Interval], *, video_index: int, rate: Fraction, fit: Fit | None = None
+) -> str:
     """Filter graph that keeps ``intervals`` of input 0 as one continuous ``[v]``.
 
     Interval times are on the analysis timeline (seconds since the first video frame)
-    and should already be snapped to frame times (`snap_to_frames`).
+    and should already be snapped to frame times (`snap_to_frames`). With ``fit`` the
+    frames are converted to its rate and scaled to fit its size, centred on black.
     """
     if not intervals:
         raise ValueError("at least one interval is required")
     margin = BOUNDARY_FRAMES / float(rate)
     keep = "+".join(f"between(t,{i.start - margin:.6f},{i.end - margin:.6f})" for i in intervals)
-    # yuv420p H.264 needs even dimensions; uses the post-rotation size, so it is safe
-    # for footage with rotation metadata.
-    crop = "crop=trunc(iw/2)*2:trunc(ih/2)*2:0:0"
+    if fit is None:
+        # yuv420p H.264 needs even dimensions; uses the post-rotation size, so it is
+        # safe for footage with rotation metadata.
+        crop = "crop=trunc(iw/2)*2:trunc(ih/2)*2:0:0"
+    else:
+        crop = (
+            "scale=trunc(iw*sar/2)*2:ih,setsar=1,"  # square pixels first
+            f"fps={fit.rate.numerator}/{fit.rate.denominator},"
+            f"scale={fit.width}:{fit.height}:force_original_aspect_ratio=decrease,"
+            f"pad={fit.width}:{fit.height}:(ow-iw)/2:(oh-ih)/2,setsar=1"
+        )
     colour = (
         "scale=in_range=auto:out_range=tv:in_color_matrix=auto:out_color_matrix=bt709,"
         "format=yuv420p"
     )
-    return (
-        f"[0:{video_index}]setpts=PTS-STARTPTS,select='{keep}',"
-        f"setpts=N*{rate.denominator}/{rate.numerator}/TB,{crop},{colour}[v]"
+    # setpts renumbers the frames but keeps each one's duration: the frame before a
+    # signal-loss gap would still last ~1 s and the constant-rate encoder would repeat
+    # it. The fps filter resets every duration to one frame.
+    retime = (
+        f"setpts=N*{rate.denominator}/{rate.numerator}/TB,fps={rate.numerator}/{rate.denominator}"
     )
+    return f"[0:{video_index}]setpts=PTS-STARTPTS,select='{keep}',{retime},{crop},{colour}[v]"
 
 
 def render(
@@ -137,12 +183,16 @@ def render(
     *,
     encode: EncodeConfig,
     work_dir: Path,
+    fit: Fit | None = None,
 ) -> None:
     """Encode frame-snapped ``intervals`` to ``destination``, a temporary path the caller owns."""
     rate = output_rate(info)
-    graph = build_filter_graph(intervals, video_index=info.video.index, rate=rate)
-    script = work_dir / "filter_graph.txt"
+    graph = build_filter_graph(intervals, video_index=info.video.index, rate=rate, fit=fit)
+    script = work_dir / f"{destination.stem}.filter_graph.txt"
     script.write_text(graph, encoding="utf-8")
+    out_rate = fit.rate if fit is not None else rate
+    # Stop reading a little after the last kept frame instead of decoding the whole file.
+    until = max(i.end for i in intervals) + READ_MARGIN_S
     args = [
         tools.ffmpeg,
         "-nostdin",
@@ -150,6 +200,7 @@ def render(
         "-v",
         "error",
         "-y",
+        *("-t", f"{until:.3f}"),
         "-i",
         str(info.path),
         tools.filter_script_option,
@@ -157,7 +208,7 @@ def render(
         "-map",
         "[v]",
         "-r",
-        f"{rate.numerator}/{rate.denominator}",
+        f"{out_rate.numerator}/{out_rate.denominator}",
         "-c:v",
         encode.video_codec,
         "-preset",
@@ -172,6 +223,30 @@ def render(
         *("-movflags", "+faststart", "-f", "mp4", str(destination)),
     ]
     run_tool(args, action="rendering the highlight video")
+
+
+def join_parts(tools: Tools, parts: Sequence[Path], destination: Path, work_dir: Path) -> None:
+    """Join rendered parts (same codec, size and rate) without encoding them again."""
+    if not parts:
+        raise ValueError("at least one part is required")
+    listing = work_dir / "parts.txt"
+    # Paths in the list are relative to it; the parts are named by us, so need no quoting.
+    listing.write_text(
+        "".join(f"file '{part.relative_to(work_dir).as_posix()}'\n" for part in parts),
+        encoding="utf-8",
+    )
+    args = [
+        tools.ffmpeg,
+        "-nostdin",
+        "-hide_banner",
+        "-v",
+        "error",
+        "-y",
+        *("-f", "concat", "-safe", "0", "-i", str(listing)),
+        *("-map", "0:v:0", "-c", "copy", "-an", "-sn", "-dn"),
+        *("-movflags", "+faststart", "-f", "mp4", str(destination)),
+    ]
+    run_tool(args, action="joining the montage")
 
 
 def validate_output(
