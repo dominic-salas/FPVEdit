@@ -6,7 +6,10 @@ user's local app-data folder, and the montage is written where the user chooses.
 
 from __future__ import annotations
 
+import logging
+import os
 import queue
+import sys
 import threading
 import time
 import traceback
@@ -23,6 +26,8 @@ from PySide6.QtGui import (
     QDropEvent,
     QIcon,
     QKeySequence,
+    QPainter,
+    QPaintEvent,
     QPixmap,
 )
 from PySide6.QtWidgets import (
@@ -45,9 +50,14 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from fpv_editor import __version__
+from fpv_editor.app.dialogs import SettingsDialog, about_text, ask_for_ffmpeg
 from fpv_editor.app.frames import grab_frame
+from fpv_editor.app.logs import start_logging
+from fpv_editor.app.look import app_icon
 from fpv_editor.app.model import ShotList
 from fpv_editor.app.preview import PreviewView
+from fpv_editor.app.settings import AppSettings
 from fpv_editor.cli import (
     MONTAGE_SUFFIX,
     MontagePlan,
@@ -56,11 +66,12 @@ from fpv_editor.cli import (
     render_montage,
 )
 from fpv_editor.errors import CancelledError, FPVEditError
-from fpv_editor.media import MediaInfo, Tools, find_tools, probe
-from fpv_editor.montage import MomentKind, MontageConfig, Shot
+from fpv_editor.media import MediaInfo, Tools, find_tools, probe, run_tool
+from fpv_editor.montage import MomentKind, Shot
 from fpv_editor.render import (
     NVENC,
     EncodeConfig,
+    default_output_path,
     encoders,
     resolve_output_path,
     with_fallback,
@@ -70,6 +81,7 @@ VIDEO_SUFFIXES = (".ts", ".mp4")
 OUTPUT_MARKERS = (MONTAGE_SUFFIX, "_highlight")  # our own renders, skipped in dropped folders
 THUMB_HEIGHT = 72
 TRIM_STEPS = (-1.0, -0.25, 0.25, 1.0)
+log = logging.getLogger("fpv_editor.app")
 
 
 def video_files(paths: Sequence[Path]) -> list[Path]:
@@ -92,6 +104,20 @@ def _is_recording(path: Path) -> bool:
 def clock(seconds: float) -> str:
     minutes, rest = divmod(max(0.0, seconds), 60)
     return f"{int(minutes)}:{rest:04.1f}"
+
+
+def plural(count: int, noun: str) -> str:
+    return f"{count} {noun}{'' if count == 1 else 's'}"
+
+
+def time_left(elapsed: float, share: float) -> str:
+    """'about 2 min left' from the time so far and the share done ('' while too early)."""
+    if share < 0.03 or elapsed < 3:
+        return ""
+    seconds = elapsed * (1 - share) / share
+    if seconds < 60:
+        return "less than a minute left"
+    return f"about {round(seconds / 60)} min left"
 
 
 def describe(shot: Shot) -> str:
@@ -118,6 +144,7 @@ class Task(QThread):
         super().__init__(parent)
         self._work = work
         self._cancel = threading.Event()
+        self.started_at = time.monotonic()
 
     def cancel(self) -> None:
         self._cancel.set()
@@ -131,10 +158,13 @@ class Task(QThread):
         try:
             result = self._work(self._report)
         except CancelledError:
+            log.info("cancelled")
             self.failed.emit("Cancelled.")
         except FPVEditError as exc:
+            log.warning("failed: %s", exc)
             self.failed.emit(str(exc))
         except Exception:  # a defect: show it in full rather than lose it in a thread
+            log.exception("unexpected error")
             self.failed.emit(f"Unexpected error:\n{traceback.format_exc()}")
         else:
             self.succeeded.emit(result)
@@ -200,15 +230,36 @@ class ClipList(QListWidget):
         else:
             super().dropEvent(event)
 
+    def paintEvent(self, event: QPaintEvent) -> None:
+        super().paintEvent(event)
+        if self.count() == 0:
+            painter = QPainter(self.viewport())
+            painter.setPen(self.palette().placeholderText().color())
+            painter.drawText(
+                self.viewport().rect(),
+                Qt.AlignmentFlag.AlignCenter,
+                "Drop recordings (.ts, .mp4) or folders here",
+            )
+
 
 class MainWindow(QMainWindow):
-    def __init__(self, tools: Tools, cache_dir: Path | None) -> None:
+    def __init__(
+        self,
+        tools: Tools,
+        cache_dir: Path | None,
+        settings: AppSettings | None = None,
+        log_file: Path | None = None,
+    ) -> None:
         super().__init__()
-        self.setWindowTitle("FPV Editor")
+        self.setWindowTitle(f"FPV Editor {__version__}")
+        self.setWindowIcon(app_icon())
         self.resize(1280, 800)
         self.setAcceptDrops(True)
         self._tools = tools
         self._cache_dir = cache_dir
+        self._settings = settings or AppSettings()
+        self._log_file = log_file
+        self._notes: tuple[str, ...] = ()
         self._plan: MontagePlan | None = None
         self._shots: ShotList | None = None
         self._task: Task | None = None
@@ -225,6 +276,11 @@ class MainWindow(QMainWindow):
         self._loader.start()
 
         self._build()
+        self._build_menus()
+        self._set_notes(())
+        geometry = self._settings.geometry
+        if geometry is not None:
+            self.restoreGeometry(geometry)
         self._refresh()
 
     # ----- layout -----
@@ -241,7 +297,8 @@ class MainWindow(QMainWindow):
         self._length.setRange(10, 1800)
         self._length.setDecimals(0)
         self._length.setSuffix(" s")
-        self._length.setValue(MontageConfig().length_s)
+        self._length.setValue(self._settings.length_s)
+        self._length.valueChanged.connect(self._length_changed)
         self._find = QPushButton("Find shots")
         self._find.clicked.connect(self._find_shots)
         clip_buttons = QHBoxLayout()
@@ -325,12 +382,15 @@ class MainWindow(QMainWindow):
         self._output_label = QLabel()
         change = QPushButton("Save as…")
         change.clicked.connect(self._choose_output)
+        self._save_as = change
         self._render = QPushButton("Render montage")
         self._render.clicked.connect(self._start_render)
         self._cancel = QPushButton("Cancel")
         self._cancel.clicked.connect(self._cancel_task)
         self._open = QPushButton("Show in folder")
         self._open.clicked.connect(self._show_output)
+        self._notes_button = QPushButton()
+        self._notes_button.clicked.connect(self._show_notes)
         self._progress = QProgressBar()
         self._progress.setRange(0, 1000)
         self._status = QLabel()
@@ -339,24 +399,48 @@ class MainWindow(QMainWindow):
         for widget in (self._output_label, change, self._render, self._cancel, self._open):
             bottom.addWidget(widget)
         bottom.insertStretch(1)
+        status_row = QHBoxLayout()
+        status_row.addWidget(self._status, 1)
+        status_row.addWidget(self._notes_button)
 
         central = QWidget()
         layout = QVBoxLayout(central)
         layout.addWidget(main, 1)
         layout.addLayout(bottom)
         layout.addWidget(self._progress)
-        layout.addWidget(self._status)
+        layout.addLayout(status_row)
         self.setCentralWidget(central)
 
-        undo = QAction("Undo", self)
-        undo.setShortcut(QKeySequence.StandardKey.Undo)
-        undo.triggered.connect(self._undo)
-        self.addAction(undo)
-        delete = QAction("Remove shot", self)
-        delete.setShortcut(QKeySequence.StandardKey.Delete)
-        delete.triggered.connect(self._remove_current)
+    def _build_menus(self) -> None:
+        def action(text: str, slot: Callable[[], object], key: object = None) -> QAction:
+            item = QAction(text, self)
+            if key is not None:
+                item.setShortcut(key)  # type: ignore[call-overload]
+            item.triggered.connect(slot)
+            return item
+
+        menus = self.menuBar()
+        file = menus.addMenu("&File")
+        file.addAction(action("Add clips…", self._choose_clips, QKeySequence.StandardKey.Open))
+        file.addAction(action("Add a folder of clips…", self._choose_folder))
+        file.addAction(action("Remove selected clips", self._remove_clips))
+        file.addAction(action("Remove all clips", self._clear_clips))
+        file.addSeparator()
+        file.addAction(action("Find shots", self._find_shots, "F5"))
+        file.addAction(action("Render montage", self._start_render, "Ctrl+R"))
+        file.addSeparator()
+        file.addAction(action("Settings…", self._open_settings, "Ctrl+,"))
+        file.addSeparator()
+        file.addAction(action("Quit", self.close, QKeySequence.StandardKey.Quit))
+        edit = menus.addMenu("&Edit")
+        edit.addAction(action("Undo", self._undo, QKeySequence.StandardKey.Undo))
+        delete = action("Remove shot", self._remove_current, QKeySequence.StandardKey.Delete)
+        edit.addAction(delete)
         self._shot_list.addAction(delete)
         self._shot_list.setContextMenuPolicy(Qt.ContextMenuPolicy.ActionsContextMenu)
+        help_menu = menus.addMenu("&Help")
+        help_menu.addAction(action("Show the log file", self._show_log))
+        help_menu.addAction(action("About FPV Editor", self._about))
 
     # ----- clips -----
 
@@ -388,10 +472,26 @@ class MainWindow(QMainWindow):
         self._clips_changed()
 
     def _choose_clips(self) -> None:
+        start = str(self._settings.clip_folder or "")
         names, _ = QFileDialog.getOpenFileNames(
-            self, "Add clips", "", "Recordings (*.ts *.mp4 *.TS *.MP4)"
+            self, "Add clips", start, "Recordings (*.ts *.mp4 *.TS *.MP4)"
         )
-        self.add_paths([Path(n) for n in names])
+        if names:
+            self._settings.clip_folder = Path(names[0]).parent
+            self.add_paths([Path(n) for n in names])
+
+    def _choose_folder(self) -> None:
+        start = str(self._settings.clip_folder or "")
+        name = QFileDialog.getExistingDirectory(self, "Add the clips in a folder", start)
+        if name:
+            self._settings.clip_folder = Path(name)
+            self.add_paths([Path(name)])
+
+    def _clear_clips(self) -> None:
+        if self._busy():
+            return
+        self._clips.clear()
+        self._clips_changed()
 
     def _remove_clips(self) -> None:
         if self._busy():
@@ -404,8 +504,41 @@ class MainWindow(QMainWindow):
         if self._plan is not None:
             self._plan = None
             self._shots = None
+            self._set_notes(())
+            for i in range(self._clips.count()):
+                item = self._clips.item(i)
+                item.setText(Path(item.data(Qt.ItemDataRole.UserRole)).name)
             self._status.setText("The clips changed: press Find shots again (it is quick now).")
         self._refresh()
+
+    def _length_changed(self, seconds: float) -> None:
+        self._settings.length_s = seconds
+        self._refresh_total()
+
+    def _annotate_clips(self, plan: MontagePlan) -> None:
+        """Show what each clip gave: its usable length and shots, or why it gave none."""
+        used = {clip.index: clip for clip in plan.clips}
+        shots = {index: sum(1 for s in plan.shots if s.clip == index) for index in used}
+        for row, info in enumerate(plan.infos):
+            item = self._clips.item(row)
+            if item is None:
+                continue
+            notes = [n for n in plan.warnings if n.startswith(info.path.name)]
+            if row in used:
+                usable = clock(used[row].analysed_duration)
+                text = f"{info.path.name}  ({usable}, {plural(shots[row], 'shot')})"
+            else:
+                text = f"{info.path.name}  (nothing usable)"
+            item.setText(text)
+            item.setToolTip("\n".join([str(info.path), *notes]))
+
+    def _set_notes(self, notes: Sequence[str]) -> None:
+        self._notes = tuple(notes)
+        self._notes_button.setText(f"Notes ({len(self._notes)})")
+        self._notes_button.setVisible(bool(self._notes))
+
+    def _show_notes(self) -> None:
+        QMessageBox.information(self, "Notes", "\n\n".join(self._notes))
 
     # ----- analysis -----
 
@@ -416,7 +549,9 @@ class MainWindow(QMainWindow):
         tools, cache, length = self._tools, self._cache_dir, self._length.value()
 
         def work(progress: Progress) -> object:
+            progress("Reading the clips", 0.0)
             infos = [probe(tools, path) for path in paths]
+            log.info("finding shots in %d clips, length %.0f s", len(infos), length)
             return plan_montage(tools, infos, length=length, cache_dir=cache, progress=progress)
 
         self._run(work, self._plan_ready, "Analysing")
@@ -428,14 +563,18 @@ class MainWindow(QMainWindow):
         durations = {clip.index: clip.analysed_duration for clip in result.clips}
         self._shots = ShotList(result.shots, result.candidates, durations)
         self._output, self._force = None, False
-        notes = "\n".join(result.warnings)
+        self._annotate_clips(result)
+        self._set_notes(result.warnings)
         if result.shots:
             self._status.setText(
                 f"{len(result.shots)} shots picked from {result.footage_duration / 60:.1f} min "
-                f"of usable footage." + (f"\n{notes}" if notes else "")
+                "of usable footage. Click a shot to watch it; swap, trim or drag shots, then "
+                "render."
             )
         else:
-            self._status.setText("No flip, spin or close pass found in these clips.\n" + notes)
+            self._status.setText(
+                "No flip, spin or close pass found in these clips. See Notes for why."
+            )
         self._refresh()
         if result.shots:
             self._shot_list.setCurrentRow(0)
@@ -494,16 +633,21 @@ class MainWindow(QMainWindow):
             self._shot_list.blockSignals(False)
         else:
             self._stop_preview()
+        self._refresh_total()
+        self._refresh_alternatives()
+        self._refresh_output()
+        self._refresh_buttons()
+
+    def _refresh_total(self) -> None:
         if self._shots is not None:
             self._total.setText(
                 f"{len(self._shots.shots)} shots, {self._shots.duration:.1f} s "
                 f"(target {self._length.value():.0f} s)"
             )
+        elif self._clips.count():
+            self._total.setText("Press Find shots (F5).")
         else:
             self._total.setText("Add clips, then press Find shots.")
-        self._refresh_alternatives()
-        self._refresh_output()
-        self._refresh_buttons()
 
     def _refresh_icons(self) -> None:
         for widget, shots in (
@@ -525,6 +669,7 @@ class MainWindow(QMainWindow):
         self._remove_shot.setEnabled(selected and not busy)
         self._find.setEnabled(self._clips.count() > 0 and not busy)
         self._render.setEnabled(bool(self._current_shots()) and not busy)
+        self._save_as.setEnabled(self._plan is not None and not busy)
         self._cancel.setEnabled(busy)
         swap_mode = self._mode.currentIndex() == 0
         alt = self._alternatives.currentRow() >= 0
@@ -655,7 +800,11 @@ class MainWindow(QMainWindow):
     def _default_output(self) -> Path | None:
         if self._plan is None:
             return None
+        first = self._plan.infos[0].path
+        folder = self._settings.output_folder
         try:
+            if folder is not None and folder.is_dir():
+                return default_output_path(folder / first.name, MONTAGE_SUFFIX)
             return resolve_output_path(
                 [info.path for info in self._plan.infos], None, False, suffix=MONTAGE_SUFFIX
             )
@@ -688,10 +837,13 @@ class MainWindow(QMainWindow):
         if self._plan is None or self._shots is None or self._busy():
             return
         plan, shots = self._plan, self._shots.shots
-        tools, force = self._tools, self._force
+        tools, force, device = self._tools, self._force, self._settings.encoder
         try:
             final = resolve_output_path(
-                [info.path for info in plan.infos], self._output, force, suffix=MONTAGE_SUFFIX
+                [info.path for info in plan.infos],
+                self._output or self._default_output(),
+                force,
+                suffix=MONTAGE_SUFFIX,
             )
         except FPVEditError as exc:
             QMessageBox.warning(self, "Cannot render", str(exc))
@@ -700,7 +852,8 @@ class MainWindow(QMainWindow):
         def work(progress: Progress) -> object:
             started = time.monotonic()
             progress("Checking for NVIDIA GPU encoding", 0.0)
-            choices = encoders(tools, "auto", EncodeConfig())
+            choices = encoders(tools, device, EncodeConfig())
+            log.info("rendering %d shots to %s", len(shots), final)
             length, used = with_fallback(
                 choices,
                 lambda encode: render_montage(
@@ -750,7 +903,8 @@ class MainWindow(QMainWindow):
 
     def _progressed(self, text: str, share: float) -> None:
         self._progress.setValue(round(1000 * share))
-        self._status.setText(text)
+        left = time_left(time.monotonic() - self._task.started_at, share) if self._task else ""
+        self._status.setText(f"{text}  ({left})" if left else text)
 
     def _failed(self, message: str) -> None:
         self._status.setText(message.splitlines()[0] if message else "Failed.")
@@ -771,27 +925,101 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event: QCloseEvent) -> None:
         if self._task is not None:
+            answer = QMessageBox.question(
+                self, "Stop and quit?", "FPV Editor is still working. Stop and quit?"
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                event.ignore()
+                return
             self._task.cancel()
+            self._status.setText("Stopping…")
+            QApplication.processEvents()
             self._task.wait()
+        self._settings.geometry = self.saveGeometry()
         self._loader.stop()
         self._video.stop()
         super().closeEvent(event)
 
+    # ----- menus -----
+
+    def _open_settings(self) -> None:
+        dialog = SettingsDialog(self._settings, self._cache_dir, self)
+        if dialog.exec():
+            self._length.setValue(self._settings.length_s)
+            self._refresh_output()
+
+    def _show_log(self) -> None:
+        if self._log_file is not None:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(self._log_file.parent)))
+        else:
+            QMessageBox.information(self, "Log file", "The log file could not be created.")
+
+    def _about(self) -> None:
+        try:
+            version = run_tool([self._tools.ffmpeg, "-version"], action="ffmpeg -version")
+            first = version.stdout.splitlines()[0] if version.stdout else ""
+        except FPVEditError:
+            first = ""
+        QMessageBox.about(self, "About FPV Editor", about_text(first))
+
+
+def data_folder() -> Path | None:
+    base = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppLocalDataLocation)
+    return Path(base) if base else None
+
 
 def cache_folder() -> Path | None:
-    base = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppLocalDataLocation)
-    return Path(base) / "measurements" if base else None
+    base = data_folder()
+    return base / "measurements" if base else None
+
+
+def ffmpeg_folders(settings: AppSettings) -> list[Path]:
+    """Where to look for FFmpeg before PATH: the copy the installer ships, then the
+    folder the user chose."""
+    folders = []
+    if getattr(sys, "frozen", False):
+        folders.append(Path(sys.executable).parent / "ffmpeg")
+    if settings.ffmpeg_folder is not None:
+        folders.append(settings.ffmpeg_folder)
+    return [folder for folder in folders if folder.is_dir()]
+
+
+def use_folders_first(folders: Sequence[Path]) -> None:
+    """Put ``folders`` at the front of this process's PATH (for FFmpeg)."""
+    if folders:
+        rest = os.environ.get("PATH", "")
+        os.environ["PATH"] = os.pathsep.join([*(str(f) for f in folders), rest])
+
+
+def locate_tools(settings: AppSettings) -> Tools | None:
+    """FFmpeg, asking the user where it is until it is found or they give up."""
+    use_folders_first(ffmpeg_folders(settings))
+    while True:
+        try:
+            return find_tools()
+        except FPVEditError as exc:
+            log.warning("FFmpeg not found: %s", exc)
+            folder = ask_for_ffmpeg(None)
+            if folder is None:
+                return None
+            settings.ffmpeg_folder = folder
+            use_folders_first([folder])
 
 
 def run(argv: Sequence[str]) -> int:
     app = QApplication(list(argv))
     app.setApplicationName("fpv-editor")
-    try:
-        tools = find_tools()
-    except FPVEditError as exc:
-        QMessageBox.critical(None, "FFmpeg not found", str(exc))
+    app.setApplicationDisplayName("FPV Editor")
+    app.setApplicationVersion(__version__)
+    app.setWindowIcon(app_icon())
+    base = data_folder()
+    log_file = start_logging(base / "logs") if base else None
+    log.info("FPV Editor %s starting", __version__)
+    settings = AppSettings()
+    tools = locate_tools(settings)
+    if tools is None:
         return 1
-    window = MainWindow(tools, cache_folder())
+    window = MainWindow(tools, cache_folder(), settings, log_file)
     window.add_paths([Path(arg) for arg in argv[1:]])
     window.show()
     return app.exec()
