@@ -23,6 +23,7 @@ Revised 2026-10-11 after testing on Dom's first real flights (see "Real-flight r
 | numpy | feature arrays, scoring | M2 |
 | opencv-python-headless | optical flow (Farneback, DIS), robust fitting | M2 |
 | torch + transformers (`ml` extra) | SigLIP 2 inference, only if it passes its test | M3 |
+| PyInstaller (`build` group) | the standalone Windows app (GPL-2.0 with a bootloader exception: the built app may use any licence) | R5 |
 | PySide6-Essentials (`app` extra; dev) | desktop app window, drag and drop, threads (Qt for Python, LGPL-3.0, used unmodified) | UI |
 | pytest, ruff, mypy (dev) | tests, lint/format, types | M1 |
 
@@ -36,11 +37,11 @@ Revised 2026-10-11 after testing on Dom's first real flights (see "Real-flight r
 | MM | Montage engine: several clips in, one montage out (CLI) | done 2026-10-13 |
 | MR | Dom rates montages of his own clips; tune until he is happy | done 2026-10-14 (indoor shots left to the image model and the UI) |
 | UI | Local desktop app: drag clips in, preview and swap shots, render on the GPU | done 2026-10-16 (Dom uses it; speed, no-OSD crashes and mid-flip cuts fixed after his feedback) |
-| R1 | Lock in: commit, CI green on GitHub, remove the unused M2 pipeline | in progress (2026-10-17) |
-| R2 | Reliability: odd and damaged input, error log, first-run FFmpeg check, safe cancel | not started |
+| R1 | Lock in: commit, CI green on GitHub, remove the unused M2 pipeline | committed and pushed 2026-10-17; CI result not checked |
+| R2 | Reliability: odd and damaged input, error log, first-run FFmpeg check, safe cancel | app part done 2026-10-17; odd-input checks open |
 | R3 | Picture enhancement built into the editor (Dom's separate enhancement project), GPU with CPU fallback | waiting on the enhancement project's location |
-| R4 | App polish: settings, remembered folders, icon, version, time left | not started |
-| R5 | Windows installer with FFmpeg bundled (runs without uv or the project folder); Linux as a plain install | not started |
+| R4 | App polish: settings, remembered folders, icon, version, time left | done 2026-10-17 (offscreen checks) |
+| R5 | Windows installer with FFmpeg bundled (runs without uv or the project folder); Linux as a plain install | standalone build done 2026-10-17; installer in progress |
 | R6 | Public 1.0: docs, licences (Qt, FFmpeg), validation report, tagged GitHub release | not started |
 | M3 | ML (SigLIP 2) as a measured addition | after 1.0 |
 
@@ -158,6 +159,15 @@ Details and per-claim evidence: `docs/review-2026-10-11.md`.
 
 ## Validation log
 (newest first; exact commands and outcomes)
+
+### 2026-10-17 — R1 lock-in, R2/R4 app polish, R5 standalone build (Dom's PC)
+- R1: work since `c2cc201` committed in reviewable commits and pushed (Dom's OK); the unused M2 pipeline (`sampling`, `features`, `scoring` and their tests) removed; CI on Linux now installs Qt's system libraries and runs three jobs (Linux 3.11 and 3.14, Windows 3.14) to stay within the free Actions minutes of the private repository. CI result on GitHub: not checked yet.
+- R4 app polish: File/Edit/Help menus with shortcuts; settings dialog (montage length, GPU or CPU encoding, output folder, measurement cache size with Clear, which only deletes `*.measurements.npz`); remembered settings, window size and last clip folder; clips show usable length and shot count after Find shots; warnings in a Notes button; time left during work; app icon drawn in code; version in the title; About box with licences. Checked by offscreen screenshots (empty window and the 5 testdata1 clips, 9 shots / 92.1 s).
+- R2 (app part): log file in `%LOCALAPPDATA%\fpv-editor\logs` with uncaught errors from any thread; when FFmpeg is missing the app explains how to install it and lets the user choose its folder; closing while busy asks first. Odd-input checks (timestamp jumps, other rates and sizes, a full disk) are still open.
+- R5 standalone build: `scripts/build_windows.py` (PyInstaller 6.22, new `build` dependency group) makes `dist\FPV Editor` with `FPV Editor.exe`, `fpv-editor.exe`, a bundled `ffmpeg` folder and `licenses` (FPV Editor MIT, Qt LGPL-3.0, NumPy, OpenCV, FFmpeg GPL or LGPL by its configuration, third-party notice). OpenCV's unused FFmpeg DLL (30 MB) is dropped. Fixes needed for the frozen build: `multiprocessing.freeze_support()` in both entry points; `find_tools` looks in the bundled `ffmpeg` folder first; the measurement cache key hashes compiled code when the sources are not shipped.
+- Frozen CLI with FFmpeg removed from PATH, `low light` + `urban building dive`, fresh cache: 2 clips, 8:27 usable, 9 shots / 1:22, NVENC, validated, 244 s (266 s from source: same work). The built app itself was not clicked through by hand.
+- Size: 682 MB with Dom's static gyan.dev FFmpeg (228 MB per program); the app alone is ~240 MB. The release workflow uses a shared FFmpeg build instead.
+- Fast checks: ruff, ruff format (56 files), mypy (47 files) clean; app, media and pipeline tests 63 passed (the full suite last passed at 196 before these changes plus 5 new app tests).
 
 ### 2026-10-16 — Footage without OSD, flips cut short, stricter picking (Dom's PC)
 - Dom (2026-10-16): his digital footage is recorded without the HDZero/Betaflight OSD, so the app must handle no OSD; picking could be "a bit more strict based on clips uploaded"; some shots are cut off mid-flip.
