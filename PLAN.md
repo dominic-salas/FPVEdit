@@ -23,6 +23,7 @@ Revised 2026-10-11 after testing on Dom's first real flights (see "Real-flight r
 | numpy | feature arrays, scoring | M2 |
 | opencv-python-headless | optical flow (Farneback, DIS), robust fitting | M2 |
 | torch + transformers (`ml` extra) | SigLIP 2 inference, only if it passes its test | M3 |
+| PySide6-Essentials (`app` extra; dev) | desktop app window, drag and drop, threads (Qt for Python, LGPL-3.0, used unmodified) | UI |
 | pytest, ruff, mypy (dev) | tests, lint/format, types | M1 |
 
 ## Milestones
@@ -34,11 +35,16 @@ Revised 2026-10-11 after testing on Dom's first real flights (see "Real-flight r
 | M4 | Editing quality on real flights (moved before M3) | done 2026-10-13 (cloud and Windows checks passed). Dom's verdict on the blind pairs: per-flight trims "don't really look like a montage of anything", which led to the montage pivot |
 | MM | Montage engine: several clips in, one montage out (CLI) | done 2026-10-13 |
 | MR | Dom rates montages of his own clips; tune until he is happy | done 2026-10-14 (indoor shots left to the image model and the UI) |
-| UI | Local desktop app: drag clips in, preview and swap shots, render on the GPU | next |
-| ME | Picture enhancement, default on, with the GPU | prototype done (blind-tested 2026-10-12); after UI |
-| M3 | ML (SigLIP 2) as a measured addition | after M4 |
-| M5 | Reliability, Windows and NVIDIA validation | not started |
-| M6 | Release readiness | not started |
+| UI | Local desktop app: drag clips in, preview and swap shots, render on the GPU | done 2026-10-16 (Dom uses it; speed, no-OSD crashes and mid-flip cuts fixed after his feedback) |
+| R1 | Lock in: commit, CI green on GitHub, remove the unused M2 pipeline | in progress (2026-10-17) |
+| R2 | Reliability: odd and damaged input, error log, first-run FFmpeg check, safe cancel | not started |
+| R3 | Picture enhancement built into the editor (Dom's separate enhancement project), GPU with CPU fallback | waiting on the enhancement project's location |
+| R4 | App polish: settings, remembered folders, icon, version, time left | not started |
+| R5 | Windows installer with FFmpeg bundled (runs without uv or the project folder); Linux as a plain install | not started |
+| R6 | Public 1.0: docs, licences (Qt, FFmpeg), validation report, tagged GitHub release | not started |
+| M3 | ML (SigLIP 2) as a measured addition | after 1.0 |
+
+Road to 1.0 (Dom, 2026-10-17): 1.0 is a public release. Claude may commit; pushing, releases and repo settings still need Dom's OK. Nothing may cost Dom money or credits: only free, local tools (no paid APIs, Hugging Face inference or cloud GPUs). The old M5 (reliability) and M6 (release readiness) are now R2 and R6; ME is R3.
 
 ### Acceptance criteria
 - **M2.5**:
@@ -70,8 +76,12 @@ Revised 2026-10-11 after testing on Dom's first real flights (see "Real-flight r
   - Dom judges the enhanced edit better than the plain one.
   - Runtime per 3-minute flight measured on Dom's CPU and on the RTX 4070 Ti, reported in the validation log; the CUDA path is used automatically when it works and falls back to CPU otherwise.
 - **M3**: SigLIP 2 kept only if it improves M4's held-out metrics by a pre-registered margin. Otherwise it is dropped and documented.
-- **M5**: VFR, PTS discontinuities, truncated input, FFmpeg failures, 25/30 fps and interlaced DVRs, NVENC and CPU fallback each tested or documented with an exact manual command.
-- **M6**: README, CONTRIBUTING, CODE_OF_CONDUCT, SECURITY, model provenance, ADRs, validation report; CI green; three reviews reconciled.
+- **R1**: everything since `c2cc201` committed in reviewable commits; `sampling.py`, `features.py`, `scoring.py` and their tests removed; CI green on GitHub for Linux and Windows.
+- **R2** (was M5): VFR, PTS discontinuities, truncated input, FFmpeg failures, 25/30/50/90/100 fps, 1080p and 4:3/16:9 digital footage without OSD, a full disk and very long clips each tested or documented with an exact manual command; the app writes an error log, checks for FFmpeg on first run with install guidance, and cancels safely in every step.
+- **R3**: see ME below; the enhancement code comes from Dom's enhancement project and runs inside the editor's render, with a switch in the app and `--no-enhance` in the CLI.
+- **R4**: the app remembers its settings and folders, shows its version and the time left, and has an icon.
+- **R5**: a signed-off Windows installer that runs on a clean Windows 11 machine without Python or FFmpeg installed; uninstall leaves nothing behind but the measurement cache, which it offers to delete.
+- **R6** (was M6): README, CONTRIBUTING, CODE_OF_CONDUCT, SECURITY, third-party licences (Qt LGPL-3.0, FFmpeg LGPL build), ADRs, validation report; CI green; independent reviews reconciled; tagged release with the installer attached.
 
 ## Real-flight review (2026-10-11)
 Data: Dom's flights 182156 and 180033 (hand-labelled, `eval/annotations/`), and clip 1 + clip 2 with Dom's own DaVinci edit, matched frame by frame (corr 0.998) into reference-edit annotations. All analysis used 640x360 60 fps proxies. Footage: analog, 4:3 pillarboxed in 720p60 HEVC full range, Betaflight OSD burned in. Audio was not analysed (Dom: irrelevant).
@@ -110,13 +120,17 @@ Details and per-claim evidence: `docs/review-2026-10-11.md`.
 - A crash cuts back at most 8 s before the disarm, to the calmest moment. A long failed move before that (180033 1:08-1:12, Dom: drop the weave before it too) is partly kept.
 - Dom's own clip edits (clip1/clip2) keep 32-43 %; the editor keeps 80-84 % of those flights. No measured signal predicts which flying he cut there (IoU at chance), so this is taste, not a rule. Goose (Dom kept 86 %) matches well (IoU 0.86).
 - OSD menus read as stats screens. Harmless so far (it is downtime either way), but a missed arm between two menu screens can mark a few seconds as armed; the 3 s minimum removes them.
-- Without any arm or disarm on screen (no OSD, or none ever shown), only pieces of 6 s or more with a median rotation of 18 deg/s or more are kept. Untested on real no-OSD flights (DJI/Walksnail DVRs record without OSD).
+- Without any arm or disarm on screen (no OSD, or none ever shown), only pieces of 6 s or more with a median rotation of 18 deg/s or more are kept. Untested on real no-OSD flights (DJI/Walksnail DVRs record without OSD). Without an OSD, crashes are found from the picture (a sustained tumble into a dead stop); checked only by hiding the OSD signal of analog recordings (2026-10-16).
 - Digital systems (DJI/Walksnail/HDZero), PAL OSD, no OSD, 25/30 fps DVRs and stabilised video are untested; each needs a fallback.
 - Lens field of view is unknown, so rotation degrees are approximate; thresholds are relative to the flight.
 - MPEG-TS PTS discontinuities are not handled yet (M5). FFmpeg only repairs jumps of 10 s or more; a smaller backward jump (goggles resetting their clock mid-file) would make analysis and render disagree. Not seen in Dom's files.
 - Variable-frame-rate input (phones, screen captures) is refused with a clear message and a conversion command (M5). The check reads every frame's timestamp: footage counts as constant-rate when 90% of its frame steps are one frame long, so a steady DVR recording with signal loss is accepted. Gaps (missing frames) are reported and the edit plays straight across them; validation counts the frames that really exist.
 - `scripts/match_edit.py` keeps all fingerprints in memory (~7 kB per frame at 60 fps): fine for a few clips, ~2-3 GB for an hour of raw footage.
-- NVENC and the `--device` flag arrive with M3/M5.
+- Encoding uses NVENC when a test encode works (`--device auto`, the default in the CLI and the app), with a libx264 fallback if the GPU encode fails; `--device cpu` or `cuda` forces one. Untested on machines without an NVIDIA GPU other than through the unit tests.
+- Analysis runs one process per clip (a quarter of the logical CPUs at most), so a montage takes about as long as its longest clip alone (~24 s per minute of footage on Dom's PC). One long clip is not split: its rotation fit uses one random sequence per clip, and splitting would change the measurements. Splitting with a fixed chunk length (deterministic, but measurements change once) or a faster rotation fit are the next steps if single long clips need to be faster.
+- Rendering a part that starts 10 s or more into its clip seeks with `-copyts -noaccurate_seek` and shifts the timeline by the first decoded frame's timestamp (ffprobe). Synthetic MPEG-TS with a nonzero start, MP4 and a recording with a gap give frame-identical output to decoding from the start; on real footage only clips that start at 0 were compared.
+- The app's preview and thumbnails seek with input `-ss`; in a `.ts` whose timestamps jump (see PTS discontinuities above) they would show the wrong place. The render is unaffected.
+- Closing the app during a step that reports no progress (probing, joining, the final check) waits for that step to finish.
 
 ## Decisions
 - 2026-10-11: build in existing repo `dominic-salas/FPVEdit`, MIT license kept.
@@ -130,6 +144,7 @@ Details and per-claim evidence: `docs/review-2026-10-11.md`.
 - 2026-10-12: the uncertain 180033 3:29-3:37 weave is left out of scoring (Dom: "if you aren't confident leave it out").
 - 2026-10-12: picture enhancement (mcfuse recipe) is on by default and runs after cutting (Dom). Footage is analog, recorded by HDZero BoxPro+ goggles, always 60 fps.
 - 2026-10-13: the tool becomes a montage maker from a selection of clips (Dom). Shots are long, 8-15 s (Dom's choice). The UI is a local desktop app with drag and drop that uses his GPU, not a website (Dom: "it doesn't need to be web based since it uses the gpu").
+- 2026-10-14: the app uses PySide6 (Qt), approved by Dom. Its preview decodes with FFmpeg (raw frames into the window) instead of Qt Multimedia, which needs the much larger PySide6-Addons and a second decoder. The app renders with NVENC when a test encode works, otherwise libx264.
 - Open: enable proposed hooks (`docs/automation.md`)? Allow huggingface.co + download.pytorch.org for the cloud environment (M3)?
 
 ## Evaluation data
@@ -143,6 +158,33 @@ Details and per-claim evidence: `docs/review-2026-10-11.md`.
 
 ## Validation log
 (newest first; exact commands and outcomes)
+
+### 2026-10-16 — Footage without OSD, flips cut short, stricter picking (Dom's PC)
+- Dom (2026-10-16): his digital footage is recorded without the HDZero/Betaflight OSD, so the app must handle no OSD; picking could be "a bit more strict based on clips uploaded"; some shots are cut off mid-flip.
+- None of the 18 testdata1 recordings lacks an OSD, so no-OSD footage was simulated: the same measurements of the five labelled recordings with the OSD signal removed (flight state from the picture alone). Digital footage itself (HDZero/DJI picture, frame size, rate, field of view) is still untested.
+- Without the OSD, crashes were not found: 203859 kept 13 s of labelled failures in its shots (0.35 of shot time in Dom's moments, 0.94 with the OSD). Picture-only crash rule: the quad coming to rest (time on the ground, or a dead stop of 0.5 s or more: image speed under 0.08 widths/s and turning under 10 deg/s) right after a sustained tumble (90th percentile of the 0.25 s median rotation rate of 300 deg/s or more in the 1.3 s before) is treated like a crash-disarm, with the same cut back to the failed move. Speed alone is not enough without a disarm (a fast flight into a deliberate stop is not a crash). Result without OSD (one 40 s montage per recording; share of shot time in Dom's moments / labelled failure seconds in shots): 180033 0.47 / 4.0 (OSD 0.37 / 4.0), 182156 0.58 / 0 (0.58 / 0), 203859 0.91 / 1.2 (0.93 / 0.5), clip1 0.62 (0.72), clip2 0.54 (0.34). 180033 still keeps 40 s of labelled failures in its usable footage without the OSD (9.5 s with it), as failures without a crash stay invisible (known gap).
+- Mid-flip cuts: the shot edges in the default 5-clip montage were all calm (max rotation within 0.3 s of a cut 280 deg/s, at the urban start). Two causes were fixed: frames whose motion could not be measured (blur in a fast flip) counted as perfectly calm, and nothing stopped a cut next to a fast turn or inside a turn the moment detector had not counted. Now no shot edge lies inside a turn (0.3 s median rate 90 deg/s or more) or within 0.4 s of a fast one (0.1 s median 150 deg/s or more); the start moves back before the turn (or after it), the end on past it (or before it), keeping 8-15 s. New test: candidate edges in or next to a flip 0 (13 with the rule disabled). Labelled recordings with the OSD, mean share of shot time in Dom's moments 0.53 → 0.59 (clip1 0.42 → 0.72, others within 0.02); failure seconds 5.5 → 4.5.
+- Stricter picking, tested and not adopted: dropping picked shots whose score per square root of length is below a share of the top three's (one 90 s montage of the five labelled recordings) did not help: share in Dom's moments 0.60 at ratios up to 0.6, 0.51 at 0.7 (5 shots, 70 s). The score does not separate Dom's choices at the margin, so a score bar only shortens the montage. Waiting on Dom to say what "stricter" should mean.
+- Fast checks: ruff, ruff format (55 files), mypy (46 files) clean; pytest 212 passed in 356 s (new: a tumble into a dead stop is a crash without OSD, a flip into a hover is not; no candidate shot edge in or next to a flip).
+
+### 2026-10-15 — App shortcut (Dom's PC)
+- Dom asked for an exe to open the app easily. uv already installs `.venv\Scripts\fpv-editor-app.exe` (a GUI launcher, no console window); a desktop shortcut `FPV Editor` now points to it (working folder `D:\FPVEdit`). Checked: the exe starts and stays up (offscreen, 8 s), and the parallel analysis works under `pythonw` (2 cached clips, 1.6 s). A standalone build that runs without the project folder (PyInstaller or similar) is not made; it would be ~300 MB and still need FFmpeg on PATH.
+
+### 2026-10-14 — Speed (Dom's PC: Ryzen 9 5900X, RTX 4070 Ti, FFmpeg 9.0.2)
+- Profile (one 4-min clip, 204314): measuring took 95 s, of which ~90 s is the per-frame Python work in one thread (the robust rotation fit alone 44 s, DIS flow 6 s). Decoding in FFmpeg took 38 s on the CPU (27 s with `-hwaccel cuda`) and runs alongside, so GPU decoding would not help until the Python side is faster.
+- Changes: clips are analysed in parallel processes (`plan_montage(workers=...)`, default CPUs/4; progress and cancel work across processes); render parts seek to their first shot instead of decoding from the clip start, and shots of one clip more than 20 s apart get parts of their own; the CLI gains `--device auto|cpu|cuda` (NVENC by default when it works, libx264 fallback) and prints the encoder.
+- 5 testdata1 clips (26:14 of usable footage), fresh cache: analysis 525 s → 246 s (bounded by the longest clip, indoors cruising), same 8 shots and 362 candidates; cached re-analysis 1.7 s.
+- Same clips, cached, whole CLI run including render and validation: 170 s before → 51 s with `--device cpu`, 36 s with NVENC. Before the part split the seek alone gave 93 s / 77 s (the indoor clip's 4 shots span 55-511 s).
+- Seek check on real footage: an 8 s shot at 150 s of `20261010-203859.ts` and at 497 s of `indoors cruising.mp4` rendered with and without seeking: 480 frames each, framemd5 identical.
+- The app's Find shots through the process pool (offscreen, cached): 1.9 s, 8 shots.
+- Fast checks: ruff, ruff format (55 files), mypy (46 files) clean; pytest 209 passed in 198 s (new: seek vs no-seek frame identity on TS/MP4/gap clips, parallel analysis gives the same plan, progress and cancel with 1 and 2 workers, device choice and encoder fallback).
+
+### 2026-10-14 — UI desktop app (Dom's PC: Windows, Python 3.14.5, FFmpeg 9.0.2, RTX 4070 Ti)
+- Built: `fpv-editor-app` (PySide6 6.12). Drop clips or folders, reorder them, Find shots (background analysis with progress and cancel, measurements cached in `%LOCALAPPDATA%\fpv-editor\measurements`), shot list with thumbnails, a looping FFmpeg preview, trim start/end, remove, drag to reorder, swap for another candidate from the same clip, add any candidate, undo, then Render (NVENC when a test encode works, else libx264; progress, cancel, validation, never overwrites without asking). The engine was split into `plan_montage` and `render_montage`; shots may now be in any order (a part per run of forward shots from one clip). The CLI's behaviour is unchanged.
+- Fast checks: ruff, ruff format (54 files), mypy strict (45 files) clean; pytest 202 passed in 179 s (new: shot-list rules, progress and cancel during analysis and render with nothing cached or written, a reordered render that validates, frame-count progress, an offscreen window smoke test). `check_staged.py --all` clean.
+- Real run on 5 testdata1 clips (204314, nighttime, low light, urban building dive, indoors cruising), app code path without the window: analysis 525 s (uncached), the same 8 shots / 88.4 s as the MM run, 362 candidates. Edited like Dom would (first indoor shot swapped for an alternative, second removed, last shot moved first, one trim): 7 shots, 83.0 s, rendered with NVENC in 198 s and validated: h264 1280x720 60 fps yuv420p tv, 4982 frames. Most of the render time is decoding from the start of each clip (see Known gaps). A cached re-analysis took 2.5 s.
+- Independent reviews (code quality, FFmpeg): fixed a save-as path that could replace a file the dialog did not ask about, edits and drags while a task runs, Add enabled for swap candidates, cancel being ignored after the final check, the NVENC fallback catching non-encode failures, console windows flashing on every ffmpeg run, slow close with queued thumbnails, stale preview frames, double preview restarts on trim, trimmed shots losing their moments, and an import error reported as "PySide6 missing". Also fixed in the engine: the expected frame count when a clip with frame gaps is converted to another rate, and the render's read limit when audio starts before video. Window offscreen screenshot checked by eye.
+- Not run: the window by hand on Dom's desktop (drag and drop, real clicks) and a CPU-only fallback render through the window. Waiting on Dom's try-out.
 
 ### 2026-10-14 — MR rating and close-pass change (cloud container; Dom's PC)
 - Dom's rating of the 5-clip montage: he likes it overall and the cut points are good. Two shots from indoors cruising (139.7-147.7 and 370.3-382.0), picked almost only for close passes, are not impressive: indoors everything is close, so doorways look like near misses.
