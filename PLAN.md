@@ -161,7 +161,7 @@ Details and per-claim evidence: `docs/review-2026-10-11.md`.
 (newest first; exact commands and outcomes)
 
 ### 2026-10-17 — Installer on GitHub Actions
-- `.github/workflows/release.yml` (tag `v*` or run by hand) builds the standalone app on a Windows runner with BtbN's GPL shared FFmpeg 9.0, smoke-tests it (`fpv-editor.exe --version`, bundled `ffmpeg -version`) and packs it with Inno Setup (`packaging/installer.iss`: per-user install by default, Start menu and optional desktop shortcut, offers to remove `%LOCALAPPDATA%pv-editor` on uninstall). A tag also drafts a GitHub release; publishing stays manual.
+- `.github/workflows/release.yml` (tag `v*` or run by hand) builds the standalone app on a Windows runner with BtbN's GPL shared FFmpeg 9.0, smoke-tests it (`fpv-editor.exe --version`, bundled `ffmpeg -version`) and packs it with Inno Setup (`packaging/installer.iss`: per-user install by default, Start menu and optional desktop shortcut, offers to remove `%LOCALAPPDATA%\fpv-editor` on uninstall). A tag also drafts a GitHub release; publishing stays manual.
 - Manual run 39072509889: success in 3.6 min; installer artifact 112 MB (first run failed: Git Bash rewrote `/DAppVersion` as a path; fixed with `MSYS_NO_PATHCONV`).
 - CI on the pushed commits: green, except one Windows run where a cancelled render's part file was still locked when the temporary folder was cleaned up, so the cancel surfaced as a PermissionError. Fixed by ignoring cleanup errors of the temporary folder.
 - Not run: installing on a clean Windows machine (R5 acceptance), an uninstall.
