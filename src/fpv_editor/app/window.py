@@ -6,6 +6,7 @@ user's local app-data folder, and the montage is written where the user chooses.
 
 from __future__ import annotations
 
+import dataclasses
 import functools
 import logging
 import os
@@ -23,7 +24,6 @@ from PySide6.QtGui import (
     QColor,
     QDesktopServices,
     QDragEnterEvent,
-    QDragMoveEvent,
     QDropEvent,
     QIcon,
     QKeySequence,
@@ -53,6 +53,20 @@ from PySide6.QtWidgets import (
 
 from fpv_editor import __version__
 from fpv_editor.app import theme
+from fpv_editor.app.analyser import BackgroundAnalysis
+from fpv_editor.app.cliplist import (
+    DETAILS,
+    PATH,
+    PROBLEM,
+    SHARE,
+    STATUS,
+    THUMB,
+    ClipList,
+    ClipReader,
+    thumbnail_pixmap,
+)
+from fpv_editor.app.clips import clock as clock_short
+from fpv_editor.app.clips import describe_clip
 from fpv_editor.app.dialogs import SettingsDialog, about_text, ask_for_ffmpeg
 from fpv_editor.app.frames import grab_frame
 from fpv_editor.app.logs import start_logging
@@ -63,12 +77,13 @@ from fpv_editor.app.settings import AppSettings
 from fpv_editor.cli import (
     MONTAGE_SUFFIX,
     MontagePlan,
+    PipelineConfig,
     Progress,
-    plan_montage,
+    combine_clips,
     render_montage,
 )
 from fpv_editor.errors import CancelledError, FPVEditError
-from fpv_editor.media import MediaInfo, Tools, find_tools, probe, run_tool
+from fpv_editor.media import MediaInfo, Tools, find_tools, run_tool
 from fpv_editor.montage import MomentKind, Shot
 from fpv_editor.render import (
     NVENC,
@@ -202,48 +217,6 @@ class ThumbnailLoader(QThread):
                 self.ready.emit((info.path, seconds), png)
 
 
-class ClipList(QListWidget):
-    """The clips, in montage order: drag to reorder, drop files or folders to add."""
-
-    dropped = Signal(list)
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
-        self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        self.setAcceptDrops(True)
-
-    def dragEnterEvent(self, event: QDragEnterEvent) -> None:
-        if event.mimeData().hasUrls():
-            event.acceptProposedAction()
-        else:
-            super().dragEnterEvent(event)
-
-    def dragMoveEvent(self, event: QDragMoveEvent) -> None:
-        if event.mimeData().hasUrls():
-            event.acceptProposedAction()
-        else:
-            super().dragMoveEvent(event)
-
-    def dropEvent(self, event: QDropEvent) -> None:
-        if event.mimeData().hasUrls():
-            self.dropped.emit([Path(url.toLocalFile()) for url in event.mimeData().urls()])
-            event.acceptProposedAction()
-        else:
-            super().dropEvent(event)
-
-    def paintEvent(self, event: QPaintEvent) -> None:
-        super().paintEvent(event)
-        if self.count() == 0:
-            painter = QPainter(self.viewport())
-            painter.setPen(self.palette().placeholderText().color())
-            painter.drawText(
-                self.viewport().rect(),
-                Qt.AlignmentFlag.AlignCenter,
-                "Drop recordings (.ts, .mp4) or folders here",
-            )
-
-
 def heading(text: str) -> QLabel:
     label = QLabel(text)
     label.setProperty("role", "heading")
@@ -358,6 +331,19 @@ class MainWindow(QMainWindow):
         self._choosing: str | None = None  # "swap" or "add" while the chooser is open
         self._last_output: Path | None = None
         self._last_summary = ""
+        self._fonts = theme.load_fonts()
+        self._infos: dict[Path, MediaInfo] = {}  # probed clips, by resolved path
+        self._unreadable: dict[Path, str] = {}  # clips that could not be probed, and why
+        self._clip_notes: dict[Path, str] = {}  # what each clip gave the last plan
+        self._finding: tuple[float, float] | None = None  # (started, share then) while waiting
+
+        self._analysis = BackgroundAnalysis(tools, cache_dir, self)
+        self._analysis.changed.connect(self._analysis_changed)
+        self._reader = ClipReader(tools, self)
+        self._reader.probed.connect(self._clip_probed)
+        self._reader.failed.connect(self._clip_unreadable)
+        self._reader.thumbnail.connect(self._clip_thumbnail)
+        self._reader.start()
 
         self._loader = ThumbnailLoader(tools, self)
         self._loader.ready.connect(self._thumbnail_ready)
@@ -458,7 +444,8 @@ class MainWindow(QMainWindow):
         self._length.setValue(self._settings.length_s)
         self._length.valueChanged.connect(self._length_changed)
         self._find = button("FIND SHOTS  →", self._find_shots, primary=True)
-        list_page = QWidget()
+        list_page = DotGrid()
+        self._list_page = list_page
         column = QVBoxLayout(list_page)
         column.setContentsMargins(72, 40, 72, 0)
         column.setSpacing(10)
@@ -466,7 +453,7 @@ class MainWindow(QMainWindow):
         column.addWidget(heading("Your clips"))
         hint = QLabel(
             "Shots from these clips play in this order. Drag to reorder; drop more "
-            "anywhere on the window."
+            "anywhere on the window. Each clip is analysed as soon as it is added."
         )
         hint.setProperty("role", "muted")
         column.addWidget(hint)
@@ -507,9 +494,9 @@ class MainWindow(QMainWindow):
         status_row.addWidget(self._work_status, 1)
         page = DotGrid()
         self._work_page = page
-        column = QVBoxLayout(page)
-        column.setContentsMargins(72, 48, 72, 48)
-        column.addStretch(2)
+        left = QWidget()
+        column = QVBoxLayout(left)
+        column.setContentsMargins(0, 0, 0, 0)
         column.addWidget(self._work_step)
         column.addWidget(self._work_title)
         column.addSpacing(8)
@@ -523,7 +510,19 @@ class MainWindow(QMainWindow):
         cancel_row.addWidget(self._cancel)
         cancel_row.addStretch(1)
         column.addLayout(cancel_row)
-        column.addStretch(3)
+        # While finding shots: every clip with its own progress, on the right.
+        self._work_clips = ClipList(compact=True)
+        self._work_clips.setFixedWidth(520)
+        self._work_clips_box = QWidget()
+        clips_column = QVBoxLayout(self._work_clips_box)
+        clips_column.setContentsMargins(0, 0, 0, 0)
+        clips_column.addWidget(eyebrow("CLIPS"))
+        clips_column.addWidget(self._work_clips)
+        row = QHBoxLayout(page)
+        row.setContentsMargins(72, 48, 72, 48)
+        row.setSpacing(48)
+        row.addWidget(left, 1, Qt.AlignmentFlag.AlignVCenter)
+        row.addWidget(self._work_clips_box, 0, Qt.AlignmentFlag.AlignVCenter)
         return page
 
     def _build_review_page(self) -> QWidget:
@@ -772,10 +771,80 @@ class MainWindow(QMainWindow):
         self.add_paths([Path(url.toLocalFile()) for url in event.mimeData().urls()])
 
     def clip_paths(self) -> list[Path]:
-        return [
-            Path(self._clips.item(i).data(Qt.ItemDataRole.UserRole))
-            for i in range(self._clips.count())
-        ]
+        return [Path(self._clips.item(i).data(PATH)) for i in range(self._clips.count())]
+
+    def _clip_items(self, path: Path) -> list[QListWidgetItem]:
+        key = path.resolve()
+        items = (self._clips.item(i) for i in range(self._clips.count()))
+        return [item for item in items if Path(item.data(PATH)).resolve() == key]
+
+    def _clip_probed(self, info: object) -> None:
+        if not isinstance(info, MediaInfo):
+            raise TypeError(f"expected MediaInfo, got {type(info).__name__}")
+        self._infos[info.path] = info
+        for item in self._clip_items(info.path):
+            item.setData(DETAILS, describe_clip(info))
+        self._analysis.add(info)  # start measuring now; Find shots then waits less
+        self._refresh_clips()
+
+    def _clip_unreadable(self, path: object, why: str) -> None:
+        if isinstance(path, Path):
+            self._unreadable[path.resolve()] = why
+            for item in self._clip_items(path):
+                item.setData(DETAILS, "NOT A READABLE RECORDING")
+                item.setToolTip(f"{path}\n{why}")
+        self._analysis_changed()
+
+    def _clip_thumbnail(self, path: object, png: bytes) -> None:
+        pixmap = thumbnail_pixmap(png)
+        if isinstance(path, Path) and pixmap is not None:
+            for item in self._clip_items(path):
+                item.setData(THUMB, pixmap)
+
+    def _clip_status(self, path: Path) -> tuple[str, float | None, bool]:
+        """What a clip's card says on the right: (text, progress share or None, problem)."""
+        key = path.resolve()
+        if key in self._unreadable:
+            return "CAN'T READ", None, True
+        if key not in self._infos:
+            return "READING", None, False
+        state = self._analysis.state(key)
+        if state is None:
+            return "NOT ANALYSED YET", None, False
+        if state.error is not None:
+            return "ANALYSIS FAILED", None, True
+        if state.result is not None:
+            if key in self._clip_notes:
+                return self._clip_notes[key], None, False
+            clip = state.result.clip
+            if clip is None:
+                return "NOTHING USABLE", None, True
+            return f"READY   {clock_short(clip.analysed_duration)} FLYING", None, False
+        if not state.started:
+            return "QUEUED", None, False
+        return f"ANALYSING {state.share:.0%}", state.share, False
+
+    def _refresh_clips(self) -> None:
+        """Update every clip card and the summary under the list."""
+        ready = 0
+        footage = 0.0
+        for i in range(self._clips.count()):
+            item = self._clips.item(i)
+            path = Path(item.data(PATH))
+            text, share, problem = self._clip_status(path)
+            item.setData(STATUS, text)
+            item.setData(SHARE, share)
+            item.setData(PROBLEM, problem)
+            state = self._analysis.state(path)
+            ready += state is not None and state.finished
+            info = self._infos.get(path.resolve())
+            footage += (info.duration or 0.0) if info is not None else 0.0
+        self._mirror_clips()
+        count = self._clips.count()
+        parts = [plural(count, "clip"), f"{clock_short(footage)} of footage"]
+        if count:
+            parts.append("all analysed" if ready == count else f"{ready} of {count} analysed")
+        self._clips_summary.setText("   ".join(parts).upper())
 
     def add_paths(self, paths: list[Path]) -> None:
         if self._busy():
@@ -787,9 +856,10 @@ class MainWindow(QMainWindow):
                 continue
             known.add(path.resolve())
             item = QListWidgetItem(path.name)
-            item.setData(Qt.ItemDataRole.UserRole, str(path))
+            item.setData(PATH, str(path))
             item.setToolTip(str(path))
             self._clips.addItem(item)
+            self._reader.request(path)
             added += 1
         if added:
             self._clips_changed()
@@ -834,30 +904,42 @@ class MainWindow(QMainWindow):
             self._plan = None
             self._shots = None
             self._set_notes(())
-            for i in range(self._clips.count()):
-                item = self._clips.item(i)
-                item.setText(Path(item.data(Qt.ItemDataRole.UserRole)).name)
+            self._clip_notes.clear()
         self._refresh()
 
     def _length_changed(self, seconds: float) -> None:
         self._settings.length_s = seconds
 
+    def _mirror_clips(self) -> None:
+        """The progress screen's list shows the same clips, cards and progress."""
+        target = self._work_clips
+        if target.count() != self._clips.count():
+            target.clear()
+            for _ in range(self._clips.count()):
+                target.addItem(QListWidgetItem())
+        for i in range(self._clips.count()):
+            source, mirror = self._clips.item(i), target.item(i)
+            for role in (PATH, DETAILS, STATUS, SHARE, PROBLEM, THUMB):
+                mirror.setData(role, source.data(role))
+        rows = min(max(1, target.count()), 9)  # taller lists scroll
+        target.setFixedHeight(rows * target.card.height + 4)
+
     def _annotate_clips(self, plan: MontagePlan) -> None:
         """Show what each clip gave: its usable length and shots, or why it gave none."""
         used = {clip.index: clip for clip in plan.clips}
         shots = {index: sum(1 for s in plan.shots if s.clip == index) for index in used}
-        for row, info in enumerate(plan.infos):
-            item = self._clips.item(row)
-            if item is None:
-                continue
+        self._clip_notes.clear()
+        for index, info in enumerate(plan.infos):
             notes = [n for n in plan.warnings if n.startswith(info.path.name)]
-            if row in used:
-                usable = clock(used[row].analysed_duration)
-                text = f"{info.path.name}    {usable} flying, {plural(shots[row], 'shot')}"
+            if index in used:
+                usable = clock_short(used[index].analysed_duration)
+                note = f"{usable} FLYING   {plural(shots[index], 'shot').upper()}"
             else:
-                text = f"{info.path.name}    nothing usable"
-            item.setText(text)
-            item.setToolTip("\n".join([str(info.path), *notes]))
+                note = "NOTHING USABLE"
+            self._clip_notes[info.path.resolve()] = note
+            for item in self._clip_items(info.path):
+                item.setToolTip("\n".join([str(info.path), *notes]))
+        self._refresh_clips()
 
     def _set_notes(self, notes: Sequence[str]) -> None:
         self._notes = tuple(notes)
@@ -870,18 +952,87 @@ class MainWindow(QMainWindow):
     # ----- finding shots -----
 
     def _find_shots(self) -> None:
-        paths = self.clip_paths()
-        if not paths or self._busy():
+        """Wait for the clips' background analysis to finish, then pick the shots."""
+        if not self._clips.count() or self._busy():
             return
-        tools, cache, length = self._tools, self._cache_dir, self._length.value()
+        self._analysis.retry_failed()
+        for path in self.clip_paths():
+            info = self._infos.get(path.resolve())
+            if info is not None:
+                self._analysis.add(info)  # again after a cancel; no-op when done or running
+        log.info("finding shots in %d clips", self._clips.count())
+        self._task_page = self.CLIPS
+        self._finding = (time.monotonic(), self._analysed_share()[0])
+        self._show_work("STEP 2 OF 4", "Finding the best shots")
+        self._analysis_changed()
 
-        def work(progress: Progress) -> object:
-            progress("Reading the clips", 0.0)
-            infos = [probe(tools, path) for path in paths]
-            log.info("finding shots in %d clips, length %.0f s", len(infos), length)
-            return plan_montage(tools, infos, length=length, cache_dir=cache, progress=progress)
+    def _analysed_share(self) -> tuple[float, str]:
+        """Share of the clips' footage analysed so far (by length), and what is going on."""
+        total = done = 0.0
+        running = waiting = 0
+        for path in self.clip_paths():
+            key = path.resolve()
+            info = self._infos.get(key)
+            weight = (info.duration or 60.0) if info is not None else 60.0
+            total += weight
+            state = self._analysis.state(key)
+            if key in self._unreadable or (state is not None and state.finished):
+                done += weight
+            elif state is not None:
+                done += weight * state.share
+                running += state.started
+                waiting += not state.started
+            else:
+                waiting += 1
+        if running:
+            text = f"Analysing {plural(running, 'clip')} at a time"
+            if waiting:
+                text += f", {waiting} waiting"
+        elif waiting:
+            text = "Reading the clips"
+        else:
+            text = "Picking the shots"
+        return (done / total if total else 1.0), text
 
-        self._run(work, self._plan_ready, self.CLIPS, "STEP 2 OF 4", "Finding the best shots")
+    def _analysis_changed(self) -> None:
+        self._refresh_clips()
+        if self._finding is None:
+            return
+        share, text = self._analysed_share()
+        started, share_then = self._finding
+        progress = (share - share_then) / max(1e-9, 1 - share_then)
+        self._show_progress(text, share, time_left(time.monotonic() - started, progress))
+        if share >= 1.0:
+            self._finish_finding()
+
+    def _finish_finding(self) -> None:
+        infos: list[MediaInfo] = []
+        results = []
+        warnings: dict[int, list[str]] = {}
+        for path in self.clip_paths():
+            key = path.resolve()
+            if key in self._unreadable:
+                warnings[-1] = [*warnings.get(-1, []), f"{path.name}: {self._unreadable[key]}"]
+                continue
+            state = self._analysis.state(key)
+            if state is None or not state.finished:
+                return  # not ready after all (e.g. added again after a cancel)
+            index = len(infos)
+            infos.append(state.info)
+            if state.result is not None:
+                results.append(state.result.moved_to(index))
+            else:
+                warnings[index] = [f"{path.name}: could not be analysed ({state.error})"]
+        config = dataclasses.replace(PipelineConfig().montage, length_s=self._length.value())
+        plan = combine_clips(infos, results, config, warnings)
+        self._end_finding()
+        self._plan_ready(plan)
+
+    def _end_finding(self) -> None:
+        self._finding = None
+        self._dot.set_busy(False)
+        self._refresh_buttons()
+        self._refresh_steps()
 
     def _plan_ready(self, result: object) -> None:
         if not isinstance(result, MontagePlan):
@@ -967,8 +1118,7 @@ class MainWindow(QMainWindow):
         clips = self._clips.count()
         self._clip_stack.setCurrentIndex(1 if clips else 0)
         self._clips_bar.setVisible(bool(clips))
-        if clips:
-            self._clips_summary.setText(plural(clips, "CLIP").upper())
+        self._refresh_clips()
         self._refresh_total()
         self._refresh_output()
         self._refresh_buttons()
@@ -1174,7 +1324,7 @@ class MainWindow(QMainWindow):
     # ----- export -----
 
     def _default_output(self) -> Path | None:
-        if self._plan is None:
+        if self._plan is None or not self._plan.infos:
             return None
         first = self._plan.infos[0].path
         folder = self._settings.output_folder
@@ -1271,9 +1421,12 @@ class MainWindow(QMainWindow):
         palette = theme.THEMES.get(name, theme.DARK)
         app = QApplication.instance()
         if isinstance(app, QApplication):
-            theme.apply(app, palette, theme.load_fonts())
-        for grid in (self._drop_zone, self._work_page, self._done_page):
+            theme.apply(app, palette, self._fonts)
+        for grid in (self._drop_zone, self._list_page, self._work_page, self._done_page):
             grid.set_palette(palette)
+        for clips in (self._clips, self._work_clips):
+            clips.card.set_theme(palette, self._fonts)
+            clips.viewport().update()
         self._title.set_colour(palette.text)
         self._done_title.set_colour(palette.text)
         self._dot.set_colours(palette.faint, palette.accent)
@@ -1286,7 +1439,7 @@ class MainWindow(QMainWindow):
     # ----- background work -----
 
     def _busy(self) -> bool:
-        return self._task is not None
+        return self._task is not None or self._finding is not None
 
     def _run(
         self,
@@ -1303,26 +1456,31 @@ class MainWindow(QMainWindow):
         task.finished.connect(self._task_finished)
         self._task = task
         self._task_page = back_to
+        self._show_work(step, title)
+        task.start()
+
+    def _show_work(self, step: str, title: str) -> None:
+        finding = self._finding is not None
+        self._work_clips_box.setVisible(finding)
         self._work_step.setText(step)
         self._work_title.setText(title)
-        self._percent.setText("0%")
-        self._work_status.setText("Starting…")
-        self._work_left.setText("")
-        self._progress.setValue(0)
+        self._show_progress("Starting…", 0.0, "")
         self._dot.set_busy(True)
         self._cancel.setEnabled(True)
         self._video.stop()
         self._pages.setCurrentIndex(self.WORK)
         self._refresh_buttons()
         self._refresh_steps()
-        task.start()
 
-    def _progressed(self, text: str, share: float) -> None:
+    def _show_progress(self, text: str, share: float, left: str) -> None:
         self._progress.setValue(round(1000 * share))
         self._percent.setText(f"{share:.0%}")
         self._work_status.setText(text)
-        left = time_left(time.monotonic() - self._task.started_at, share) if self._task else ""
         self._work_left.setText(left.upper())
+
+    def _progressed(self, text: str, share: float) -> None:
+        left = time_left(time.monotonic() - self._task.started_at, share) if self._task else ""
+        self._show_progress(text, share, left)
 
     def _failed(self, message: str) -> None:
         self._show_page(self._task_page)
@@ -1338,6 +1496,11 @@ class MainWindow(QMainWindow):
         self._refresh_steps()
 
     def _cancel_task(self) -> None:
+        if self._finding is not None:
+            self._analysis.cancel()
+            self._end_finding()
+            self._show_page(self._task_page)
+            return
         if self._task is not None:
             self._task.cancel()
             self._cancel.setEnabled(False)
@@ -1355,6 +1518,8 @@ class MainWindow(QMainWindow):
             QApplication.processEvents()
             self._task.wait()
         self._settings.geometry = self.saveGeometry()
+        self._analysis.shutdown()
+        self._reader.stop()
         self._loader.stop()
         self._video.stop()
         super().closeEvent(event)

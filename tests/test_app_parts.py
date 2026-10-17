@@ -71,3 +71,24 @@ def test_icon_draws_at_every_size() -> None:
         assert image.pixelColor(size // 2, size // 2).alpha() == 255  # the tile is opaque
         assert image.pixelColor(0, 0).alpha() == 0  # rounded corner
     assert not app_icon().isNull()
+
+
+def test_recording_time_comes_from_the_name_or_the_file(tmp_path: Path) -> None:
+    from datetime import datetime
+
+    from fpv_editor.app.clips import clock, recorded_at
+
+    named = recorded_at(Path("D:/clips/20261010-203859.ts"))
+    assert named is not None and named.from_name
+    assert named.when == datetime(2026, 10, 10, 20, 38, 59)
+    assert named.label() == "REC 10 OCT 2026 20:38"
+    other = tmp_path / "hdz_0061.mp4"
+    other.write_bytes(b"")
+    found = recorded_at(other)
+    assert found is not None and not found.from_name and found.label().startswith("FILE ")
+    not_a_date = tmp_path / "20261399-999999.mp4"  # month 13: not a date
+    not_a_date.write_bytes(b"")
+    fallback = recorded_at(not_a_date)
+    assert fallback is not None and not fallback.from_name
+    assert recorded_at(tmp_path / "missing.mp4") is None
+    assert (clock(189.9), clock(59.4), clock(3723)) == ("3:10", "0:59", "1:02:03")

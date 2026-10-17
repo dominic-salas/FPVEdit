@@ -384,14 +384,14 @@ def plan_montage(
             raise InvalidInputError("--length must be a positive number of seconds")
         montage_config = dataclasses.replace(montage_config, length_s=length)
     warnings: dict[int, list[str]] = {}
-    jobs: list[_ClipJob] = []
+    jobs: list[ClipJob] = []
     seen: set[Path] = set()
     for index, info in enumerate(infos):
         if info.path.resolve() in seen:
             warnings[index] = [f"{info.path.name} was given more than once; using it once"]
             continue
         seen.add(info.path.resolve())
-        jobs.append(_ClipJob(tools, info, index, config, montage_config, cache_dir))
+        jobs.append(ClipJob(tools, info, index, config, montage_config, cache_dir))
     count = min(len(jobs), workers if workers is not None else default_workers())
     if count > 1:
         results = _plan_in_processes(jobs, count, progress)
@@ -400,20 +400,33 @@ def plan_montage(
         for number, job in enumerate(jobs):
             text = f"Analysing {job.info.path.name}"
             results.append(_plan_clip(job, _clip_progress(progress, text, number, len(jobs))))
+    return combine_clips(infos, results, montage_config, warnings)
+
+
+def combine_clips(
+    infos: Sequence[MediaInfo],
+    results: Sequence[ClipResult],
+    config: MontageConfig,
+    warnings: dict[int, list[str]] | None = None,
+) -> MontagePlan:
+    """The montage plan from clips analysed one by one; ``results[i].index`` is the
+    clip's place in ``infos``. ``warnings`` adds notes per clip index."""
+    notes = {index: list(lines) for index, lines in (warnings or {}).items()}
     clips: list[Clip] = []
     candidates: list[Shot] = []
     for result in results:
-        warnings[result.index] = list(result.warnings)
+        notes[result.index] = list(result.warnings)
         if result.clip is not None:
             clips.append(result.clip)
         candidates.extend(result.candidates)
+    clips.sort(key=lambda clip: clip.index)
     return MontagePlan(
         infos=tuple(infos),
         clips=tuple(clips),
         candidates=tuple(candidates),
-        shots=pick_shots(candidates, len(infos), montage_config),
-        config=montage_config,
-        warnings=tuple(note for index in sorted(warnings) for note in warnings[index]),
+        shots=pick_shots(candidates, len(infos), config),
+        config=config,
+        warnings=tuple(note for index in sorted(notes) for note in notes[index]),
     )
 
 
@@ -427,7 +440,7 @@ def default_workers() -> int:
 
 
 @dataclass(frozen=True)
-class _ClipJob:
+class ClipJob:
     tools: Tools
     info: MediaInfo
     index: int
@@ -437,14 +450,23 @@ class _ClipJob:
 
 
 @dataclass(frozen=True)
-class _ClipResult:
+class ClipResult:
     index: int
     clip: Clip | None  # None when the clip has nothing usable
     candidates: tuple[Shot, ...]
     warnings: tuple[str, ...]
 
+    def moved_to(self, index: int) -> ClipResult:
+        """The same result for the clip at ``index`` of a montage's clip list."""
+        return ClipResult(
+            index,
+            dataclasses.replace(self.clip, index=index) if self.clip is not None else None,
+            tuple(dataclasses.replace(shot, clip=index) for shot in self.candidates),
+            self.warnings,
+        )
 
-def _plan_clip(job: _ClipJob, step: Callable[[float], None]) -> _ClipResult:
+
+def _plan_clip(job: ClipJob, step: Callable[[float], None]) -> ClipResult:
     """Analyse one clip and find its candidate shots (runs in a worker process)."""
     tools, info, name = job.tools, job.info, job.info.path.name
     step(0.0)
@@ -454,11 +476,11 @@ def _plan_clip(job: _ClipJob, step: Callable[[float], None]) -> _ClipResult:
             f"{name} has a variable frame rate and was left out; convert it first, e.g. "
             "ffmpeg -i in.mp4 -fps_mode cfr -r 60 out.mp4"
         )
-        return _ClipResult(job.index, None, (), (warning,))
+        return ClipResult(job.index, None, (), (warning,))
     try:
         analysis = analyze(tools, info, job.config.analysis, cache_dir=job.cache_dir, progress=step)
     except NoFlightContentError as exc:
-        return _ClipResult(job.index, None, (), (f"{name}: nothing usable ({exc})",))
+        return ClipResult(job.index, None, (), (f"{name}: nothing usable ({exc})",))
     warnings = [f"{name}: {note}" for note in (*_gap_warnings(info, times), *analysis.warnings)]
     found = candidate_shots(
         job.index, analysis.measurements, analysis.selection, job.montage, job.config.selection
@@ -466,10 +488,10 @@ def _plan_clip(job: _ClipJob, step: Callable[[float], None]) -> _ClipResult:
     if not found:
         warnings.append(f"{name}: no flip, spin or close pass to build a shot around")
     clip = Clip(job.index, info, times, analysis.analysed_duration)
-    return _ClipResult(job.index, clip, tuple(found), tuple(warnings))
+    return ClipResult(job.index, clip, tuple(found), tuple(warnings))
 
 
-def _plan_in_worker(job: _ClipJob, shares: Any, stop: Any) -> _ClipResult:
+def plan_in_worker(job: ClipJob, shares: Any, stop: Any) -> ClipResult:
     """`_plan_clip` in a worker process: progress goes to ``shares``, ``stop`` cancels."""
 
     def step(share: float) -> None:
@@ -481,8 +503,8 @@ def _plan_in_worker(job: _ClipJob, shares: Any, stop: Any) -> _ClipResult:
 
 
 def _plan_in_processes(
-    jobs: Sequence[_ClipJob], workers: int, progress: Progress | None
-) -> list[_ClipResult]:
+    jobs: Sequence[ClipJob], workers: int, progress: Progress | None
+) -> list[ClipResult]:
     """Run `_plan_clip` for every job in ``workers`` processes, reporting their progress
     weighted by clip length. If ``progress`` raises, the workers stop and it propagates."""
     weights = {job.index: job.info.duration or 1.0 for job in jobs}
@@ -492,7 +514,7 @@ def _plan_in_processes(
     with context.Manager() as manager:
         shares, stop = manager.Queue(), manager.Event()
         with ProcessPoolExecutor(workers, mp_context=context) as pool:
-            futures = [pool.submit(_plan_in_worker, job, shares, stop) for job in jobs]
+            futures = [pool.submit(plan_in_worker, job, shares, stop) for job in jobs]
             try:
                 while not all(future.done() for future in futures):
                     for future in futures:

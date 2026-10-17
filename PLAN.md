@@ -160,6 +160,15 @@ Details and per-claim evidence: `docs/review-2026-10-11.md`.
 ## Validation log
 (newest first; exact commands and outcomes)
 
+### 2026-10-17 — Clip cards, background analysis, faster motion (Dom's PC, offscreen)
+- Dom's feedback on the steps, acted on: clips are now cards (`app/cliplist.py`) with a thumbnail from 30 % into the clip, the length, size and rate, and the recording time (from a Walksnail-style name `YYYYMMDD-HHMMSS`, else the file's modified time labelled `FILE`; DVR files carry no creation time, checked on Walksnail and HDZero files); step 1's list sits on the dot grid like the other steps.
+- Clips are analysed in worker processes from the moment they are added (`app/analyser.py`), each card shows its progress, and Find shots only waits for what is left, with every clip's progress on the progress screen. Results are kept per file, so a new montage length or clip order picks again at once (0.01-0.02 s). The engine gained `combine_clips` and `ClipResult.moved_to` for this; `plan_montage` uses the same combining, so the CLI is unchanged.
+- Motion measuring: the rotation fit scores all RANSAC candidates in one batch with the same random draws, and `np.cross`/`einsum` calls were replaced by cheaper ones. Measurements are bit-identical (all arrays of 3600 frames of `clip 1.mp4` compared); measuring those frames took 16.5 s before and 11.7 s after (-29 %). Decoding alone is ~15 % of the analysis (CPU decode of the 3:10 clip: 18.7 s for the whole clip), so the analysis is CPU-bound in Python, not in FFmpeg. The code change renews the measurement cache once.
+- Timings while Dom's AnaHD SeedVR2 job was running on the same PC (so slower than normal): 3 uncached clips (3:04, 3:10, 3:20) added and Find shots clicked 8 s later: ready 71 s after adding. 1 cached + 2 uncached (4:03, 4:24): 96 s. A second Find shots on analysed clips: 0.01 s. No before/after comparison of whole runs under equal load was made.
+- Fonts: still Segoe UI and Consolas/Cascadia Mono; bundling Geist, Geist Mono and Doto (OFL) waits on Dom's OK to download them.
+- Not done: splitting a long clip into parallel pieces (one 9-minute clip is still analysed by one worker).
+- Checks: ruff, ruff format, mypy (51 files) clean; pytest 204 passed (new: recording-time parsing, per-clip analysis combined in any order equals `plan_montage`, the window analysing in the background and picking at once after a reorder).
+
 ### 2026-10-17 — UI redesign status (handed to a new thread)
 - Restyled after dvsalas.com (`app/theme.py`: dark/light palettes, mono uppercase labels, red accent; `app/look.py`: dot-matrix title, status dot) and rebuilt as four steps (`app/window.py`: add clips, find shots, review, export/done). Committed and pushed (`f73c104`, `be7103b`); checked by offscreen screenshots and the app tests, not yet by hand.
 - Dom's feedback on the steps (2026-10-17), still open:
