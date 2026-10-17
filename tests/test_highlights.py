@@ -148,3 +148,22 @@ def test_without_arm_events_a_quad_on_a_desk_gives_nothing() -> None:
 def test_nothing_worth_keeping_raises() -> None:
     with pytest.raises(NoFlightContentError):
         select(Timeline(30).still(0, 30))
+
+
+def test_without_osd_a_tumble_into_a_dead_stop_is_a_crash() -> None:
+    # A crash without an OSD: tumbling, then lying dead still for under a second.
+    timeline = Timeline(60, osd=False).tumble(28.5, 30).still(30, 30.8)
+    selection = select(timeline)
+    assert cut_reason(selection, 29) is CutReason.CRASH
+    assert cut_reason(selection, 27) is CutReason.CRASH  # the failed move before it
+    assert kept(selection, 15) and kept(selection, 45)
+
+
+def test_without_osd_a_flip_into_a_hover_is_not_a_crash() -> None:
+    timeline = Timeline(60, osd=False).flip(29)
+    hover = slice(30 * 20, 31 * 20)
+    timeline.motion[hover, PITCH : ROLL + 1] = 3.0  # calm, but the picture still moves
+    timeline.motion[hover, SPEED] = 0.12
+    selection = select(timeline)
+    assert not any(c.reason is CutReason.CRASH for c in selection.cuts)
+    assert kept(selection, 29)

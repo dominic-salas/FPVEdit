@@ -104,6 +104,9 @@ class MontageConfig:
     edge_s: float = 0.5  # a moment this close to the start of a shot is not shown whole
     tail_s: float = 2.0  # ... nor one this close to its end (it would be cut short)
     snap_s: float = 0.75  # each end moves to the calmest frame within this distance
+    turning_rate: float = 90.0  # deg/s (0.3 s median): a cut never falls inside such a turn
+    fast_turn_rate: float = 150.0  # deg/s (0.1 s median): nor this close to one this fast
+    fast_turn_gap_s: float = 0.4
     # moments
     flip_deg: float = 180.0  # turned within one second
     big_flip_deg: float = 330.0
@@ -213,7 +216,13 @@ def candidate_shots(
     if not moments:
         return []
     motion = _Motion(measurements)
-    calm = rolling_median(motion.rate, max(1, round(0.3 * fps)))
+    # Frames whose motion could not be measured (blur in a fast flip) are not calm.
+    rate = np.where(np.isnan(measurements.motion).any(axis=1), np.inf, motion.rate)
+    calm = rolling_median(rate, max(1, round(0.3 * fps)))
+    # A cut inside a turn, or right next to a fast one, shows a flip cut short.
+    fast = rolling_median(rate, max(1, round(0.1 * fps))) >= config.fast_turn_rate
+    near_fast = window_sum(fast.astype(np.float64), 2 * round(config.fast_turn_gap_s * fps) + 1) > 0
+    turning = (calm >= config.turning_rate) | near_fast
     shortest = round(config.shot_min_s * fps)
     longest = round(config.shot_max_s * fps)
     reach = round(config.snap_s * fps)
@@ -231,12 +240,52 @@ def candidate_shots(
                 start = _calmest(calm, start, reach, low, high)
                 end = _calmest(calm, start + length, reach, low, high)
                 end = min(max(end, start + shortest), start + longest, high)
-                if end - start < shortest:
+                edges = _clear_of_turns(turning, start, end, shortest, longest, low, high)
+                if edges is None:
                     continue
+                start, end = edges
                 shot = _score(clip, start / fps, end / fps, inside, motion, config)
                 if shot is not None:
                     shots[(start, end)] = shot
     return list(shots.values())
+
+
+def _clear_of_turns(
+    turning: BoolArray, start: int, end: int, shortest: int, longest: int, low: int, high: int
+) -> tuple[int, int] | None:
+    """Move a shot's ends out of any turn (a flip or roll) they would cut through.
+
+    The start moves back to before the turn (the viewer sees all of it) or, failing
+    that, after it; the end moves on to after the turn or, failing that, back to before
+    it. None if the shot cannot then stay ``shortest``-``longest`` frames long.
+    """
+    if turning[start]:
+        before = _turn_start(turning, start)
+        if before > low and end - (before - 1) <= longest:
+            start = before - 1
+        else:
+            start = _turn_end(turning, start)
+    if end - 1 >= start and turning[end - 1]:
+        after = _turn_end(turning, end - 1)
+        fits = after <= high and after - start <= longest
+        end = after if fits else _turn_start(turning, end - 1)
+    if not shortest <= end - start <= longest or turning[start] or turning[end - 1]:
+        return None
+    return start, end
+
+
+def _turn_start(turning: BoolArray, index: int) -> int:
+    """First frame of the turn that ``index`` is in."""
+    while index > 0 and turning[index - 1]:
+        index -= 1
+    return index
+
+
+def _turn_end(turning: BoolArray, index: int) -> int:
+    """First frame after the turn that ``index`` is in."""
+    while index < len(turning) and turning[index]:
+        index += 1
+    return index
 
 
 def _calmest(calm: FloatArray, index: int, reach: int, low: int, high: int) -> int:

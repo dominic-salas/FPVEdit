@@ -103,6 +103,11 @@ class SelectionConfig:
     crash_lead_s: float = 3.5  # the failed move starts at least this long before the disarm
     crash_lookback_s: float = 8.0  # ... and at most this long
     calm_slack: float = 20.0  # deg/s above the calmest moment that still counts as calm
+    # without an OSD, a dead stop this still and long stands in for a disarm
+    impact_speed: float = 0.08  # widths/s
+    impact_rate: float = 10.0  # deg/s
+    impact_still_s: float = 0.5
+    impact_tumble_rate: float = 300.0  # 90th percentile rotation (deg/s) just before it
     crash_after_s: float = 12.0  # a crash is over by the re-arm or take-off within this
     churn_disarms: int = 3  # this many disarms ...
     churn_window_s: float = 15.0  # ... within this time are cut as a whole
@@ -205,8 +210,12 @@ def select_highlights(
     keep = np.ones(count, dtype=bool)
     keep = cut(keep, _not_flying(events, flight, landings, count, fps), CutReason.NOT_FLYING)
     keep = cut(keep, _long_runs(flight.static, round(config.static_min_s * fps)), CutReason.STATIC)
-    keep = cut(keep, _on_ground(motion, landings, config), CutReason.ON_GROUND)
-    crash, churn = _failures(events, motion, keep.copy(), _still(motion, config), config)
+    ground = _on_ground(motion, landings, config)
+    keep = cut(keep, ground, CutReason.ON_GROUND)
+    # Without an OSD there are no disarms to read; coming to rest on the ground stands in
+    # for them, so a tumble just before it is still found as a crash.
+    stops = events if flight.has_osd else _ground_stops(ground, motion, config)
+    crash, churn = _failures(stops, motion, keep.copy(), _still(motion, config), config)
     keep = cut(keep, crash, CutReason.CRASH)
     keep = cut(keep, churn, CutReason.REARM_CHURN)
     landed = np.zeros(count, dtype=bool)
@@ -241,8 +250,9 @@ def select_highlights(
     warnings: tuple[str, ...] = ()
     if not flight.has_osd:
         warnings = (
-            "no Betaflight OSD found, so arming and disarming could not be detected; only "
-            "static, time on the ground and dull stretches were cut",
+            "no Betaflight OSD found, so flight state comes from the picture alone: static, "
+            "time on the ground, crashes (a tumble before coming to rest) and dull stretches "
+            "were cut",
         )
     elif not confirmed:
         warnings = (
@@ -317,6 +327,29 @@ def _on_ground(
             if (end - start) / fps >= min_s:
                 result[start : max(start, end - keep_end)] = True
     return result
+
+
+def _ground_stops(ground: BoolArray, motion: _Motion, config: SelectionConfig) -> list[ScreenEvent]:
+    """Each time the quad comes to rest right after tumbling, as a disarm (stats screen)
+    event: the start of time on the ground, or a short dead stop (a crash often lies
+    still for under a second before the pilot flips it over). Without the OSD's disarm,
+    speed alone is not enough: a fast flight into a deliberate stop is not a crash."""
+    fps = motion.fps
+    window = max(1, round(0.25 * fps))
+    dead = (rolling_median(motion.speed, window) < config.impact_speed) & (
+        rolling_median(motion.rate, window) < config.impact_rate
+    )
+    starts = {start for start, _ in runs(ground)}
+    starts |= {s for s, e in runs(dead) if (e - s) / fps >= config.impact_still_s}
+    sustained = rolling_median(motion.rate, window)  # one-frame glitches are not a tumble
+    before, after = config.crash_window_s
+    stops = []
+    for start in sorted(starts):
+        first, last = round(start - before * fps), round(start - after * fps)
+        tumble = sustained[first:last] if first >= 0 else np.zeros(0)
+        if len(tumble) and float(np.percentile(tumble, 90)) >= config.impact_tumble_rate:
+            stops.append(ScreenEvent(Screen.STATS, start / fps, start / fps))
+    return stops
 
 
 def _is_crash(disarm: float, motion: _Motion, config: SelectionConfig) -> bool:
