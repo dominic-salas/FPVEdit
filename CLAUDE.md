@@ -16,8 +16,7 @@ steps, optional measurement cache): `picture` (active area, OSD mask) → `measu
 → `montage` (moments, shots, picking across clips) → `render` (shots → MP4 parts → join →
 validate). Analysis never renders; rendering reads only the shot list. `app/` is the PySide6
 desktop window (`uv sync --extra app`, `uv run fpv-editor-app`): it calls `cli.plan_montage` and
-`cli.render_montage`; its editing rules live in `app/model.py` (no Qt). `sampling`, `features`
-and `scoring` are the unused M2 pipeline.
+`cli.render_montage`; its editing rules live in `app/model.py` (no Qt).
 
 ## Conventions
 - Type hints everywhere (mypy strict), `pathlib`, frozen dataclasses for config/results, no global mutable state.
