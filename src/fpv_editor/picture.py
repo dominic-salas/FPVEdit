@@ -20,7 +20,7 @@ import cv2
 import numpy as np
 from numpy.typing import NDArray
 
-from fpv_editor.media import MediaInfo, Tools
+from fpv_editor.media import NO_WINDOW, MediaInfo, Tools
 
 GrayFrame = NDArray[np.uint8]
 BoolMask = NDArray[np.bool_]
@@ -94,7 +94,7 @@ def _grab(tools: Tools, info: MediaInfo, step: float, *, keyframes_only: bool) -
     ]
     # Errors are not fatal here: a damaged recording simply yields fewer frames, and
     # the main analysis pass reports decoding problems.
-    raw = subprocess.run(args, capture_output=True, check=False).stdout
+    raw = subprocess.run(args, capture_output=True, check=False, creationflags=NO_WINDOW).stdout
     size = width * height
     usable = len(raw) // size
     frames = np.frombuffer(raw[: usable * size], dtype=np.uint8).reshape(usable, height, width)

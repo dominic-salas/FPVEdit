@@ -37,3 +37,7 @@ class OutputExistsError(FPVEditError):
 
 class ValidationError(FPVEditError):
     """The rendered file failed post-render validation."""
+
+
+class CancelledError(FPVEditError):
+    """The user stopped the work; raised from a progress callback."""

@@ -6,16 +6,27 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from fpv_editor.errors import InvalidInputError, OutputExistsError
+from fpv_editor.errors import (
+    InvalidInputError,
+    MediaToolError,
+    OutputExistsError,
+    ToolNotFoundError,
+)
 from fpv_editor.highlights import Interval
+from fpv_editor.media import Tools
 from fpv_editor.render import (
+    NVENC,
+    RENDER_ACTION,
+    EncodeConfig,
     build_filter_graph,
     default_output_path,
+    encoders,
     expected_frame_count,
     finalize_output,
     resolve_output_path,
     snap_to_frames,
     temporary_output,
+    with_fallback,
 )
 
 
@@ -131,3 +142,34 @@ def test_finalize_never_replaces_a_file_that_appeared_meanwhile(tmp_path: Path) 
     with pytest.raises(OutputExistsError):
         finalize_output(temporary, final, force=False)
     assert final.read_bytes() == b"someone else's"
+
+
+def test_cpu_device_never_tries_the_gpu() -> None:
+    tools = Tools("ffmpeg-that-does-not-exist", "ffprobe", 9)
+    cpu = EncodeConfig(preset="ultrafast")
+    assert encoders(tools, "cpu", cpu) == [cpu]
+    assert encoders(tools, "auto", cpu) == [cpu]  # no NVENC here: CPU only
+    with pytest.raises(ToolNotFoundError, match="cuda"):
+        encoders(tools, "cuda", cpu)
+    with pytest.raises(InvalidInputError, match="device"):
+        encoders(tools, "gpu", cpu)
+
+
+def test_fallback_moves_on_only_when_the_encode_fails() -> None:
+    cpu = EncodeConfig()
+    tried: list[str] = []
+
+    def encode_fails_on_gpu(encode: EncodeConfig) -> str:
+        tried.append(encode.video_codec)
+        if encode == NVENC:
+            raise MediaToolError(RENDER_ACTION, 1, "No NVENC capable devices found")
+        return "done"
+
+    assert with_fallback([NVENC, cpu], encode_fails_on_gpu) == ("done", cpu)
+    assert tried == ["h264_nvenc", "libx264"]
+
+    def join_fails(encode: EncodeConfig) -> str:
+        raise MediaToolError("joining the montage", 1, "broken")
+
+    with pytest.raises(MediaToolError, match="joining"):
+        with_fallback([NVENC, cpu], join_fails)

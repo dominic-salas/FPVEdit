@@ -1,0 +1,797 @@
+"""The app window (Qt). Slow work runs in background threads: analysis, thumbnails, render.
+
+Nothing leaves this computer: clips are read in place, measurements are cached in the
+user's local app-data folder, and the montage is written where the user chooses.
+"""
+
+from __future__ import annotations
+
+import queue
+import threading
+import time
+import traceback
+from collections.abc import Callable, Sequence
+from pathlib import Path
+
+from PySide6.QtCore import QObject, QStandardPaths, Qt, QThread, QTimer, QUrl, Signal
+from PySide6.QtGui import (
+    QAction,
+    QCloseEvent,
+    QDesktopServices,
+    QDragEnterEvent,
+    QDragMoveEvent,
+    QDropEvent,
+    QIcon,
+    QKeySequence,
+    QPixmap,
+)
+from PySide6.QtWidgets import (
+    QAbstractItemView,
+    QApplication,
+    QComboBox,
+    QDoubleSpinBox,
+    QFileDialog,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QListWidget,
+    QListWidgetItem,
+    QMainWindow,
+    QMessageBox,
+    QProgressBar,
+    QPushButton,
+    QSplitter,
+    QVBoxLayout,
+    QWidget,
+)
+
+from fpv_editor.app.frames import grab_frame
+from fpv_editor.app.model import ShotList
+from fpv_editor.app.preview import PreviewView
+from fpv_editor.cli import (
+    MONTAGE_SUFFIX,
+    MontagePlan,
+    Progress,
+    plan_montage,
+    render_montage,
+)
+from fpv_editor.errors import CancelledError, FPVEditError
+from fpv_editor.media import MediaInfo, Tools, find_tools, probe
+from fpv_editor.montage import MomentKind, MontageConfig, Shot
+from fpv_editor.render import (
+    NVENC,
+    EncodeConfig,
+    encoders,
+    resolve_output_path,
+    with_fallback,
+)
+
+VIDEO_SUFFIXES = (".ts", ".mp4")
+OUTPUT_MARKERS = (MONTAGE_SUFFIX, "_highlight")  # our own renders, skipped in dropped folders
+THUMB_HEIGHT = 72
+TRIM_STEPS = (-1.0, -0.25, 0.25, 1.0)
+
+
+def video_files(paths: Sequence[Path]) -> list[Path]:
+    """Recordings among dropped files and folders (a folder's top level only, by name)."""
+    found: list[Path] = []
+    for path in paths:
+        if path.is_dir():
+            found.extend(sorted(p for p in path.iterdir() if p.is_file() and _is_recording(p)))
+        elif path.is_file() and _is_recording(path):
+            found.append(path)
+    return found
+
+
+def _is_recording(path: Path) -> bool:
+    stem = path.stem.lower()
+    ours = any(marker in stem for marker in OUTPUT_MARKERS)
+    return path.suffix.lower() in VIDEO_SUFFIXES and not ours
+
+
+def clock(seconds: float) -> str:
+    minutes, rest = divmod(max(0.0, seconds), 60)
+    return f"{int(minutes)}:{rest:04.1f}"
+
+
+def describe(shot: Shot) -> str:
+    counts: dict[MomentKind, int] = {}
+    for moment in shot.moments:
+        counts[moment.kind] = counts.get(moment.kind, 0) + 1
+    names = [
+        f"{count} {kind.value}{'es' if kind is MomentKind.PROXIMITY else 's'}"
+        if count > 1
+        else kind.value
+        for kind, count in counts.items()
+    ]
+    return ", ".join(names) or "flying"
+
+
+class Task(QThread):
+    """Runs ``work(progress)`` in the background; ``cancel()`` stops it at the next report."""
+
+    progressed = Signal(str, float)
+    succeeded = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, work: Callable[[Progress], object], parent: QObject) -> None:
+        super().__init__(parent)
+        self._work = work
+        self._cancel = threading.Event()
+
+    def cancel(self) -> None:
+        self._cancel.set()
+
+    def _report(self, text: str, share: float) -> None:
+        if self._cancel.is_set():
+            raise CancelledError("cancelled")
+        self.progressed.emit(text, share)
+
+    def run(self) -> None:
+        try:
+            result = self._work(self._report)
+        except CancelledError:
+            self.failed.emit("Cancelled.")
+        except FPVEditError as exc:
+            self.failed.emit(str(exc))
+        except Exception:  # a defect: show it in full rather than lose it in a thread
+            self.failed.emit(f"Unexpected error:\n{traceback.format_exc()}")
+        else:
+            self.succeeded.emit(result)
+
+
+class ThumbnailLoader(QThread):
+    """Grabs frames one at a time from a queue of requests."""
+
+    ready = Signal(object, bytes)  # key (path, seconds), PNG
+
+    def __init__(self, tools: Tools, parent: QObject) -> None:
+        super().__init__(parent)
+        self._tools = tools
+        self._requests: queue.Queue[tuple[MediaInfo, float] | None] = queue.Queue()
+
+    def request(self, info: MediaInfo, seconds: float) -> None:
+        self._requests.put((info, seconds))
+
+    def stop(self) -> None:
+        while not self._requests.empty():  # drop what is still waiting
+            try:
+                self._requests.get_nowait()
+            except queue.Empty:
+                break
+        self._requests.put(None)
+        self.wait()
+
+    def run(self) -> None:
+        while (request := self._requests.get()) is not None:
+            info, seconds = request
+            png = grab_frame(self._tools, info, seconds, THUMB_HEIGHT)
+            if png is not None:
+                self.ready.emit((info.path, seconds), png)
+
+
+class ClipList(QListWidget):
+    """The clips, in montage order: drag to reorder, drop files or folders to add."""
+
+    dropped = Signal(list)
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
+        self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.setAcceptDrops(True)
+
+    def dragEnterEvent(self, event: QDragEnterEvent) -> None:
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            super().dragEnterEvent(event)
+
+    def dragMoveEvent(self, event: QDragMoveEvent) -> None:
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            super().dragMoveEvent(event)
+
+    def dropEvent(self, event: QDropEvent) -> None:
+        if event.mimeData().hasUrls():
+            self.dropped.emit([Path(url.toLocalFile()) for url in event.mimeData().urls()])
+            event.acceptProposedAction()
+        else:
+            super().dropEvent(event)
+
+
+class MainWindow(QMainWindow):
+    def __init__(self, tools: Tools, cache_dir: Path | None) -> None:
+        super().__init__()
+        self.setWindowTitle("FPV Editor")
+        self.resize(1280, 800)
+        self.setAcceptDrops(True)
+        self._tools = tools
+        self._cache_dir = cache_dir
+        self._plan: MontagePlan | None = None
+        self._shots: ShotList | None = None
+        self._task: Task | None = None
+        self._output: Path | None = None  # chosen by the user; None = automatic name
+        self._force = False  # the user confirmed replacing ``_output``
+        self._thumbs: dict[tuple[Path, float], QPixmap] = {}
+        self._requested: set[tuple[Path, float]] = set()
+        self._loop: tuple[float, float] | None = None  # preview range, seconds
+        self._alts: list[Shot] = []  # the alternatives listed, in list order
+        self._last_output: Path | None = None
+
+        self._loader = ThumbnailLoader(tools, self)
+        self._loader.ready.connect(self._thumbnail_ready)
+        self._loader.start()
+
+        self._build()
+        self._refresh()
+
+    # ----- layout -----
+
+    def _build(self) -> None:
+        self._clips = ClipList()
+        self._clips.dropped.connect(self.add_paths)
+        self._clips.model().rowsMoved.connect(lambda *_: self._clips_changed())
+        add = QPushButton("Add clips…")
+        add.clicked.connect(self._choose_clips)
+        remove = QPushButton("Remove")
+        remove.clicked.connect(self._remove_clips)
+        self._length = QDoubleSpinBox()
+        self._length.setRange(10, 1800)
+        self._length.setDecimals(0)
+        self._length.setSuffix(" s")
+        self._length.setValue(MontageConfig().length_s)
+        self._find = QPushButton("Find shots")
+        self._find.clicked.connect(self._find_shots)
+        clip_buttons = QHBoxLayout()
+        for widget in (add, remove, QLabel("Length"), self._length, self._find):
+            clip_buttons.addWidget(widget)
+        clips_box = QGroupBox("Clips (drop files or folders here; drag to reorder)")
+        clips_layout = QVBoxLayout(clips_box)
+        clips_layout.addWidget(self._clips)
+        clips_layout.addLayout(clip_buttons)
+
+        self._shot_list = QListWidget()
+        self._shot_list.setIconSize(QPixmap(128, THUMB_HEIGHT).size())
+        self._shot_list.setWordWrap(True)
+        self._shot_list.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
+        self._shot_list.currentRowChanged.connect(self._shot_selected)
+        self._shot_list.model().rowsMoved.connect(lambda *_: QTimer.singleShot(0, self._reorder))
+        self._total = QLabel()
+        shots_box = QGroupBox("Montage shots (drag to reorder)")
+        shots_layout = QVBoxLayout(shots_box)
+        shots_layout.addWidget(self._shot_list)
+        shots_layout.addWidget(self._total)
+
+        left = QSplitter(Qt.Orientation.Vertical)
+        left.addWidget(clips_box)
+        left.addWidget(shots_box)
+        left.setSizes([220, 580])
+
+        self._video = PreviewView(self._tools)
+        self._video.timeChanged.connect(self._show_time)
+        self._now = QLabel()
+
+        trim = QHBoxLayout()
+        self._trim_buttons: list[QPushButton] = []
+        for end in (False, True):
+            trim.addWidget(QLabel("End" if end else "Start"))
+            for step in TRIM_STEPS:
+                button = QPushButton(f"{step:+g} s")
+                button.clicked.connect(lambda _=False, e=end, s=step: self._trim(e, s))
+                trim.addWidget(button)
+                self._trim_buttons.append(button)
+            trim.addSpacing(16)
+        self._remove_shot = QPushButton("Remove shot")
+        self._remove_shot.clicked.connect(self._remove_current)
+        trim.addWidget(self._remove_shot)
+
+        self._mode = QComboBox()
+        self._mode.addItems(["Other shots from this clip (swap)", "Shots from all clips (add)"])
+        self._mode.currentIndexChanged.connect(lambda _: self._refresh_alternatives())
+        self._alternatives = QListWidget()
+        self._alternatives.setIconSize(QPixmap(128, THUMB_HEIGHT).size())
+        self._alternatives.setWordWrap(True)
+        self._alternatives.currentRowChanged.connect(self._alternative_selected)
+        self._swap = QPushButton("Use instead of the selected shot")
+        self._swap.clicked.connect(self._use_alternative)
+        self._add = QPushButton("Add to the montage")
+        self._add.clicked.connect(self._add_alternative)
+        alt_buttons = QHBoxLayout()
+        alt_buttons.addWidget(self._swap)
+        alt_buttons.addWidget(self._add)
+        alt_box = QGroupBox("Other shots the engine found (click to preview)")
+        alt_layout = QVBoxLayout(alt_box)
+        alt_layout.addWidget(self._mode)
+        alt_layout.addWidget(self._alternatives)
+        alt_layout.addLayout(alt_buttons)
+
+        right_top = QWidget()
+        right_layout = QVBoxLayout(right_top)
+        right_layout.addWidget(self._video, 1)
+        right_layout.addWidget(self._now)
+        right_layout.addLayout(trim)
+        right = QSplitter(Qt.Orientation.Vertical)
+        right.addWidget(right_top)
+        right.addWidget(alt_box)
+        right.setSizes([520, 280])
+
+        main = QSplitter(Qt.Orientation.Horizontal)
+        main.addWidget(left)
+        main.addWidget(right)
+        main.setSizes([480, 800])
+
+        self._output_label = QLabel()
+        change = QPushButton("Save as…")
+        change.clicked.connect(self._choose_output)
+        self._render = QPushButton("Render montage")
+        self._render.clicked.connect(self._start_render)
+        self._cancel = QPushButton("Cancel")
+        self._cancel.clicked.connect(self._cancel_task)
+        self._open = QPushButton("Show in folder")
+        self._open.clicked.connect(self._show_output)
+        self._progress = QProgressBar()
+        self._progress.setRange(0, 1000)
+        self._status = QLabel()
+        self._status.setWordWrap(True)
+        bottom = QHBoxLayout()
+        for widget in (self._output_label, change, self._render, self._cancel, self._open):
+            bottom.addWidget(widget)
+        bottom.insertStretch(1)
+
+        central = QWidget()
+        layout = QVBoxLayout(central)
+        layout.addWidget(main, 1)
+        layout.addLayout(bottom)
+        layout.addWidget(self._progress)
+        layout.addWidget(self._status)
+        self.setCentralWidget(central)
+
+        undo = QAction("Undo", self)
+        undo.setShortcut(QKeySequence.StandardKey.Undo)
+        undo.triggered.connect(self._undo)
+        self.addAction(undo)
+        delete = QAction("Remove shot", self)
+        delete.setShortcut(QKeySequence.StandardKey.Delete)
+        delete.triggered.connect(self._remove_current)
+        self._shot_list.addAction(delete)
+        self._shot_list.setContextMenuPolicy(Qt.ContextMenuPolicy.ActionsContextMenu)
+
+    # ----- clips -----
+
+    def dragEnterEvent(self, event: QDragEnterEvent) -> None:
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+
+    def dropEvent(self, event: QDropEvent) -> None:
+        self.add_paths([Path(url.toLocalFile()) for url in event.mimeData().urls()])
+
+    def clip_paths(self) -> list[Path]:
+        return [
+            Path(self._clips.item(i).data(Qt.ItemDataRole.UserRole))
+            for i in range(self._clips.count())
+        ]
+
+    def add_paths(self, paths: list[Path]) -> None:
+        if self._busy():
+            return
+        known = {p.resolve() for p in self.clip_paths()}
+        for path in video_files(paths):
+            if path.resolve() in known:
+                continue
+            known.add(path.resolve())
+            item = QListWidgetItem(path.name)
+            item.setData(Qt.ItemDataRole.UserRole, str(path))
+            item.setToolTip(str(path))
+            self._clips.addItem(item)
+        self._clips_changed()
+
+    def _choose_clips(self) -> None:
+        names, _ = QFileDialog.getOpenFileNames(
+            self, "Add clips", "", "Recordings (*.ts *.mp4 *.TS *.MP4)"
+        )
+        self.add_paths([Path(n) for n in names])
+
+    def _remove_clips(self) -> None:
+        if self._busy():
+            return
+        for item in self._clips.selectedItems():
+            self._clips.takeItem(self._clips.row(item))
+        self._clips_changed()
+
+    def _clips_changed(self) -> None:
+        if self._plan is not None:
+            self._plan = None
+            self._shots = None
+            self._status.setText("The clips changed: press Find shots again (it is quick now).")
+        self._refresh()
+
+    # ----- analysis -----
+
+    def _find_shots(self) -> None:
+        paths = self.clip_paths()
+        if not paths or self._busy():
+            return
+        tools, cache, length = self._tools, self._cache_dir, self._length.value()
+
+        def work(progress: Progress) -> object:
+            infos = [probe(tools, path) for path in paths]
+            return plan_montage(tools, infos, length=length, cache_dir=cache, progress=progress)
+
+        self._run(work, self._plan_ready, "Analysing")
+
+    def _plan_ready(self, result: object) -> None:
+        if not isinstance(result, MontagePlan):
+            raise TypeError(f"expected a MontagePlan, got {type(result).__name__}")
+        self._plan = result
+        durations = {clip.index: clip.analysed_duration for clip in result.clips}
+        self._shots = ShotList(result.shots, result.candidates, durations)
+        self._output, self._force = None, False
+        notes = "\n".join(result.warnings)
+        if result.shots:
+            self._status.setText(
+                f"{len(result.shots)} shots picked from {result.footage_duration / 60:.1f} min "
+                f"of usable footage." + (f"\n{notes}" if notes else "")
+            )
+        else:
+            self._status.setText("No flip, spin or close pass found in these clips.\n" + notes)
+        self._refresh()
+        if result.shots:
+            self._shot_list.setCurrentRow(0)
+
+    # ----- shots -----
+
+    def _info(self, shot: Shot) -> MediaInfo:
+        if self._plan is None:
+            raise RuntimeError("no montage plan")
+        return self._plan.infos[shot.clip]
+
+    def _path(self, shot: Shot) -> Path:
+        return self._info(shot).path
+
+    def _thumb_key(self, shot: Shot) -> tuple[Path, float]:
+        seconds = shot.moments[0].time if shot.moments else (shot.start + shot.end) / 2
+        return (self._path(shot), round(seconds, 2))
+
+    def _icon(self, shot: Shot) -> QIcon:
+        key = self._thumb_key(shot)
+        if key in self._thumbs:
+            return QIcon(self._thumbs[key])
+        if key not in self._requested:
+            self._requested.add(key)
+            self._loader.request(self._info(shot), key[1])
+        return QIcon()
+
+    def _thumbnail_ready(self, key: object, png: bytes) -> None:
+        pixmap = QPixmap()
+        if pixmap.loadFromData(png) and isinstance(key, tuple):
+            self._thumbs[key] = pixmap
+            self._refresh_icons()
+
+    def _shot_text(self, number: int | None, shot: Shot) -> str:
+        prefix = f"{number}. " if number is not None else ""
+        return (
+            f"{prefix}{self._path(shot).name}\n{clock(shot.start)}-{clock(shot.end)} "
+            f"({shot.duration:.1f} s)  {describe(shot)}"
+        )
+
+    def _refresh(self, *, preview: bool = True) -> None:
+        """Rebuild the lists; with ``preview`` the selected shot starts playing again."""
+        row = self._shot_list.currentRow()
+        self._shot_list.blockSignals(True)
+        self._shot_list.clear()
+        if self._shots is not None:
+            for number, shot in enumerate(self._shots.shots, start=1):
+                item = QListWidgetItem(self._icon(shot), self._shot_text(number, shot))
+                item.setData(Qt.ItemDataRole.UserRole, number - 1)
+                self._shot_list.addItem(item)
+        self._shot_list.blockSignals(False)
+        count = self._shot_list.count()
+        if count:
+            self._shot_list.blockSignals(not preview)
+            self._shot_list.setCurrentRow(min(max(row, 0), count - 1))
+            self._shot_list.blockSignals(False)
+        else:
+            self._stop_preview()
+        if self._shots is not None:
+            self._total.setText(
+                f"{len(self._shots.shots)} shots, {self._shots.duration:.1f} s "
+                f"(target {self._length.value():.0f} s)"
+            )
+        else:
+            self._total.setText("Add clips, then press Find shots.")
+        self._refresh_alternatives()
+        self._refresh_output()
+        self._refresh_buttons()
+
+    def _refresh_icons(self) -> None:
+        for widget, shots in (
+            (self._shot_list, self._current_shots()),
+            (self._alternatives, self._alts),
+        ):
+            for i, shot in enumerate(shots):
+                if i < widget.count():
+                    widget.item(i).setIcon(self._icon(shot))
+
+    def _current_shots(self) -> tuple[Shot, ...]:
+        return self._shots.shots if self._shots is not None else ()
+
+    def _refresh_buttons(self) -> None:
+        busy = self._busy()
+        selected = self._shot_list.currentRow() >= 0
+        for button in self._trim_buttons:
+            button.setEnabled(selected and not busy)
+        self._remove_shot.setEnabled(selected and not busy)
+        self._find.setEnabled(self._clips.count() > 0 and not busy)
+        self._render.setEnabled(bool(self._current_shots()) and not busy)
+        self._cancel.setEnabled(busy)
+        swap_mode = self._mode.currentIndex() == 0
+        alt = self._alternatives.currentRow() >= 0
+        self._swap.setEnabled(alt and selected and swap_mode and not busy)
+        self._add.setEnabled(alt and not swap_mode and not busy)
+        self._open.setEnabled(self._last_output is not None and self._last_output.exists())
+        drag = (
+            QAbstractItemView.DragDropMode.NoDragDrop
+            if busy
+            else QAbstractItemView.DragDropMode.InternalMove
+        )
+        self._clips.setDragDropMode(drag)
+        self._shot_list.setDragDropMode(drag)
+
+    def _selected_index(self) -> int | None:
+        row = self._shot_list.currentRow()
+        return row if row >= 0 and self._shots is not None else None
+
+    def _shot_selected(self, row: int) -> None:
+        if self._shots is not None and 0 <= row < len(self._shots.shots):
+            self._preview(self._shots.shots[row])
+        if self._mode.currentIndex() == 0:
+            self._refresh_alternatives()
+        self._refresh_buttons()
+
+    def _reorder(self) -> None:
+        if self._shots is None or self._busy():
+            return
+        order = [
+            int(self._shot_list.item(i).data(Qt.ItemDataRole.UserRole))
+            for i in range(self._shot_list.count())
+        ]
+        moved_to = self._shot_list.currentRow()
+        self._shots.reorder(order)
+        self._refresh()
+        self._shot_list.setCurrentRow(moved_to)
+
+    def _trim(self, end: bool, step: float) -> None:
+        index = self._selected_index()
+        if index is None or self._shots is None or self._busy():
+            return
+        if end:
+            self._shots.trim(index, end=step)
+        else:
+            self._shots.trim(index, start=step)
+        self._refresh(preview=False)
+        shot = self._shots.shots[index]
+        # Show the changed end: the start loops anyway; an end change plays its last seconds.
+        self._preview(shot, from_seconds=max(shot.start, shot.end - 3) if end else None)
+
+    def _remove_current(self) -> None:
+        index = self._selected_index()
+        if index is not None and self._shots is not None and not self._busy():
+            self._shots.remove(index)
+            self._refresh()
+
+    def _undo(self) -> None:
+        if self._shots is not None and self._shots.can_undo and not self._busy():
+            self._shots.undo()
+            self._refresh()
+
+    # ----- alternatives -----
+
+    def _refresh_alternatives(self) -> None:
+        self._alternatives.blockSignals(True)
+        self._alternatives.clear()
+        self._alts = []
+        if self._shots is not None:
+            swap_mode = self._mode.currentIndex() == 0
+            index = self._selected_index()
+            if swap_mode and index is not None:
+                self._alts = self._shots.alternatives(index)
+            elif not swap_mode:
+                self._alts = self._shots.alternatives(limit=40)
+            for shot in self._alts:
+                text = self._shot_text(None, shot) + f"  score {shot.score:.1f}"
+                self._alternatives.addItem(QListWidgetItem(self._icon(shot), text))
+        self._alternatives.blockSignals(False)
+        self._refresh_buttons()
+
+    def _alternative_selected(self, row: int) -> None:
+        if 0 <= row < len(self._alts):
+            self._preview(self._alts[row])
+        self._refresh_buttons()
+
+    def _use_alternative(self) -> None:
+        index = self._selected_index()
+        row = self._alternatives.currentRow()
+        if index is None or self._shots is None or not 0 <= row < len(self._alts):
+            return
+        try:
+            self._shots.replace(index, self._alts[row])
+        except ValueError as exc:
+            self._status.setText(f"Not swapped: {exc}.")
+            return
+        self._refresh()
+
+    def _add_alternative(self) -> None:
+        row = self._alternatives.currentRow()
+        if self._shots is None or not 0 <= row < len(self._alts):
+            return
+        try:
+            position = self._shots.add(self._alts[row])
+        except ValueError as exc:
+            self._status.setText(f"Not added: {exc}.")
+            return
+        self._refresh()
+        self._shot_list.setCurrentRow(position)
+
+    # ----- preview -----
+
+    def _preview(self, shot: Shot, from_seconds: float | None = None) -> None:
+        self._loop = (shot.start, shot.end)
+        self._video.play(self._info(shot), shot.start, shot.end, from_seconds)
+
+    def _show_time(self, seconds: float) -> None:
+        if self._loop is not None:
+            start, end = self._loop
+            self._now.setText(f"{clock(seconds)}  (shot {clock(start)}-{clock(end)})")
+
+    def _stop_preview(self) -> None:
+        self._loop = None
+        self._video.clear_picture()
+        self._now.setText("")
+
+    # ----- render -----
+
+    def _default_output(self) -> Path | None:
+        if self._plan is None:
+            return None
+        try:
+            return resolve_output_path(
+                [info.path for info in self._plan.infos], None, False, suffix=MONTAGE_SUFFIX
+            )
+        except FPVEditError:
+            return None
+
+    def _refresh_output(self) -> None:
+        output = self._output or self._default_output()
+        self._output_label.setText(f"Output: {output}" if output else "Output: -")
+
+    def _choose_output(self) -> None:
+        start = str(self._output or self._default_output() or "")
+        name, _ = QFileDialog.getSaveFileName(self, "Save montage as", start, "MP4 video (*.mp4)")
+        if name:
+            path = Path(name)
+            if path.suffix.lower() != ".mp4":
+                path = path.with_suffix(".mp4")
+            # The dialog asks before returning an existing file, but not about the name
+            # changed here.
+            if path.exists() and path != Path(name):
+                answer = QMessageBox.question(
+                    self, "Replace file?", f"{path} already exists. Replace it?"
+                )
+                if answer != QMessageBox.StandardButton.Yes:
+                    return
+            self._output, self._force = path, path.exists()
+            self._refresh_output()
+
+    def _start_render(self) -> None:
+        if self._plan is None or self._shots is None or self._busy():
+            return
+        plan, shots = self._plan, self._shots.shots
+        tools, force = self._tools, self._force
+        try:
+            final = resolve_output_path(
+                [info.path for info in plan.infos], self._output, force, suffix=MONTAGE_SUFFIX
+            )
+        except FPVEditError as exc:
+            QMessageBox.warning(self, "Cannot render", str(exc))
+            return
+
+        def work(progress: Progress) -> object:
+            started = time.monotonic()
+            progress("Checking for NVIDIA GPU encoding", 0.0)
+            choices = encoders(tools, "auto", EncodeConfig())
+            length, used = with_fallback(
+                choices,
+                lambda encode: render_montage(
+                    tools, plan.clips, shots, final, force=force, encode=encode, progress=progress
+                ),
+            )
+            where = "GPU (NVENC)" if used == NVENC else "CPU (libx264)"
+            if used != choices[0]:
+                where += " (GPU encoding failed, so the CPU was used)"
+            return final, length, time.monotonic() - started, where
+
+        self._run(work, self._rendered, "Rendering")
+
+    def _rendered(self, result: object) -> None:
+        if not isinstance(result, tuple):
+            raise TypeError(f"expected the render result, got {type(result).__name__}")
+        final, length, elapsed, where = result
+        self._last_output = final
+        self._output, self._force = None, False
+        self._status.setText(
+            f"Done: {final} ({clock(length)}, rendered on the {where} in {elapsed:.0f} s, checked)."
+        )
+        self._refresh()
+
+    def _show_output(self) -> None:
+        if self._last_output is not None:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(self._last_output.parent)))
+
+    # ----- background work -----
+
+    def _busy(self) -> bool:
+        return self._task is not None
+
+    def _run(
+        self, work: Callable[[Progress], object], done: Callable[[object], None], what: str
+    ) -> None:
+        task = Task(work, self)
+        task.progressed.connect(self._progressed)
+        task.succeeded.connect(done)
+        task.failed.connect(self._failed)
+        task.finished.connect(self._task_finished)
+        self._task = task
+        self._progress.setValue(0)
+        self._status.setText(f"{what}…")
+        self._refresh_buttons()
+        task.start()
+
+    def _progressed(self, text: str, share: float) -> None:
+        self._progress.setValue(round(1000 * share))
+        self._status.setText(text)
+
+    def _failed(self, message: str) -> None:
+        self._status.setText(message.splitlines()[0] if message else "Failed.")
+        if message != "Cancelled.":
+            QMessageBox.warning(self, "Something went wrong", message)
+
+    def _task_finished(self) -> None:
+        if self._task is not None:
+            self._task.deleteLater()
+        self._task = None
+        self._progress.setValue(0)
+        self._refresh_buttons()
+
+    def _cancel_task(self) -> None:
+        if self._task is not None:
+            self._task.cancel()
+            self._status.setText("Stopping…")
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        if self._task is not None:
+            self._task.cancel()
+            self._task.wait()
+        self._loader.stop()
+        self._video.stop()
+        super().closeEvent(event)
+
+
+def cache_folder() -> Path | None:
+    base = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppLocalDataLocation)
+    return Path(base) / "measurements" if base else None
+
+
+def run(argv: Sequence[str]) -> int:
+    app = QApplication(list(argv))
+    app.setApplicationName("fpv-editor")
+    try:
+        tools = find_tools()
+    except FPVEditError as exc:
+        QMessageBox.critical(None, "FFmpeg not found", str(exc))
+        return 1
+    window = MainWindow(tools, cache_folder())
+    window.add_paths([Path(arg) for arg in argv[1:]])
+    window.show()
+    return app.exec()

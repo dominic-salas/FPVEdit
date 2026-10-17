@@ -14,6 +14,7 @@ import hashlib
 import json
 import zipfile
 import zlib
+from collections.abc import Callable, Iterator
 from contextlib import closing
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -27,6 +28,7 @@ from fpv_editor.flight import FlightConfig, FlightState, detect_flight
 from fpv_editor.highlights import Selection, SelectionConfig, select_highlights
 from fpv_editor.measure import (
     DecodeReport,
+    GrayFrame,
     MeasureConfig,
     Measurements,
     analysis_frame_size,
@@ -75,7 +77,13 @@ def analyze(
     config: AnalysisConfig | None = None,
     *,
     cache_dir: Path | None = None,
+    progress: Callable[[float], None] | None = None,
 ) -> Analysis:
+    """Measure (or read from the cache), find the flight state and choose what to keep.
+
+    ``progress`` is called with the share of the recording measured so far (0-1); if it
+    raises, measuring stops and nothing is cached.
+    """
     config = config or AnalysisConfig()
     cache_file = _cache_path(cache_dir, tools, info, config) if cache_dir is not None else None
     cached = _read_cache(cache_file) if cache_file is not None else None
@@ -84,7 +92,7 @@ def analyze(
         area, overlay_fraction, measurements, warnings = cached
         from_cache = True
     else:
-        area, overlay_fraction, measurements, warnings = _measure(tools, info, config)
+        area, overlay_fraction, measurements, warnings = _measure(tools, info, config, progress)
         from_cache = False
         if cache_file is not None:
             try:
@@ -108,7 +116,10 @@ def analyze(
 
 
 def _measure(
-    tools: Tools, info: MediaInfo, config: AnalysisConfig
+    tools: Tools,
+    info: MediaInfo,
+    config: AnalysisConfig,
+    progress: Callable[[float], None] | None = None,
 ) -> tuple[Area, float, Measurements, tuple[str, ...]]:
     samples = sample_frames(tools, info, count=config.measure.layout_samples)
     area = detect_active_area(samples, decoded_size(info), config.picture)
@@ -116,10 +127,23 @@ def _measure(
     layout = plan_layout(samples, area, size, config.measure, config.picture)
     fps = float(output_rate(info))
     report = DecodeReport()
-    with closing(decode_frames(tools, info, area, size, fps, report)) as frames:
+    with closing(decode_frames(tools, info, area, size, fps, report)) as decoded:
+        frames: Iterator[GrayFrame] = decoded
+        if progress is not None:
+            frames = _reporting(decoded, round(fps * (info.duration or 0.0)), progress)
         measurements = measure_frames(frames, fps, layout, config.measure)
     overlay_fraction = float(layout.overlay.mean()) if layout.overlay is not None else 0.0
     return area, overlay_fraction, measurements, tuple(report.warnings)
+
+
+def _reporting(
+    frames: Iterator[GrayFrame], expected: int, progress: Callable[[float], None]
+) -> Iterator[GrayFrame]:
+    """Pass ``frames`` through, reporting progress every 30 frames."""
+    for index, frame in enumerate(frames):
+        if index % 30 == 0:
+            progress(min(1.0, index / expected) if expected > 0 else 0.0)
+        yield frame
 
 
 def _code_fingerprint() -> str:

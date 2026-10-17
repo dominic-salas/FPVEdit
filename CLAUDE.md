@@ -14,7 +14,9 @@ H.264 montage of their best shots (`--trim`: one recording edited as a whole fli
 steps, optional measurement cache): `picture` (active area, OSD mask) → `measure` + `motion`
 (per-frame signals) → `flight` (OSD flight state) → `highlights` (clean flight, `--trim` edit)
 → `montage` (moments, shots, picking across clips) → `render` (shots → MP4 parts → join →
-validate). Analysis never renders; rendering reads only the shot list. `sampling`, `features`
+validate). Analysis never renders; rendering reads only the shot list. `app/` is the PySide6
+desktop window (`uv sync --extra app`, `uv run fpv-editor-app`): it calls `cli.plan_montage` and
+`cli.render_montage`; its editing rules live in `app/model.py` (no Qt). `sampling`, `features`
 and `scoring` are the unused M2 pipeline.
 
 ## Conventions

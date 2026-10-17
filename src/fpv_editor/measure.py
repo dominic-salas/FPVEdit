@@ -29,7 +29,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from fpv_editor.errors import MediaToolError
-from fpv_editor.media import MediaInfo, Tools
+from fpv_editor.media import NO_WINDOW, MediaInfo, Tools
 from fpv_editor.motion import FIELDS, MotionConfig, MotionEstimator
 from fpv_editor.picture import Area, PictureConfig, decoded_size, detect_overlay, fit_frames
 
@@ -285,7 +285,9 @@ def decode_frames(
         *("-f", "rawvideo", "-pix_fmt", "gray", "-"),
     ]
     with tempfile.TemporaryFile() as stderr_file:
-        process = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=stderr_file)
+        process = subprocess.Popen(
+            args, stdout=subprocess.PIPE, stderr=stderr_file, creationflags=NO_WINDOW
+        )
         if process.stdout is None:  # pragma: no cover - guaranteed by stdout=PIPE
             raise RuntimeError("ffmpeg stdout pipe was not created")
         try:
