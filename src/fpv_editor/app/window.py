@@ -15,10 +15,11 @@ import traceback
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QStandardPaths, Qt, QThread, QTimer, QUrl, Signal
+from PySide6.QtCore import QObject, QPointF, QStandardPaths, Qt, QThread, QTimer, QUrl, Signal
 from PySide6.QtGui import (
     QAction,
     QCloseEvent,
+    QColor,
     QDesktopServices,
     QDragEnterEvent,
     QDragMoveEvent,
@@ -35,25 +36,28 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDoubleSpinBox,
     QFileDialog,
-    QGroupBox,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QListWidget,
     QListWidgetItem,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QProgressBar,
     QPushButton,
     QSplitter,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
 
 from fpv_editor import __version__
+from fpv_editor.app import theme
 from fpv_editor.app.dialogs import SettingsDialog, about_text, ask_for_ffmpeg
 from fpv_editor.app.frames import grab_frame
 from fpv_editor.app.logs import start_logging
-from fpv_editor.app.look import app_icon
+from fpv_editor.app.look import DotTitle, StatusDot, app_icon
 from fpv_editor.app.model import ShotList
 from fpv_editor.app.preview import PreviewView
 from fpv_editor.app.settings import AppSettings
@@ -241,6 +245,75 @@ class ClipList(QListWidget):
             )
 
 
+class Panel(QFrame):
+    """A bordered panel with a numbered label, like the sections of dvsalas.com."""
+
+    def __init__(self, title: str, note: str = "") -> None:
+        super().__init__()
+        self.setProperty("role", "panel")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 12, 14, 12)
+        layout.setSpacing(10)
+        top = QHBoxLayout()
+        label = QLabel(title)
+        label.setProperty("role", "eyebrow")
+        top.addWidget(label)
+        top.addStretch(1)
+        if note:
+            hint = QLabel(note)
+            hint.setProperty("role", "eyebrow")
+            top.addWidget(hint)
+        layout.addLayout(top)
+        self.body = layout
+
+
+def panel(title: str, note: str = "") -> Panel:
+    return Panel(title, note)
+
+
+class Hero(QWidget):
+    """What the preview shows before a shot is chosen: the title over a dot grid."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._dot = QColor(theme.DARK.dot)
+        self._title = DotTitle("fpv editor", cell=9)
+        badge = QLabel("● RUNS ON THIS PC. NOTHING IS UPLOADED")
+        badge.setProperty("role", "eyebrow")
+        self._text = QLabel(
+            "Drop FPV recordings or a folder anywhere on this window, then find shots. "
+            "The best flips, spins and close passes are picked for you: watch them, swap "
+            "or trim them, and render one montage."
+        )
+        self._text.setProperty("role", "hero")
+        self._text.setWordWrap(True)
+        self._text.setMaximumWidth(520)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(40, 40, 40, 40)
+        layout.addStretch(1)
+        layout.addWidget(badge)
+        layout.addSpacing(14)
+        layout.addWidget(self._title)
+        layout.addSpacing(20)
+        layout.addWidget(self._text)
+        layout.addStretch(2)
+
+    def set_palette(self, palette: theme.Palette) -> None:
+        self._dot = QColor(palette.dot)
+        self._title.set_colour(palette.text)
+        self.update()
+
+    def paintEvent(self, event: QPaintEvent) -> None:
+        painter = QPainter(self)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(self._dot)
+        step = 16
+        for y in range(step // 2, self.height(), step):
+            for x in range(step // 2, self.width(), step):
+                painter.drawEllipse(QPointF(x, y), 1.0, 1.0)
+        painter.end()
+
+
 class MainWindow(QMainWindow):
     def __init__(
         self,
@@ -277,6 +350,7 @@ class MainWindow(QMainWindow):
         self._build()
         self._build_menus()
         self._set_notes(())
+        self._apply_theme(self._settings.theme)
         geometry = self._settings.geometry
         if geometry is not None:
             self.restoreGeometry(geometry)
@@ -285,129 +359,208 @@ class MainWindow(QMainWindow):
     # ----- layout -----
 
     def _build(self) -> None:
+        # ---- header: logo, the three steps, encoder and theme
+        logo = QLabel("fpv<span style='color:#e5322d'>.</span>editor")
+        logo.setProperty("role", "logo")
+        self._steps = [QLabel(text) for text in ("01 CLIPS", "02 SHOTS", "03 RENDER")]
+        for step_label in self._steps:
+            step_label.setProperty("role", "step")
+        self._theme_button = QPushButton()
+        self._theme_button.setProperty("flat", True)
+        self._theme_button.clicked.connect(self._toggle_theme)
+        header = QFrame()
+        header.setProperty("role", "header")
+        header.setFixedHeight(52)
+        header_row = QHBoxLayout(header)
+        header_row.setContentsMargins(20, 0, 16, 0)
+        header_row.setSpacing(18)
+        header_row.addWidget(logo)
+        header_row.addSpacing(18)
+        for step_label in self._steps:
+            header_row.addWidget(step_label)
+        header_row.addStretch(1)
+        self._encoder_label = QLabel()
+        self._encoder_label.setProperty("role", "eyebrow")
+        header_row.addWidget(self._encoder_label)
+        header_row.addWidget(self._theme_button)
+        self._menu_button = QPushButton("MENU")
+        self._menu_button.setProperty("flat", True)
+        header_row.addWidget(self._menu_button)
+
+        # ---- 01 clips
         self._clips = ClipList()
         self._clips.dropped.connect(self.add_paths)
         self._clips.model().rowsMoved.connect(lambda *_: self._clips_changed())
-        add = QPushButton("Add clips…")
+        add = QPushButton("ADD CLIPS")
         add.clicked.connect(self._choose_clips)
-        remove = QPushButton("Remove")
+        remove = QPushButton("REMOVE")
         remove.clicked.connect(self._remove_clips)
         self._length = QDoubleSpinBox()
         self._length.setRange(10, 1800)
         self._length.setDecimals(0)
-        self._length.setSuffix(" s")
+        self._length.setSuffix(" S")
         self._length.setValue(self._settings.length_s)
         self._length.valueChanged.connect(self._length_changed)
-        self._find = QPushButton("Find shots")
+        length_label = QLabel("LENGTH")
+        length_label.setProperty("role", "eyebrow")
+        self._find = QPushButton("FIND SHOTS")
+        self._find.setProperty("primary", True)
         self._find.clicked.connect(self._find_shots)
         clip_buttons = QHBoxLayout()
-        for widget in (add, remove, QLabel("Length"), self._length, self._find):
+        clip_buttons.setSpacing(6)
+        for widget in (add, remove):
             clip_buttons.addWidget(widget)
-        clips_box = QGroupBox("Clips (drop files or folders here; drag to reorder)")
-        clips_layout = QVBoxLayout(clips_box)
-        clips_layout.addWidget(self._clips)
-        clips_layout.addLayout(clip_buttons)
+        clip_buttons.addStretch(1)
+        for control in (length_label, self._length, self._find):
+            clip_buttons.addWidget(control)
+        clips_panel = panel("01 / CLIPS", "DRAG TO REORDER")
+        clips_panel.body.addWidget(self._clips)
+        clips_panel.body.addLayout(clip_buttons)
 
+        # ---- 02 shots
         self._shot_list = QListWidget()
-        self._shot_list.setIconSize(QPixmap(128, THUMB_HEIGHT).size())
+        self._shot_list.setIconSize(QPixmap(112, THUMB_HEIGHT).size())
         self._shot_list.setWordWrap(True)
         self._shot_list.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
         self._shot_list.currentRowChanged.connect(self._shot_selected)
         self._shot_list.model().rowsMoved.connect(lambda *_: QTimer.singleShot(0, self._reorder))
         self._total = QLabel()
-        shots_box = QGroupBox("Montage shots (drag to reorder)")
-        shots_layout = QVBoxLayout(shots_box)
-        shots_layout.addWidget(self._shot_list)
-        shots_layout.addWidget(self._total)
+        self._total.setProperty("role", "caption")
+        shots_panel = panel("02 / SHOTS", "IN PLAYING ORDER")
+        shots_panel.body.addWidget(self._shot_list, 1)
+        shots_panel.body.addWidget(self._total)
 
         left = QSplitter(Qt.Orientation.Vertical)
-        left.addWidget(clips_box)
-        left.addWidget(shots_box)
-        left.setSizes([220, 580])
+        left.addWidget(clips_panel)
+        left.addWidget(shots_panel)
+        left.setSizes([230, 600])
+        left.setChildrenCollapsible(False)
 
+        # ---- 03 preview: the dot-matrix title until a shot is chosen
         self._video = PreviewView(self._tools)
         self._video.timeChanged.connect(self._show_time)
+        self._hero = Hero()
+        self._stage = QStackedWidget()
+        self._stage.addWidget(self._hero)
+        self._stage.addWidget(self._video)
+        self._caption_left = QLabel()
+        self._caption_left.setProperty("role", "eyebrow")
         self._now = QLabel()
+        self._now.setProperty("role", "eyebrow")
+        caption = QHBoxLayout()
+        caption.addWidget(self._caption_left)
+        caption.addStretch(1)
+        caption.addWidget(self._now)
 
         trim = QHBoxLayout()
+        trim.setSpacing(4)
         self._trim_buttons: list[QPushButton] = []
         for end in (False, True):
-            trim.addWidget(QLabel("End" if end else "Start"))
+            label = QLabel("END" if end else "START")
+            label.setProperty("role", "eyebrow")
+            trim.addWidget(label)
             for step in TRIM_STEPS:
-                button = QPushButton(f"{step:+g} s")
+                button = QPushButton(f"{step:+g}S")
+                button.setToolTip(f"Move the shot's {'end' if end else 'start'} by {step:+g} s")
                 button.clicked.connect(lambda _=False, e=end, s=step: self._trim(e, s))
                 trim.addWidget(button)
                 self._trim_buttons.append(button)
-            trim.addSpacing(16)
-        self._remove_shot = QPushButton("Remove shot")
+            trim.addSpacing(14)
+        trim.addStretch(1)
+        self._remove_shot = QPushButton("REMOVE SHOT")
         self._remove_shot.clicked.connect(self._remove_current)
         trim.addWidget(self._remove_shot)
 
+        preview_panel = panel("03 / PREVIEW", "LOOPS THE SELECTED SHOT")
+        preview_panel.body.addWidget(self._stage, 1)
+        preview_panel.body.addLayout(caption)
+        preview_panel.body.addLayout(trim)
+
+        # ---- 04 other shots
         self._mode = QComboBox()
-        self._mode.addItems(["Other shots from this clip (swap)", "Shots from all clips (add)"])
+        self._mode.addItems(["SWAP: OTHER SHOTS FROM THIS CLIP", "ADD: SHOTS FROM ALL CLIPS"])
         self._mode.currentIndexChanged.connect(lambda _: self._refresh_alternatives())
         self._alternatives = QListWidget()
-        self._alternatives.setIconSize(QPixmap(128, THUMB_HEIGHT).size())
+        self._alternatives.setIconSize(QPixmap(112, THUMB_HEIGHT).size())
         self._alternatives.setWordWrap(True)
         self._alternatives.currentRowChanged.connect(self._alternative_selected)
-        self._swap = QPushButton("Use instead of the selected shot")
+        self._swap = QPushButton("USE INSTEAD")
         self._swap.clicked.connect(self._use_alternative)
-        self._add = QPushButton("Add to the montage")
+        self._add = QPushButton("ADD TO MONTAGE")
         self._add.clicked.connect(self._add_alternative)
         alt_buttons = QHBoxLayout()
+        alt_buttons.setSpacing(6)
+        alt_buttons.addWidget(self._mode, 1)
         alt_buttons.addWidget(self._swap)
         alt_buttons.addWidget(self._add)
-        alt_box = QGroupBox("Other shots the engine found (click to preview)")
-        alt_layout = QVBoxLayout(alt_box)
-        alt_layout.addWidget(self._mode)
-        alt_layout.addWidget(self._alternatives)
-        alt_layout.addLayout(alt_buttons)
+        alt_panel = panel("04 / OTHER SHOTS", "CLICK TO PREVIEW")
+        alt_panel.body.addLayout(alt_buttons)
+        alt_panel.body.addWidget(self._alternatives, 1)
 
-        right_top = QWidget()
-        right_layout = QVBoxLayout(right_top)
-        right_layout.addWidget(self._video, 1)
-        right_layout.addWidget(self._now)
-        right_layout.addLayout(trim)
         right = QSplitter(Qt.Orientation.Vertical)
-        right.addWidget(right_top)
-        right.addWidget(alt_box)
-        right.setSizes([520, 280])
+        right.addWidget(preview_panel)
+        right.addWidget(alt_panel)
+        right.setSizes([560, 260])
+        right.setChildrenCollapsible(False)
 
         main = QSplitter(Qt.Orientation.Horizontal)
         main.addWidget(left)
         main.addWidget(right)
-        main.setSizes([480, 800])
+        main.setSizes([460, 820])
+        main.setChildrenCollapsible(False)
 
-        self._output_label = QLabel()
-        change = QPushButton("Save as…")
-        change.clicked.connect(self._choose_output)
-        self._save_as = change
-        self._render = QPushButton("Render montage")
-        self._render.clicked.connect(self._start_render)
-        self._cancel = QPushButton("Cancel")
-        self._cancel.clicked.connect(self._cancel_task)
-        self._open = QPushButton("Show in folder")
-        self._open.clicked.connect(self._show_output)
+        # ---- footer: status, output, render
+        self._dot = StatusDot()
+        self._status = QLabel()
+        self._status.setProperty("role", "status")
+        self._status.setWordWrap(True)
         self._notes_button = QPushButton()
+        self._notes_button.setProperty("flat", True)
         self._notes_button.clicked.connect(self._show_notes)
+        self._output_label = QLabel()
+        self._output_label.setProperty("role", "eyebrow")
+        self._save_as = QPushButton("SAVE AS")
+        self._save_as.clicked.connect(self._choose_output)
+        self._open = QPushButton("SHOW IN FOLDER")
+        self._open.clicked.connect(self._show_output)
+        self._cancel = QPushButton("CANCEL")
+        self._cancel.clicked.connect(self._cancel_task)
+        self._render = QPushButton("RENDER MONTAGE")
+        self._render.setProperty("primary", True)
+        self._render.clicked.connect(self._start_render)
         self._progress = QProgressBar()
         self._progress.setRange(0, 1000)
-        self._status = QLabel()
-        self._status.setWordWrap(True)
-        bottom = QHBoxLayout()
-        for widget in (self._output_label, change, self._render, self._cancel, self._open):
-            bottom.addWidget(widget)
-        bottom.insertStretch(1)
-        status_row = QHBoxLayout()
-        status_row.addWidget(self._status, 1)
-        status_row.addWidget(self._notes_button)
+        self._progress.setTextVisible(False)
+
+        footer = QFrame()
+        footer.setProperty("role", "footer")
+        footer_layout = QVBoxLayout(footer)
+        footer_layout.setContentsMargins(20, 0, 16, 12)
+        footer_layout.setSpacing(10)
+        footer_layout.addWidget(self._progress)
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        row.addWidget(self._dot)
+        row.addWidget(self._status, 1)
+        row.addWidget(self._notes_button)
+        row.addSpacing(12)
+        row.addWidget(self._output_label)
+        for widget in (self._save_as, self._open, self._cancel, self._render):
+            row.addWidget(widget)
+        footer_layout.addLayout(row)
+
+        body = QWidget()
+        body_layout = QVBoxLayout(body)
+        body_layout.setContentsMargins(16, 16, 16, 12)
+        body_layout.addWidget(main)
 
         central = QWidget()
         layout = QVBoxLayout(central)
-        layout.addWidget(main, 1)
-        layout.addLayout(bottom)
-        layout.addWidget(self._progress)
-        layout.addLayout(status_row)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(header)
+        layout.addWidget(body, 1)
+        layout.addWidget(footer)
         self.setCentralWidget(central)
 
     def _build_menus(self) -> None:
@@ -416,9 +569,12 @@ class MainWindow(QMainWindow):
             if key is not None:
                 item.setShortcut(key)  # type: ignore[call-overload]
             item.triggered.connect(slot)
+            self.addAction(item)  # shortcuts work with the menu closed
             return item
 
-        menus = self.menuBar()
+        # One MENU button in the header instead of a menu bar, like the site's header.
+        menus = QMenu(self)
+        self._menu_button.setMenu(menus)
         file = menus.addMenu("&File")
         file.addAction(action("Add clips…", self._choose_clips, QKeySequence.StandardKey.Open))
         file.addAction(action("Add a folder of clips…", self._choose_folder))
@@ -434,6 +590,8 @@ class MainWindow(QMainWindow):
         edit = menus.addMenu("&Edit")
         edit.addAction(action("Undo", self._undo, QKeySequence.StandardKey.Undo))
         delete = action("Remove shot", self._remove_current, QKeySequence.StandardKey.Delete)
+        self.removeAction(delete)  # only while the shot list has focus
+        delete.setShortcutContext(Qt.ShortcutContext.WidgetShortcut)
         edit.addAction(delete)
         self._shot_list.addAction(delete)
         self._shot_list.setContextMenuPolicy(Qt.ContextMenuPolicy.ActionsContextMenu)
@@ -667,9 +825,26 @@ class MainWindow(QMainWindow):
             button.setEnabled(selected and not busy)
         self._remove_shot.setEnabled(selected and not busy)
         self._find.setEnabled(self._clips.count() > 0 and not busy)
+        primary = self._plan is None
+        if self._find.property("primary") != primary:
+            self._find.setProperty("primary", primary)
+            self._find.style().unpolish(self._find)
+            self._find.style().polish(self._find)
         self._render.setEnabled(bool(self._current_shots()) and not busy)
         self._save_as.setEnabled(self._plan is not None and not busy)
         self._cancel.setEnabled(busy)
+        self._cancel.setVisible(busy)
+        self._open.setVisible(self._last_output is not None and self._last_output.exists())
+        self._dot.set_busy(busy)
+        step = 0 if self._plan is None else 1
+        if self._last_output is not None or (busy and self._plan is not None and step == 1):
+            step = 2 if busy or self._last_output is not None else step
+        for index, label in enumerate(self._steps):
+            label.setProperty("role", "step-on" if index == step else "step")
+            label.style().unpolish(label)
+            label.style().polish(label)
+        encoder = "GPU WHEN AVAILABLE" if self._settings.encoder == "auto" else "CPU ONLY"
+        self._encoder_label.setText(f"ENCODER: {encoder}")
         swap_mode = self._mode.currentIndex() == 0
         alt = self._alternatives.currentRow() >= 0
         self._swap.setEnabled(alt and selected and swap_mode and not busy)
@@ -782,6 +957,13 @@ class MainWindow(QMainWindow):
 
     def _preview(self, shot: Shot, from_seconds: float | None = None) -> None:
         self._loop = (shot.start, shot.end)
+        self._stage.setCurrentWidget(self._video)
+        shots = self._current_shots()
+        if shot in shots:
+            number = shots.index(shot) + 1
+            self._caption_left.setText(f"FIG. {number:02d}   SHOT {number} OF {len(shots)}")
+        else:
+            self._caption_left.setText("FIG. --   ANOTHER SHOT, NOT IN THE MONTAGE")
         self._video.play(self._info(shot), shot.start, shot.end, from_seconds)
 
     def _show_time(self, seconds: float) -> None:
@@ -791,6 +973,8 @@ class MainWindow(QMainWindow):
 
     def _stop_preview(self) -> None:
         self._loop = None
+        self._stage.setCurrentWidget(self._hero)
+        self._caption_left.setText("")
         self._video.clear_picture()
         self._now.setText("")
 
@@ -812,7 +996,7 @@ class MainWindow(QMainWindow):
 
     def _refresh_output(self) -> None:
         output = self._output or self._default_output()
-        self._output_label.setText(f"Output: {output}" if output else "Output: -")
+        self._output_label.setText(f"SAVES TO  {output}" if output else "")
 
     def _choose_output(self) -> None:
         start = str(self._output or self._default_output() or "")
@@ -876,6 +1060,19 @@ class MainWindow(QMainWindow):
             f"Done: {final} ({clock(length)}, rendered on the {where} in {elapsed:.0f} s, checked)."
         )
         self._refresh()
+
+    def _apply_theme(self, name: str) -> None:
+        palette = theme.THEMES.get(name, theme.DARK)
+        app = QApplication.instance()
+        if isinstance(app, QApplication):
+            theme.apply(app, palette, theme.load_fonts())
+        self._hero.set_palette(palette)
+        self._dot.set_colours(palette.faint, palette.accent)
+        self._theme_button.setText("LIGHT" if palette is theme.DARK else "DARK")
+        self._settings.theme = palette.name
+
+    def _toggle_theme(self) -> None:
+        self._apply_theme("light" if self._settings.theme == "dark" else "dark")
 
     def _show_output(self) -> None:
         if self._last_output is not None:
@@ -1011,6 +1208,7 @@ def run(argv: Sequence[str]) -> int:
     log_file = start_logging(base / "logs") if base else None
     log.info("FPV Editor %s starting", __version__)
     settings = AppSettings()
+    theme.apply(app, theme.THEMES.get(settings.theme, theme.DARK), theme.load_fonts())
     tools = locate_tools(settings)
     if tools is None:
         return 1
