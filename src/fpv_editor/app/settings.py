@@ -71,6 +71,15 @@ class AppSettings:
         self._set_path("tools/ffmpeg_folder", folder)
 
     @property
+    def theme(self) -> str:
+        value = str(self._store.value("window/theme", "dark"))
+        return value if value in ("dark", "light") else "dark"
+
+    @theme.setter
+    def theme(self, value: str) -> None:
+        self._store.setValue("window/theme", value if value in ("dark", "light") else "dark")
+
+    @property
     def geometry(self) -> QByteArray | None:
         value = self._store.value("window/geometry")
         return value if isinstance(value, QByteArray) else None
