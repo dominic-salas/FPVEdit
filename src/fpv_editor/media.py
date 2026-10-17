@@ -10,6 +10,7 @@ import json
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -87,9 +88,20 @@ class MediaInfo:
         return 1 / aspect if self.video.rotation % 180 == 90 else aspect
 
 
+def bundled_ffmpeg() -> Path | None:
+    """The FFmpeg folder shipped next to the standalone app, if this is one."""
+    if not getattr(sys, "frozen", False):
+        return None
+    folder = Path(sys.executable).parent / "ffmpeg"
+    return folder if folder.is_dir() else None
+
+
 def find_tools() -> Tools:
-    ffmpeg = shutil.which("ffmpeg")
-    ffprobe = shutil.which("ffprobe")
+    """FFmpeg and ffprobe: the bundled copy of a standalone build first, then PATH."""
+    bundled = bundled_ffmpeg()
+    here = str(bundled) if bundled is not None else None
+    ffmpeg = (here and shutil.which("ffmpeg", path=here)) or shutil.which("ffmpeg")
+    ffprobe = (here and shutil.which("ffprobe", path=here)) or shutil.which("ffprobe")
     missing = [name for name, found in (("ffmpeg", ffmpeg), ("ffprobe", ffprobe)) if not found]
     if ffmpeg is None or ffprobe is None:
         raise ToolNotFoundError(f"{' and '.join(missing)} not found. {INSTALL_HINT}")

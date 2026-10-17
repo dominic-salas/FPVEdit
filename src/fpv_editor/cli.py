@@ -750,6 +750,7 @@ def format_duration(seconds: float) -> str:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    multiprocessing.freeze_support()  # analysis workers in a standalone build
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.trim and len(args.inputs) != 1:

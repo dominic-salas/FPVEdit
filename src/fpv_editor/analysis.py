@@ -11,7 +11,9 @@ detection and selection always run, so their settings can be tuned against the c
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
+import marshal
 import zipfile
 import zlib
 from collections.abc import Callable, Iterator
@@ -150,8 +152,22 @@ def _code_fingerprint() -> str:
     package = Path(__file__).parent
     digest = hashlib.sha256()
     for name in MEASUREMENT_MODULES:
-        digest.update((package / name).read_bytes())
+        source = package / name
+        if source.is_file():
+            digest.update(source.read_bytes())
+        else:  # the standalone build ships compiled code only
+            digest.update(_compiled(f"fpv_editor.{name.removesuffix('.py')}"))
     return digest.hexdigest()
+
+
+def _compiled(module: str) -> bytes:
+    spec = importlib.util.find_spec(module)
+    loader = spec.loader if spec is not None else None
+    get_code = getattr(loader, "get_code", None)
+    code = get_code(module) if get_code is not None else None
+    if code is None:
+        raise RuntimeError(f"cannot read the code of {module} for the cache key")
+    return marshal.dumps(code)
 
 
 def _cache_path(cache_dir: Path, tools: Tools, info: MediaInfo, config: AnalysisConfig) -> Path:
