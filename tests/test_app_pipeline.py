@@ -135,16 +135,20 @@ def test_tool_progress_counts_frames(tmp_path: Path) -> None:
     assert frames and frames[-1] == 90
 
 
-def test_window_lists_and_edits_the_shots(clips: tuple[Path, Path]) -> None:
+def test_window_lists_and_edits_the_shots(clips: tuple[Path, Path], tmp_path: Path) -> None:
     pytest.importorskip("PySide6")
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtCore import QSettings
     from PySide6.QtWidgets import QApplication
 
+    from fpv_editor.app.settings import AppSettings
     from fpv_editor.app.window import MainWindow, video_files
 
     app = QApplication.instance() or QApplication([])
     tools = find_tools()
-    window = MainWindow(tools, None)
+    # A settings file of its own, so the test never touches the user's settings.
+    settings = AppSettings(QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat))
+    window = MainWindow(tools, None, settings)
     window.show()
     try:
         window.add_paths([clips[0].parent])  # a folder: its recordings are added

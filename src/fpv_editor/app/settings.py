@@ -1,0 +1,80 @@
+"""What the app remembers between runs (Qt's per-user settings store)."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from PySide6.QtCore import QByteArray, QSettings
+
+from fpv_editor.montage import MontageConfig
+
+ENCODERS = ("auto", "cpu")  # the GPU when it works, or always the CPU
+
+
+class AppSettings:
+    def __init__(self, store: QSettings | None = None) -> None:
+        self._store = store if store is not None else QSettings()
+
+    def _path(self, key: str) -> Path | None:
+        value = self._store.value(key, "")
+        return Path(str(value)) if value else None
+
+    def _set_path(self, key: str, path: Path | None) -> None:
+        self._store.setValue(key, str(path) if path is not None else "")
+
+    @property
+    def length_s(self) -> float:
+        value = self._store.value("montage/length_s", MontageConfig().length_s)
+        try:
+            return min(1800.0, max(10.0, float(str(value))))
+        except ValueError:
+            return MontageConfig().length_s
+
+    @length_s.setter
+    def length_s(self, seconds: float) -> None:
+        self._store.setValue("montage/length_s", float(seconds))
+
+    @property
+    def encoder(self) -> str:
+        value = str(self._store.value("render/encoder", "auto"))
+        return value if value in ENCODERS else "auto"
+
+    @encoder.setter
+    def encoder(self, value: str) -> None:
+        self._store.setValue("render/encoder", value if value in ENCODERS else "auto")
+
+    @property
+    def output_folder(self) -> Path | None:
+        """Where montages go; None writes them beside the first clip."""
+        return self._path("render/output_folder")
+
+    @output_folder.setter
+    def output_folder(self, folder: Path | None) -> None:
+        self._set_path("render/output_folder", folder)
+
+    @property
+    def clip_folder(self) -> Path | None:
+        """The folder the last clips were added from."""
+        return self._path("clips/last_folder")
+
+    @clip_folder.setter
+    def clip_folder(self, folder: Path | None) -> None:
+        self._set_path("clips/last_folder", folder)
+
+    @property
+    def ffmpeg_folder(self) -> Path | None:
+        """A folder with ffmpeg and ffprobe chosen by the user when they are not on PATH."""
+        return self._path("tools/ffmpeg_folder")
+
+    @ffmpeg_folder.setter
+    def ffmpeg_folder(self, folder: Path | None) -> None:
+        self._set_path("tools/ffmpeg_folder", folder)
+
+    @property
+    def geometry(self) -> QByteArray | None:
+        value = self._store.value("window/geometry")
+        return value if isinstance(value, QByteArray) else None
+
+    @geometry.setter
+    def geometry(self, value: QByteArray) -> None:
+        self._store.setValue("window/geometry", value)
