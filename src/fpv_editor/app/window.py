@@ -9,7 +9,6 @@ from __future__ import annotations
 import logging
 import os
 import queue
-import sys
 import threading
 import time
 import traceback
@@ -974,14 +973,10 @@ def cache_folder() -> Path | None:
 
 
 def ffmpeg_folders(settings: AppSettings) -> list[Path]:
-    """Where to look for FFmpeg before PATH: the copy the installer ships, then the
-    folder the user chose."""
-    folders = []
-    if getattr(sys, "frozen", False):
-        folders.append(Path(sys.executable).parent / "ffmpeg")
-    if settings.ffmpeg_folder is not None:
-        folders.append(settings.ffmpeg_folder)
-    return [folder for folder in folders if folder.is_dir()]
+    """The FFmpeg folder the user chose, looked in before PATH (a copy shipped with the
+    standalone app is found by `find_tools` first anyway)."""
+    folder = settings.ffmpeg_folder
+    return [folder] if folder is not None and folder.is_dir() else []
 
 
 def use_folders_first(folders: Sequence[Path]) -> None:

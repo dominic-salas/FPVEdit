@@ -31,6 +31,9 @@ fpv-editor = "fpv_editor.cli:main"
 fpv-editor-app = "fpv_editor.app:main"
 
 [dependency-groups]
+build = [
+    "pyinstaller>=6.16",  # the standalone Windows app (scripts/build_windows.py)
+]
 dev = [
     "PySide6-Essentials>=6.10",  # app tests and type checks
     "mypy>=1.15",
