@@ -574,7 +574,7 @@ def render_montage(
     frames = sum(sizes)
     temporary = temporary_output(final)
     try:
-        with tempfile.TemporaryDirectory(prefix="fpv-editor-") as work:
+        with tempfile.TemporaryDirectory(prefix="fpv-editor-", ignore_cleanup_errors=True) as work:
             work_dir = Path(work)
             files = []
             for number, (clip, segments) in enumerate(parts):
@@ -698,7 +698,7 @@ def _render_and_validate(
     frames = expected_frame_count(segments, rate, times)
     temporary = temporary_output(final)
     try:
-        with tempfile.TemporaryDirectory(prefix="fpv-editor-") as work:
+        with tempfile.TemporaryDirectory(prefix="fpv-editor-", ignore_cleanup_errors=True) as work:
             render(
                 tools,
                 info,
