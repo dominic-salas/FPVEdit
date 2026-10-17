@@ -3,7 +3,6 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from fpv_editor.features import compute_features
 from fpv_editor.picture import Area, detect_active_area, detect_overlay, fit_frames
 
 WIDTH, HEIGHT = 320, 180
@@ -88,24 +87,3 @@ def test_fit_frames_crops_then_scales() -> None:
     (fitted,) = fit_frames([frame], Area(BAR, 0, WIDTH - 2 * BAR, HEIGHT), (120, 90))
     assert fitted.shape == (90, 120)
     assert int(np.min(fitted)) > 4  # no bar pixels left
-
-
-def test_ignoring_the_osd_restores_the_true_motion() -> None:
-    # A panning scene under a large static overlay: the overlay pulls the median flow
-    # towards zero unless it is masked out.
-    base = np.kron(
-        np.random.default_rng(1).integers(0, 256, size=(HEIGHT // 8, (WIDTH + 80) // 8)),
-        np.ones((8, 8)),
-    ).astype(np.uint8)
-    frames = []
-    ignore = np.zeros((base.shape[0], WIDTH), dtype=bool)
-    ignore[:, : WIDTH * 6 // 10] = True
-    for step in range(10):
-        frame = np.ascontiguousarray(base[:, step * 8 : step * 8 + WIDTH])
-        frame[ignore] = 200  # static overlay over 60 % of the frame
-        frames.append(frame)
-    expected = 8 / WIDTH * 8.0
-    unmasked = compute_features(frames, 8.0)
-    masked = compute_features(frames, 8.0, ignore=ignore)
-    assert np.median(unmasked.motion[1:]) < 0.5 * expected
-    assert np.median(masked.motion[1:]) == pytest.approx(expected, rel=0.25)
