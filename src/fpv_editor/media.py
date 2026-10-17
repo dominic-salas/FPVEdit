@@ -10,6 +10,8 @@ import json
 import re
 import shutil
 import subprocess
+import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from fractions import Fraction
 from pathlib import Path
@@ -19,6 +21,10 @@ import numpy as np
 from numpy.typing import NDArray
 
 from fpv_editor.errors import InvalidInputError, MediaToolError, ToolNotFoundError
+
+# Without this, every ffmpeg/ffprobe run from the desktop app (a GUI program on Windows)
+# flashes a console window. 0 elsewhere.
+NO_WINDOW: int = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 INSTALL_HINT = (
     "Install FFmpeg 6 or newer and make sure `ffmpeg` and `ffprobe` are on PATH "
@@ -107,13 +113,59 @@ def parse_ffmpeg_major(version_output: str) -> int | None:
 def run_tool(args: list[str], *, action: str) -> subprocess.CompletedProcess[str]:
     try:
         result = subprocess.run(
-            args, capture_output=True, text=True, encoding="utf-8", errors="replace"
+            args,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            creationflags=NO_WINDOW,
         )
     except OSError as exc:
         raise ToolNotFoundError(f"could not run {args[0]}: {exc}. {INSTALL_HINT}") from exc
     if result.returncode != 0:
         raise MediaToolError(action, result.returncode, result.stderr)
     return result
+
+
+def run_tool_with_progress(
+    args: list[str], *, action: str, on_frames: Callable[[int], None]
+) -> None:
+    """Run an ffmpeg command, calling ``on_frames`` with the frames written so far.
+
+    ``args`` must not contain ``-progress``; it is added here. If ``on_frames`` raises
+    (for example to cancel), ffmpeg is stopped and the exception propagates.
+    """
+    args = [args[0], "-progress", "pipe:1", "-nostats", *args[1:]]
+    with tempfile.TemporaryFile() as stderr_file:
+        try:
+            process = subprocess.Popen(
+                args,
+                stdout=subprocess.PIPE,
+                stderr=stderr_file,
+                text=True,
+                encoding="utf-8",
+                creationflags=NO_WINDOW,
+            )
+        except OSError as exc:
+            raise ToolNotFoundError(f"could not run {args[0]}: {exc}. {INSTALL_HINT}") from exc
+        if process.stdout is None:  # pragma: no cover - guaranteed by stdout=PIPE
+            raise RuntimeError("ffmpeg stdout pipe was not created")
+        finished = False
+        try:
+            for line in process.stdout:
+                key, _, value = line.strip().partition("=")
+                if key == "frame" and value.isdigit():
+                    on_frames(int(value))
+            finished = True
+        finally:
+            if not finished and process.poll() is None:
+                process.kill()  # on_frames raised: stop ffmpeg
+            process.stdout.close()
+            returncode = process.wait()
+            stderr_file.seek(0)
+            stderr = stderr_file.read().decode("utf-8", errors="replace")
+    if returncode != 0:
+        raise MediaToolError(action, returncode, stderr)
 
 
 def probe(tools: Tools, path: Path, *, count_frames: bool = False) -> MediaInfo:

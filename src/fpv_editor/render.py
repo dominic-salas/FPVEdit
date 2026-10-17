@@ -19,17 +19,24 @@ from __future__ import annotations
 import math
 import os
 import tempfile
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from fractions import Fraction
 from pathlib import Path
+from typing import TypeVar
 
 import numpy as np
 from numpy.typing import NDArray
 
-from fpv_editor.errors import InvalidInputError, OutputExistsError, ValidationError
+from fpv_editor.errors import (
+    InvalidInputError,
+    MediaToolError,
+    OutputExistsError,
+    ToolNotFoundError,
+    ValidationError,
+)
 from fpv_editor.highlights import Interval
-from fpv_editor.media import MediaInfo, Tools, probe, run_tool
+from fpv_editor.media import MediaInfo, Tools, probe, run_tool, run_tool_with_progress
 
 OUTPUT_SUFFIX = "_highlight"
 DEFAULT_RATE = Fraction(30)  # only for sources that report no usable frame rate
@@ -37,13 +44,84 @@ DEFAULT_RATE = Fraction(30)  # only for sources that report no usable frame rate
 # before each boundary, which absorbs timestamp rounding (1 ms timebases in MKV/MP4).
 BOUNDARY_FRAMES = 0.5
 READ_MARGIN_S = 2.0  # decoding stops this long after the last kept frame
+RENDER_ACTION = "rendering the highlight video"  # MediaToolError.action of a failed encode
+# A part whose first kept frame is this far into its clip seeks instead of decoding the
+# clip from the start; decoding then begins at the keyframe before SEEK_LEAD_S earlier.
+SEEK_AFTER_S = 10.0
+SEEK_LEAD_S = 5.0
+KEYFRAME_MARGIN_S = 10.0  # extra reading after a seek, for a keyframe far before it
 
 
 @dataclass(frozen=True)
 class EncodeConfig:
     video_codec: str = "libx264"
     preset: str = "medium"
-    crf: int = 18
+    crf: int = 18  # constant quality; for NVENC its -cq level
+
+    def codec_args(self) -> list[str]:
+        if self.video_codec == "h264_nvenc":
+            # Constant-quality VBR, the closest NVENC match to x264's CRF.
+            return [
+                *("-c:v", "h264_nvenc", "-preset", self.preset, "-tune", "hq"),
+                *("-rc", "vbr", "-cq", str(self.crf), "-b:v", "0"),
+            ]
+        return ["-c:v", self.video_codec, "-preset", self.preset, "-crf", str(self.crf)]
+
+
+# NVIDIA GPU encoding: much faster than libx264 at a similar look for this footage.
+NVENC = EncodeConfig(video_codec="h264_nvenc", preset="p5", crf=19)
+
+
+DEVICES = ("auto", "cpu", "cuda")
+
+
+def encoders(tools: Tools, device: str, cpu: EncodeConfig) -> list[EncodeConfig]:
+    """Encoders to try in order: ``auto`` is NVENC when it works here, then ``cpu``;
+    ``cuda`` is NVENC only and fails if it is unavailable."""
+    if device not in DEVICES:
+        raise InvalidInputError(f"device must be one of {', '.join(DEVICES)}, not {device!r}")
+    if device == "cpu":
+        return [cpu]
+    if nvenc_works(tools):
+        return [NVENC] if device == "cuda" else [NVENC, cpu]
+    if device == "cuda":
+        raise ToolNotFoundError(
+            "--device cuda: this FFmpeg cannot encode on an NVIDIA GPU (h264_nvenc) here; "
+            "check the NVIDIA driver, or use --device cpu"
+        )
+    return [cpu]
+
+
+Result = TypeVar("Result")
+
+
+def with_fallback(
+    choices: Sequence[EncodeConfig], attempt: Callable[[EncodeConfig], Result]
+) -> tuple[Result, EncodeConfig]:
+    """``attempt(encode)`` with each encoder in turn until one works; only a failed encode
+    moves on to the next (other failures are real problems and are raised)."""
+    for number, encode in enumerate(choices):
+        try:
+            return attempt(encode), encode
+        except MediaToolError as exc:
+            if exc.action != RENDER_ACTION or number == len(choices) - 1:
+                raise
+    raise ValueError("no encoder to try")
+
+
+def nvenc_works(tools: Tools) -> bool:
+    """True if this FFmpeg build can encode H.264 on an NVIDIA GPU here (a tiny test encode)."""
+    args = [
+        *(tools.ffmpeg, "-nostdin", "-hide_banner", "-v", "error"),
+        *("-f", "lavfi", "-i", "color=black:size=256x144:rate=30", "-frames:v", "5"),
+        *NVENC.codec_args(),
+        *("-f", "null", "-"),
+    ]
+    try:
+        run_tool(args, action="testing NVENC")
+    except (MediaToolError, ToolNotFoundError):
+        return False
+    return True
 
 
 def default_output_path(source: Path, suffix: str = OUTPUT_SUFFIX) -> Path:
@@ -139,13 +217,20 @@ class Fit:
 
 
 def build_filter_graph(
-    intervals: Sequence[Interval], *, video_index: int, rate: Fraction, fit: Fit | None = None
+    intervals: Sequence[Interval],
+    *,
+    video_index: int,
+    rate: Fraction,
+    fit: Fit | None = None,
+    origin: float | None = None,
 ) -> str:
     """Filter graph that keeps ``intervals`` of input 0 as one continuous ``[v]``.
 
     Interval times are on the analysis timeline (seconds since the first video frame)
     and should already be snapped to frame times (`snap_to_frames`). With ``fit`` the
     frames are converted to its rate and scaled to fit its size, centred on black.
+    ``origin`` is the first frame's timestamp in seconds, for input that was seeked with
+    ``-copyts`` (its first frame is then not the recording's).
     """
     if not intervals:
         raise ValueError("at least one interval is required")
@@ -172,7 +257,8 @@ def build_filter_graph(
     retime = (
         f"setpts=N*{rate.denominator}/{rate.numerator}/TB,fps={rate.numerator}/{rate.denominator}"
     )
-    return f"[0:{video_index}]setpts=PTS-STARTPTS,select='{keep}',{retime},{crop},{colour}[v]"
+    start = "PTS-STARTPTS" if origin is None else f"PTS-{origin:.6f}/TB"
+    return f"[0:{video_index}]setpts={start},select='{keep}',{retime},{crop},{colour}[v]"
 
 
 def render(
@@ -184,15 +270,39 @@ def render(
     encode: EncodeConfig,
     work_dir: Path,
     fit: Fit | None = None,
+    on_frames: Callable[[int], None] | None = None,
+    seek: bool = True,
 ) -> None:
-    """Encode frame-snapped ``intervals`` to ``destination``, a temporary path the caller owns."""
+    """Encode frame-snapped ``intervals`` to ``destination``, a temporary path the caller owns.
+
+    ``on_frames`` is called with the number of frames written so far; if it raises, the
+    encode stops. With ``seek``, intervals late in the recording are reached by seeking
+    instead of decoding everything before them; the frames kept are the same.
+    """
     rate = output_rate(info)
-    graph = build_filter_graph(intervals, video_index=info.video.index, rate=rate, fit=fit)
+    first, last = min(i.start for i in intervals), max(i.end for i in intervals)
+    origin = first_frame_time(tools, info) if seek and first > SEEK_AFTER_S else None
+    graph = build_filter_graph(
+        intervals, video_index=info.video.index, rate=rate, fit=fit, origin=origin
+    )
     script = work_dir / f"{destination.stem}.filter_graph.txt"
     script.write_text(graph, encoding="utf-8")
     out_rate = fit.rate if fit is not None else rate
     # Stop reading a little after the last kept frame instead of decoding the whole file.
-    until = max(i.end for i in intervals) + READ_MARGIN_S
+    # Input times count from the start of the file, analysis times from the first frame.
+    video_start = origin if origin is not None else _video_start(info)
+    offset = video_start - info.start_time
+    if origin is None:
+        reading = ["-t", f"{last + READ_MARGIN_S + max(0.0, offset):.3f}"]
+    else:
+        # Keep the file's timestamps (the graph subtracts ``origin``) and start decoding at
+        # the keyframe before the seek point; ``select`` drops the frames before ``first``.
+        begin = first - SEEK_LEAD_S
+        length = last - begin + READ_MARGIN_S + KEYFRAME_MARGIN_S
+        reading = [
+            *("-copyts", "-noaccurate_seek"),
+            *("-ss", f"{begin + offset:.3f}", "-t", f"{length:.3f}"),
+        ]
     args = [
         tools.ffmpeg,
         "-nostdin",
@@ -200,7 +310,7 @@ def render(
         "-v",
         "error",
         "-y",
-        *("-t", f"{until:.3f}"),
+        *reading,
         "-i",
         str(info.path),
         tools.filter_script_option,
@@ -209,12 +319,7 @@ def render(
         "[v]",
         "-r",
         f"{out_rate.numerator}/{out_rate.denominator}",
-        "-c:v",
-        encode.video_codec,
-        "-preset",
-        encode.preset,
-        "-crf",
-        str(encode.crf),
+        *encode.codec_args(),
         "-pix_fmt",
         "yuv420p",
         *("-color_range", "tv", "-colorspace", "bt709"),
@@ -222,7 +327,34 @@ def render(
         *("-an", "-sn", "-dn"),
         *("-movflags", "+faststart", "-f", "mp4", str(destination)),
     ]
-    run_tool(args, action="rendering the highlight video")
+    if on_frames is None:
+        run_tool(args, action=RENDER_ACTION)
+    else:
+        run_tool_with_progress(args, action=RENDER_ACTION, on_frames=on_frames)
+
+
+def _video_start(info: MediaInfo) -> float:
+    return info.video.start_time if info.video.start_time is not None else info.start_time
+
+
+def first_frame_time(tools: Tools, info: MediaInfo) -> float | None:
+    """Timestamp (s) of the first frame the decoder outputs, where the render's and the
+    analysis's timeline starts; None if it cannot be read."""
+    args = [
+        *(tools.ffprobe, "-v", "error", "-select_streams", str(info.video.index)),
+        *("-read_intervals", "%+#120", "-show_entries", "frame=best_effort_timestamp_time"),
+        *("-of", "csv=p=0", "-i", str(info.path)),
+    ]
+    try:
+        output = run_tool(args, action=f"reading the first frame of {info.path.name}").stdout
+    except MediaToolError:
+        return None
+    for line in output.split():
+        try:
+            return float(line.strip().strip(","))
+        except ValueError:
+            continue
+    return None
 
 
 def join_parts(tools: Tools, parts: Sequence[Path], destination: Path, work_dir: Path) -> None:

@@ -20,11 +20,19 @@ dependencies = [
     "opencv-python-headless>=4.10,<6",  # 5.x verified; re-check before a major upgrade
 ]
 
+[project.optional-dependencies]
+# The desktop app (fpv-editor-app). Qt for Python, LGPL-3.0, used as an unmodified library.
+app = ["PySide6-Essentials>=6.10"]
+
 [project.scripts]
 fpv-editor = "fpv_editor.cli:main"
 
+[project.gui-scripts]
+fpv-editor-app = "fpv_editor.app:main"
+
 [dependency-groups]
 dev = [
+    "PySide6-Essentials>=6.10",  # app tests and type checks
     "mypy>=1.15",
     "pytest>=8.3",
     "ruff>=0.11",
