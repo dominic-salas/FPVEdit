@@ -120,10 +120,17 @@ class MotionEstimator:
         return result
 
 
+def _cross(a: FloatArray, b: FloatArray) -> FloatArray:
+    """Row-wise cross product of (n, 3) arrays (``np.cross`` has a large per-call cost)."""
+    a0, a1, a2 = a[:, 0], a[:, 1], a[:, 2]
+    b0, b1, b2 = b[:, 0], b[:, 1], b[:, 2]
+    return np.stack([a1 * b2 - a2 * b1, a2 * b0 - a0 * b2, a0 * b1 - a1 * b0], axis=-1)
+
+
 def _triads(a: FloatArray, b: FloatArray) -> FloatArray:
-    second = np.cross(a, b)
-    second /= np.linalg.norm(second, axis=-1, keepdims=True) + 1e-12
-    third = np.cross(a, second)
+    second = _cross(a, b)
+    second /= np.sqrt(np.einsum("ij,ij->i", second, second))[:, None] + 1e-12
+    third = _cross(a, second)
     return np.stack([a, second, third], axis=-1)
 
 
@@ -140,25 +147,22 @@ def _solve_rotation(
     """Robust rotation with b ~ R a: (R, inlier count, rms residual in radians)."""
     count = len(a)
     scored = rng.choice(count, 150, replace=False) if count > 150 else np.arange(count)
-    best: FloatArray | None = None
-    best_count = -1
-    for _ in range(max(1, iterations // 20)):
-        i, j = rng.integers(0, count, 20), rng.integers(0, count, 20)
-        distinct = (i != j) & (np.einsum("ij,ij->i", a[i], a[j]) < np.cos(np.radians(2.0)))
-        i, j = i[distinct], j[distinct]
-        if len(i) == 0:
-            continue
-        candidates = _triads(b[i], b[j]) @ np.transpose(_triads(a[i], a[j]), (0, 2, 1))
-        errors = np.linalg.norm(
-            np.einsum("kab,nb->kna", candidates, a[scored]) - b[scored][None], axis=2
-        )
-        hits = (errors < threshold).sum(axis=1)
-        k = int(np.argmax(hits))
-        if hits[k] > best_count:
-            best_count, best = int(hits[k]), candidates[k]
-    if best is None:
+    # Draw point pairs in batches of 20 (the order the fit has always used), then score
+    # every candidate at once; the first candidate with the most hits wins.
+    draws = [
+        (rng.integers(0, count, 20), rng.integers(0, count, 20))
+        for _ in range(max(1, iterations // 20))
+    ]
+    i = np.concatenate([d[0] for d in draws])
+    j = np.concatenate([d[1] for d in draws])
+    distinct = (i != j) & (np.einsum("ij,ij->i", a[i], a[j]) < np.cos(np.radians(2.0)))
+    i, j = i[distinct], j[distinct]
+    if len(i) == 0:
         return None
-    rotation = best
+    candidates = _triads(b[i], b[j]) @ np.transpose(_triads(a[i], a[j]), (0, 2, 1))
+    offsets = candidates @ a[scored].T - b[scored].T[None]  # (candidate, axis, point)
+    hits = ((offsets * offsets).sum(axis=1) < threshold**2).sum(axis=1)
+    rotation = candidates[int(np.argmax(hits))]
     for _ in range(3):
         inliers = np.linalg.norm(a @ rotation.T - b, axis=1) < threshold
         if inliers.sum() < 3:
