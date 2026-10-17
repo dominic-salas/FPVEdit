@@ -139,6 +139,13 @@ def stylesheet(p: Palette, fonts: Fonts) -> str:
     QLabel[role="step"] {{ color: {p.faint}; font-family: {mono}; font-size: 8pt; }}
     QLabel[role="step-on"] {{ color: {p.text}; font-family: {mono}; font-size: 8pt; }}
     QLabel[role="hero"] {{ color: {p.muted}; font-size: 11pt; }}
+    QLabel[role="heading"] {{ color: {p.text}; font-size: 20pt; font-weight: 600; }}
+    QLabel[role="big-number"] {{ color: {p.text}; font-family: {mono}; font-size: 40pt; }}
+    QPushButton[role="step"] {{ border: none; background: transparent; padding: 6px 4px;
+        color: {p.faint}; }}
+    QPushButton[role="step"]:enabled {{ color: {p.muted}; }}
+    QPushButton[role="step"]:enabled:hover {{ color: {p.text}; }}
+    QPushButton[role="step"][state="on"] {{ color: {p.text}; }}
     QLabel[role="logo"] {{ font-family: {mono}; font-size: 12pt; font-weight: 600; }}
 
     QFrame[role="panel"] {{ background: {p.bg}; border: 1px solid {p.border};
