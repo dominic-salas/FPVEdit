@@ -150,3 +150,19 @@ def test_pick_handles_many_clips() -> None:
     assert CONFIG.length_s - CONFIG.length_slack_s <= sum(s.duration for s in picked)
     assert sum(s.duration for s in picked) <= CONFIG.length_s + CONFIG.length_slack_s
     assert [(s.clip, s.start) for s in picked] == sorted((s.clip, s.start) for s in picked)
+
+
+def test_no_shot_starts_or_ends_in_a_flip() -> None:
+    # Flips close together, so many candidate ends would land in one.
+    timeline = flight()
+    for at in (30, 38, 39.5, 46, 47.2, 55, 63.5, 64.6, 72):
+        timeline.flip(at)
+    measurements, selection = analyse(timeline)
+    shots = candidate_shots(0, measurements, selection)
+    assert shots
+    flipping = np.abs(measurements.motion[:, 0]) > 360  # PITCH: the flips
+    for candidate in shots:
+        assert 8 <= candidate.duration <= 15
+        for edge in (candidate.start, candidate.end):
+            near = flipping[max(0, round((edge - 0.4) * FPS)) : round((edge + 0.4) * FPS)]
+            assert not near.any(), f"a cut at {edge:.2f} s is in or next to a flip"
