@@ -160,6 +160,14 @@ Details and per-claim evidence: `docs/review-2026-10-11.md`.
 ## Validation log
 (newest first; exact commands and outcomes)
 
+### 2026-10-17 — UI redesign status (handed to a new thread)
+- Restyled after dvsalas.com (`app/theme.py`: dark/light palettes, mono uppercase labels, red accent; `app/look.py`: dot-matrix title, status dot) and rebuilt as four steps (`app/window.py`: add clips, find shots, review, export/done). Committed and pushed (`f73c104`, `be7103b`); checked by offscreen screenshots and the app tests, not yet by hand.
+- Dom's feedback on the steps (2026-10-17), still open:
+  - the theme is not consistent: step 1's text uses default fonts. Bundle Geist, Geist Mono and Doto (OFL, google/fonts `ofl/geist`, `ofl/geistmono`, `ofl/doto`, ~1 MB) in `app/fonts/` with their OFL.txt; Dom asked for the site's look, the download was not done yet;
+  - clips should show a thumbnail, their length and when they were recorded (timestamp);
+  - the loading screen is good, but finding shots takes long: start analysing in the background as soon as clips are added, and consider splitting long clips;
+  - the review page is good; Dom will judge it after using it.
+
 ### 2026-10-17 — Installer on GitHub Actions
 - `.github/workflows/release.yml` (tag `v*` or run by hand) builds the standalone app on a Windows runner with BtbN's GPL shared FFmpeg 9.0, smoke-tests it (`fpv-editor.exe --version`, bundled `ffmpeg -version`) and packs it with Inno Setup (`packaging/installer.iss`: per-user install by default, Start menu and optional desktop shortcut, offers to remove `%LOCALAPPDATA%\fpv-editor` on uninstall). A tag also drafts a GitHub release; publishing stays manual.
 - Manual run 39072509889: success in 3.6 min; installer artifact 112 MB (first run failed: Git Bash rewrote `/DAppVersion` as a path; fixed with `MSYS_NO_PATHCONV`).
