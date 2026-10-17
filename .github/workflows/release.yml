@@ -56,10 +56,13 @@ jobs:
 
       - name: Build the installer
         shell: bash
+        env:
+          MSYS_NO_PATHCONV: "1"  # keep /DAppVersion=... as an option, not a path
         run: |
-          choco install innosetup -y --no-progress
+          iscc="/c/Program Files (x86)/Inno Setup 6/ISCC.exe"
+          test -x "$iscc" || choco install innosetup -y --no-progress
           version=$(uv run python -c "import fpv_editor; print(fpv_editor.__version__)")
-          "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" "/DAppVersion=$version" packaging/installer.iss
+          "$iscc" "/DAppVersion=$version" packaging/installer.iss
 
       - uses: actions/upload-artifact@v4
         with:
