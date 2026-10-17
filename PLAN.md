@@ -41,7 +41,7 @@ Revised 2026-10-11 after testing on Dom's first real flights (see "Real-flight r
 | R2 | Reliability: odd and damaged input, error log, first-run FFmpeg check, safe cancel | app part done 2026-10-17; odd-input checks open |
 | R3 | Picture enhancement built into the editor (Dom's separate enhancement project), GPU with CPU fallback | waiting on the enhancement project's location |
 | R4 | App polish: settings, remembered folders, icon, version, time left | done 2026-10-17 (offscreen checks) |
-| R5 | Windows installer with FFmpeg bundled (runs without uv or the project folder); Linux as a plain install | standalone build done 2026-10-17; installer in progress |
+| R5 | Windows installer with FFmpeg bundled (runs without uv or the project folder); Linux as a plain install | standalone build and installer workflow done 2026-10-17; waiting on Dom to install it |
 | R6 | Public 1.0: docs, licences (Qt, FFmpeg), validation report, tagged GitHub release | not started |
 | M3 | ML (SigLIP 2) as a measured addition | after 1.0 |
 
@@ -159,6 +159,12 @@ Details and per-claim evidence: `docs/review-2026-10-11.md`.
 
 ## Validation log
 (newest first; exact commands and outcomes)
+
+### 2026-10-17 — Installer on GitHub Actions
+- `.github/workflows/release.yml` (tag `v*` or run by hand) builds the standalone app on a Windows runner with BtbN's GPL shared FFmpeg 9.0, smoke-tests it (`fpv-editor.exe --version`, bundled `ffmpeg -version`) and packs it with Inno Setup (`packaging/installer.iss`: per-user install by default, Start menu and optional desktop shortcut, offers to remove `%LOCALAPPDATA%pv-editor` on uninstall). A tag also drafts a GitHub release; publishing stays manual.
+- Manual run 39072509889: success in 3.6 min; installer artifact 112 MB (first run failed: Git Bash rewrote `/DAppVersion` as a path; fixed with `MSYS_NO_PATHCONV`).
+- CI on the pushed commits: green, except one Windows run where a cancelled render's part file was still locked when the temporary folder was cleaned up, so the cancel surfaced as a PermissionError. Fixed by ignoring cleanup errors of the temporary folder.
+- Not run: installing on a clean Windows machine (R5 acceptance), an uninstall.
 
 ### 2026-10-17 — R1 lock-in, R2/R4 app polish, R5 standalone build (Dom's PC)
 - R1: work since `c2cc201` committed in reviewable commits and pushed (Dom's OK); the unused M2 pipeline (`sampling`, `features`, `scoring` and their tests) removed; CI on Linux now installs Qt's system libraries and runs three jobs (Linux 3.11 and 3.14, Windows 3.14) to stay within the free Actions minutes of the private repository. CI result on GitHub: not checked yet.
