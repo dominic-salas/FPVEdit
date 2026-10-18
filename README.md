@@ -12,8 +12,8 @@ burned-in Betaflight OSD (arming, disarming, the stats screen, the boot logo) an
 own motion, measured on every frame: downtime, static, time on the ground, crashes together
 with the move that caused them and repeated re-arming are never used. The editor then finds
 flips, spins and close passes, builds 8-15 s shots around them with the cuts in calm moments,
-and picks the best shots across all recordings up to the target length, in the order the
-recordings were given. Recordings with no flying in them (bench tests, a quad on a desk) give
+and keeps every distinct shot from every recording (each built around a trick or close
+pass, never two of the same moment), in the order the recordings were given. Recordings with no flying in them (bench tests, a quad on a desk) give
 no shots. A desktop app lets you check and change the shots before rendering (see below).
 Picture enhancement and the ML component are planned. See [PLAN.md](PLAN.md) for milestones, known gaps and validation results.
 
@@ -29,8 +29,8 @@ uv run fpv-editor path/to/flight1.ts path/to/flight2.ts -o montage.mp4
 Options:
 - `-o/--output out.mp4`: by default the montage is written next to the first recording as
   `<name>_montage.mp4` (or `_montage-2.mp4`, … if that exists).
-- `--length SECONDS`: montage length to aim for (default 90). Shorter if the recordings do not
-  have enough good shots.
+- `--length SECONDS`: make the montage about this long, best shots first. By default every
+  distinct shot is kept, however long that makes the montage.
 - `--trim`: instead of a montage, edit one recording as a whole flight (cut downtime, crashes
   and dull stretches, keep the rest), written as `<name>_highlight.mp4`.
 - `--force`: replace an existing output.

@@ -96,7 +96,9 @@ class Shot:
 
 @dataclass(frozen=True)
 class MontageConfig:
-    length_s: float = 90.0  # target montage length
+    # None: every distinct shot with a moment, however long the montage gets. A number
+    # makes the montage about that long, best shots first.
+    length_s: float | None = None
     length_slack_s: float = 4.0  # the montage may run this much over or stop this short
     shot_min_s: float = 8.0
     shot_max_s: float = 15.0
@@ -315,22 +317,31 @@ def _score(
 def pick_shots(
     candidates: Sequence[Shot], clip_count: int, config: MontageConfig | None = None
 ) -> tuple[Shot, ...]:
-    """The best non-overlapping shots up to the target length, in montage order."""
+    """Non-overlapping shots in montage order (clip order, then time), best first where
+    they compete for the same footage.
+
+    Without a target length every distinct shot is kept: each one is built around a
+    flip, spin or close pass, and on Dom's hand-labelled recordings any score threshold
+    also dropped shots he had marked as worth keeping (weaves of close passes score
+    low). With ``length_s`` the montage stops near that length and no clip fills more
+    than its share.
+    """
     config = config or MontageConfig()
+    target = config.length_s
     contributing = len({shot.clip for shot in candidates})
-    cap = config.length_s * max(config.clip_share, 1.0 / max(1, contributing))
-    budget = config.length_s + config.length_slack_s
     chosen: list[Shot] = []
     used = 0.0
     per_clip = [0.0] * max(1, clip_count)
     ranked = sorted(candidates, key=lambda s: (-s.score / s.duration**0.5, s.clip, s.start))
     for shot in ranked:
-        if used >= config.length_s - config.length_slack_s:
-            break
-        if used + shot.duration > budget:
-            continue
-        if per_clip[shot.clip] + shot.duration > cap + config.length_slack_s:
-            continue
+        if target is not None:
+            cap = target * max(config.clip_share, 1.0 / max(1, contributing))
+            if used >= target - config.length_slack_s:
+                break
+            if used + shot.duration > target + config.length_slack_s:
+                continue
+            if per_clip[shot.clip] + shot.duration > cap + config.length_slack_s:
+                continue
         if any(
             other.clip == shot.clip
             and shot.start < other.end + config.min_gap_s

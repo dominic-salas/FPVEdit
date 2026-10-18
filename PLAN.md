@@ -160,6 +160,13 @@ Details and per-claim evidence: `docs/review-2026-10-11.md`.
 ## Validation log
 (newest first; exact commands and outcomes)
 
+### 2026-10-18 — Every worthy shot instead of a target length (Dom's PC)
+- Dom (2026-10-18): a montage length setting misrepresents what he wants; the montage should take all the clips and all the tricks and keep the ones worth keeping.
+- Measured on the 16 raw testdata1 recordings (68 min; the two edits left out): every distinct shot (non-overlapping, 4 s apart within a clip) gives 128 shots, 22.6 min. On Dom's hand-labelled recordings (20261009-180033, 20261009-182156, 20261010-203859, clip 1, clip 2) those shots cover 28 of his 35 labelled tricks, and 29 of the 37 shots in those recordings overlap something he labelled (the labels are incomplete). Keeping only shots scoring at least a share of the 90th-percentile score dropped labelled tricks fast: share 0.3 kept 81 shots and 23/35 tricks, 0.5 kept 40 shots and 13/35. Low-scoring shots are often weaves of close passes that Dom marked as keepers, so no score threshold was added.
+- Change: `MontageConfig.length_s` is None by default, so `pick_shots` keeps every distinct shot; `--length` still makes a montage of about that length, best shots first. The app's montage length box and setting are gone; step 1 says it keeps every flip, spin and close pass, and the review step is where shots are removed.
+- Missed labelled tricks (7): two weaves at the start of 180033, flips at 1:31 and 4:02 of 182156, a spin and a flip at 1:34 and 1:43 of 203859, one kept moment of clip 2; these are moments the detector does not find or that sit inside the 4 s gap next to another shot.
+- Checks: ruff, format, mypy clean; pytest 209 passed.
+
 ### 2026-10-18 — Full screen, background music, export window (Dom's PC)
 - Dom (2026-10-18): the player must go full screen; the panel beside the video used too much space for help text; where the export goes was unclear; add background music (several tracks in order, the recordings' audio is ignored); a YouTube upload like DaVinci Resolve's would be good too.
 - Full screen: a button, F or a double-click on the video moves the player and timeline to a full-screen window (Esc or F leaves); the preview decodes at 720p there instead of 360p. The help text is now one line of hints under the timeline; the panel holds the montage length, Add a shot and the music.

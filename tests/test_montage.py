@@ -142,13 +142,20 @@ def test_a_lone_clip_may_fill_the_whole_montage() -> None:
     assert sum(s.duration for s in pick_shots(candidates, 3, config)) == 60
 
 
+def test_without_a_length_every_distinct_shot_is_kept() -> None:
+    candidates = [shot(0, 0, 10, 9), shot(0, 5, 15, 8), shot(1, 0, 10, 0.1), shot(0, 40, 50, 1)]
+    picked = pick_shots(candidates, 2, dataclasses.replace(CONFIG, length_s=None))
+    assert [(s.clip, s.start) for s in picked] == [(0, 0), (0, 40), (1, 0)]
+
+
 def test_pick_handles_many_clips() -> None:
     candidates = [
         shot(c, 20 * i, 20 * i + 10, score=(c * 7 + i) % 11) for c in range(60) for i in range(5)
     ]
-    picked = pick_shots(candidates, 60, CONFIG)
-    assert CONFIG.length_s - CONFIG.length_slack_s <= sum(s.duration for s in picked)
-    assert sum(s.duration for s in picked) <= CONFIG.length_s + CONFIG.length_slack_s
+    config = dataclasses.replace(CONFIG, length_s=90)
+    picked = pick_shots(candidates, 60, config)
+    assert 90 - config.length_slack_s <= sum(s.duration for s in picked)
+    assert sum(s.duration for s in picked) <= 90 + config.length_slack_s
     assert [(s.clip, s.start) for s in picked] == sorted((s.clip, s.start) for s in picked)
 
 
