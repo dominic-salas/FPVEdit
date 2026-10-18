@@ -131,6 +131,10 @@ class MontageConfig:
     # picking
     clip_share: float = 0.5  # most of the montage one clip may fill (unless it is alone)
     min_gap_s: float = 4.0  # between two shots of the same clip
+    # scenery (with the image model): an indoor-looking shot stays only if it is as good
+    # as the best quarter of the session's outdoor shots
+    indoor_margin: float = 0.03  # indoorness above this looks indoor (`scenery.py`)
+    indoor_bar_quantile: float = 0.75
 
 
 def usable_footage(
@@ -353,3 +357,29 @@ def pick_shots(
         used += shot.duration
         per_clip[shot.clip] += shot.duration
     return tuple(sorted(chosen, key=lambda s: (s.clip, s.start)))
+
+
+def leave_out_weak_indoor(
+    shots: Sequence[Shot], indoorness: Sequence[float | None], config: MontageConfig | None = None
+) -> tuple[tuple[Shot, ...], tuple[Shot, ...]]:
+    """Split ``shots`` into those kept and the indoor-looking ones left out.
+
+    Indoor shots are compared with the outdoor shots of the same session: one stays only
+    if its score per sqrt(second), the ranking `pick_shots` uses, reaches the
+    ``indoor_bar_quantile`` of the outdoor shots. A session with no outdoor shots keeps
+    everything; a shot without an indoorness (no readable frame) counts as outdoor.
+    """
+    config = config or MontageConfig()
+    if len(indoorness) != len(shots):
+        raise ValueError("one indoorness per shot is required")
+    indoor = [v is not None and v > config.indoor_margin for v in indoorness]
+    outdoor = [s.score / s.duration**0.5 for s, i in zip(shots, indoor, strict=True) if not i]
+    if not outdoor:
+        return tuple(shots), ()
+    bar = float(np.quantile(outdoor, config.indoor_bar_quantile))
+    kept: list[Shot] = []
+    left_out: list[Shot] = []
+    for shot, inside in zip(shots, indoor, strict=True):
+        weak = inside and shot.score / shot.duration**0.5 < bar
+        (left_out if weak else kept).append(shot)
+    return tuple(kept), tuple(left_out)

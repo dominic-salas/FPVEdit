@@ -47,7 +47,13 @@ from fpv_editor.media import (
     probe,
     probe_audio,
 )
-from fpv_editor.montage import MontageConfig, Shot, candidate_shots, pick_shots
+from fpv_editor.montage import (
+    MontageConfig,
+    Shot,
+    candidate_shots,
+    leave_out_weak_indoor,
+    pick_shots,
+)
 from fpv_editor.picture import PictureConfig, decoded_size
 from fpv_editor.render import (
     DEVICES,
@@ -179,6 +185,12 @@ def build_parser() -> argparse.ArgumentParser:
         "cut and faded at the end, silence after if they are shorter)",
     )
     parser.add_argument(
+        "--no-scenery",
+        action="store_true",
+        help="keep indoor-looking shots that are weaker than the outdoor ones (by default "
+        "the image model leaves them out when the ml extra is installed)",
+    )
+    parser.add_argument(
         "--force", action="store_true", help="replace the output file if it already exists"
     )
     parser.add_argument(
@@ -299,6 +311,7 @@ class MontagePlan:
     shots: tuple[Shot, ...]  # in montage order
     config: MontageConfig
     warnings: tuple[str, ...]
+    left_out: tuple[Shot, ...] = ()  # weak indoor shots the image model left out
 
     @property
     def footage_duration(self) -> float:
@@ -317,6 +330,7 @@ def run_montage(
     config: PipelineConfig | None = None,
     device: str = "cpu",
     music: Sequence[Path] = (),
+    scenery: bool = True,
 ) -> MontageResult:
     config = config or PipelineConfig()
     started = time.monotonic()
@@ -335,6 +349,8 @@ def run_montage(
         raise OutputExistsError(f"{plan_file} already exists; use --force to replace it")
 
     plan = plan_montage(tools, infos, length=length, cache_dir=cache_dir, config=config)
+    if scenery and length is None:
+        plan = judge_scenery(tools, plan, cache_dir=cache_dir)
     warnings = list(plan.warnings)
     if not plan.shots:
         raise NoFlightContentError(
@@ -443,6 +459,50 @@ def combine_clips(
         config=config,
         warnings=tuple(note for index in sorted(notes) for note in notes[index]),
     )
+
+
+def judge_scenery(
+    tools: Tools,
+    plan: MontagePlan,
+    *,
+    cache_dir: Path | None = None,
+    device: str = "auto",
+) -> MontagePlan:
+    """Leave out indoor-looking shots that are weaker than the session's best outdoor
+    ones (`montage.leave_out_weak_indoor`), using the image model in its own process.
+
+    Without the ``ml`` extra, or if the model fails, the plan is returned with a note.
+    """
+    from fpv_editor import scenery
+
+    if not plan.shots:
+        return plan
+    if not scenery.available():
+        return dataclasses.replace(
+            plan,
+            warnings=(
+                *plan.warnings,
+                "the image model is not installed (uv sync --extra "
+                "ml), so indoor shots were not compared with outdoor ones",
+            ),
+        )
+    try:
+        indoorness = scenery.score_shots_in_process(
+            tools, plan.infos, plan.shots, cache_dir=cache_dir, device=device
+        )
+    except FPVEditError as exc:
+        return dataclasses.replace(
+            plan, warnings=(*plan.warnings, f"the image model could not run: {exc}")
+        )
+    kept, left_out = leave_out_weak_indoor(plan.shots, indoorness, plan.config)
+    notes = plan.warnings
+    if left_out:
+        notes = (
+            *notes,
+            f"left out {len(left_out)} indoor-looking shot(s) weaker than the best outdoor "
+            "shots; they can be added back",
+        )
+    return dataclasses.replace(plan, shots=kept, left_out=left_out, warnings=notes)
 
 
 # Each analysis runs one FFmpeg decode (multi-threaded) and one Python process; a quarter
@@ -821,6 +881,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     cache_dir=args.cache_dir,
                     device=args.device,
                     music=args.music,
+                    scenery=not args.no_scenery,
                 )
             )
         result = run(

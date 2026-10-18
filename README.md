@@ -46,6 +46,19 @@ Clips of different sizes or frame rates are fitted to the largest size, at the f
 the clip that fills most of the montage. The output is H.264 video with no audio track: DVR
 audio is goggle noise, so add your own music afterwards. Source files are never modified.
 
+## Image model (optional)
+
+```
+uv sync --extra app --extra ml
+```
+
+adds SigLIP 2 (Apache-2.0, about 1.5 GB downloaded from Hugging Face on first use) and
+PyTorch with CUDA. After the shots are picked, it compares what they show: indoor-looking
+shots that are weaker than the best outdoor shots of the same session are left out (the app
+can add them back). It runs on an NVIDIA GPU when there is one (under 1 GB of video memory,
+freed when it is done), else on the CPU; `--no-scenery` skips it. Its similarity scores are
+only compared between shots; they are not probabilities, and it does not recognise tricks.
+
 ## Desktop app
 
 ```
