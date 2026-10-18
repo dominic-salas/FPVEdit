@@ -12,6 +12,7 @@ import json
 import multiprocessing
 import os
 import queue
+import shutil
 import sys
 import tempfile
 import time
@@ -699,7 +700,12 @@ def render_montage(
                 join_parts(tools, files, video, work_dir)
                 if progress is not None:
                     progress("Adding the music", 1.0)
-                add_music(tools, video, music, temporary, frames / float(fit.rate))
+                # Muxed on the local temporary disk, then copied: the montage's own folder
+                # may be a FAT32 memory card (the DVR's), where FFmpeg's MP4 muxer failed
+                # with "Invalid argument" while muxing the soundtrack.
+                with_music = work_dir / "montage.mp4"
+                add_music(tools, video, music, with_music, frames / float(fit.rate))
+                shutil.copyfile(with_music, temporary)
             else:
                 join_parts(tools, files, temporary, work_dir)
         validate_output(

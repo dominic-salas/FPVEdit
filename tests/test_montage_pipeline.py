@@ -173,3 +173,56 @@ def test_music_tracks_become_the_soundtrack(copies: tuple[Path, Path], tmp_path:
     )
     with pytest.raises(InvalidInputError):
         probe_audio(find_tools(), silent)  # a video without audio is no music
+
+
+def test_flac_music_with_cover_art(copies: tuple[Path, Path], tmp_path: Path) -> None:
+    """FLAC files from music stores carry the album cover as a picture stream."""
+    tools = find_tools()
+    cover = tmp_path / "cover.jpg"
+    subprocess.run(
+        [
+            tools.ffmpeg,
+            "-nostdin",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=red:size=64x64",
+            "-frames:v",
+            "1",
+            str(cover),
+        ],
+        check=True,
+    )
+    song = tmp_path / "song.flac"
+    subprocess.run(
+        [
+            tools.ffmpeg,
+            "-nostdin",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:duration=8",
+            "-i",
+            str(cover),
+            "-map",
+            "0:a",
+            "-map",
+            "1:v",
+            "-c:a",
+            "flac",
+            "-c:v",
+            "mjpeg",
+            "-disposition:v",
+            "attached_pic",
+            str(song),
+        ],
+        check=True,
+    )
+    result = run_montage(list(copies), config=FAST, music=[song, song])
+    info = probe(tools, result.output)
+    assert info.audio is not None and info.audio.codec == "aac"
+    assert info.video.codec == "h264"

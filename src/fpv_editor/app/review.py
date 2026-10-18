@@ -42,7 +42,44 @@ THUMB_HEIGHT = 144  # grabbed once, drawn at timeline, list and panel sizes
 TRIM_STEPS = (-0.5, 0.5)
 SIDE_WIDTH = 360
 FULL_SCREEN_HEIGHT = 720  # decoded picture height in full screen
-HINT = "CLICK A SHOT TO EDIT IT   DRAG TO MOVE   SPACE PLAY   F FULL SCREEN"
+# The controls under the player: a key (coloured like the button it matches) and what
+# it does. Colours are the same in both themes and readable on both backgrounds.
+HINTS = (
+    # Kept apart from the recording colours of the timeline (`timeline.CLIP_COLOURS`).
+    ("CLICK", "EDIT A SHOT", "#f2f2f2"),
+    ("DRAG", "MOVE A SHOT", "#ffd166"),
+    ("SPACE", "PLAY / PAUSE", "#2ee6a8"),
+    ("F", "FULL SCREEN", "#ff5fa2"),
+    ("CTRL+Z", "UNDO", "#9a9a9a"),
+)
+PLAY_COLOUR = HINTS[2][2]
+FULL_SCREEN_COLOUR = HINTS[3][2]
+
+
+def hint_bar() -> QWidget:
+    """Key chips with their action, e.g. [SPACE] PLAY / PAUSE."""
+    bar = QWidget()
+    row = QHBoxLayout(bar)
+    row.setContentsMargins(0, 0, 0, 0)
+    row.setSpacing(6)
+    for key, action, colour in HINTS:
+        chip = QLabel(key)
+        chip.setStyleSheet(
+            f"background: {colour}; color: #0a0a0a; border-radius: 4px; padding: 1px 6px;"
+            "font-weight: 600; border: 1px solid rgba(0, 0, 0, 0.35);"
+        )
+        chip.setProperty("role", "caption")
+        row.addWidget(chip)
+        text = QLabel(action)  # in the theme's own text colour, readable on both
+        text.setProperty("role", "caption")
+        row.addWidget(text)
+        row.addSpacing(10)
+    return bar
+
+
+def tint(widget: QPushButton, colour: str) -> None:
+    """A button in its hint's colour, so the key and the button read as one control."""
+    widget.setStyleSheet(f"QPushButton {{ color: {colour}; border-color: {colour}; }}")
 
 
 def clock(seconds: float) -> str:
@@ -173,6 +210,7 @@ class ReviewPage(QWidget):
         self._video.ended.connect(self._ended)
         self._video.doubleClicked.connect(self.toggle_full_screen)
         self._play = button("▶  PLAY", self.toggle_play)
+        tint(self._play, PLAY_COLOUR)
         self._play.setFixedWidth(96)
         self._time = label()
         self._now = QLabel()
@@ -185,7 +223,7 @@ class ReviewPage(QWidget):
         transport.addStretch(1)
         transport.addWidget(self._now)
         self._full_button = button("⛶  FULL SCREEN", self.toggle_full_screen)
-        self._full_button.setProperty("flat", True)
+        tint(self._full_button, FULL_SCREEN_COLOUR)
         transport.addWidget(self._full_button)
         self._timeline = Timeline()
         self._timeline.picked.connect(self._picked)
@@ -196,8 +234,8 @@ class ReviewPage(QWidget):
         self._legend.setTextFormat(Qt.TextFormat.RichText)
         self._legend.setWordWrap(True)
         legend_row = QHBoxLayout()
-        legend_row.addWidget(self._legend, 1)
-        legend_row.addWidget(label(HINT))
+        legend_row.addWidget(hint_bar())
+        legend_row.addStretch(1)
         stage = QWidget()
         self._stage = stage
         stage_column = QVBoxLayout(stage)
@@ -274,6 +312,8 @@ class ReviewPage(QWidget):
         column.setSpacing(8)
         column.addWidget(label("THE MONTAGE"))
         column.addWidget(self._overview_total)
+        column.addWidget(label("RECORDINGS ON THE TIMELINE"))
+        column.addWidget(self._legend)
         column.addWidget(button("+  ADD A SHOT", lambda: self._open_chooser("add")))
         column.addSpacing(18)
         column.addWidget(label("MUSIC   TRACKS PLAY IN THIS ORDER"))
@@ -584,7 +624,7 @@ class ReviewPage(QWidget):
         self._timeline.set_position(self._position)
         used = sorted({shot.clip for shot in shots})
         self._legend.setText(
-            "   ".join(
+            "<br>".join(
                 f"<span style='color:{clip_colour(clip)}'>■</span> {self._infos[clip].path.name}"
                 for clip in used
             )
