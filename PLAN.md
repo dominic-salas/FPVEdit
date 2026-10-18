@@ -160,6 +160,12 @@ Details and per-claim evidence: `docs/review-2026-10-11.md`.
 ## Validation log
 (newest first; exact commands and outcomes)
 
+### 2026-10-18 — Rating screen without false ratings; one click from the start (Dom's PC)
+- Dom: holding a number key may have given false ratings; he wants to just see shots and rate them. His file had 11 ratings of 3 stars in one second (03:02:48), one per held-key repeat; they were undone by appending undo lines (`my-ratings.jsonl` is only appended to; a copy of the file before is `my-ratings.backup-2026-10-18.jsonl`). 39 real ratings remain: 6 / 11 / 18 / 2 / 2.
+- Rating screen: number keys no longer repeat, a rating within 1 s of a shot appearing is ignored, and Backspace (or Undo last) forgets the last rating and shows that shot again; a short note confirms each rating. The start screen has "Just rate shots": pick a folder (the last one is offered) and the rating starts as soon as its clips are analysed. The review step's keys do not repeat either. The goal shown is now 150 ratings.
+- With the 39 real ratings: Spearman 0.45 between the app's score and his stars (the weights were chosen with the 50 including the false ones); star bounds refitted to his spread: 0.59 / 0.63 / 0.77 / 0.81. With bounds fitted on the other recordings, 46 % of his stars matched exactly and 77 % within one star, the same as always answering 3 (46 %, 79 %).
+- Checks: ruff, format, mypy clean; pytest 222 passed; offscreen run: a second rating within 1 s was ignored and undo brought the shot back.
+
 ### 2026-10-18 — Rating tuned to Dom's 50 own ratings (Dom's PC)
 - Dom rated 50 shots from 28 of his recordings in `D:\clips` (read only; their cached measurements): 6 one-star, 11 two, 29 three, 2 four, 2 five. He says he took bumps into obstacles and crashes into account.
 - Agreement before tuning: Spearman 0.27 between the app's score and his stars; in pairs of shots from the same recording with different stars, 9 of 14 ordered like him.

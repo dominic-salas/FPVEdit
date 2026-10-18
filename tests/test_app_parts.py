@@ -185,3 +185,15 @@ def test_rating_screen_mixes_clips_and_skips_rated_shots(tmp_path: Path) -> None
     mine = MyRatings(tmp_path / "r.jsonl")
     mine.rate(tmp_path / "x.ts", a[0], 3)
     assert mine.stars(tmp_path / "x.ts", a[0]) == 3 and mine.stars(tmp_path / "x.ts", a[1]) is None
+
+
+def test_an_undone_rating_is_forgotten(tmp_path: Path) -> None:
+    from fpv_editor.app.myratings import MyRatings
+    from fpv_editor.montage import Shot
+
+    shot = Shot(0, 1.0, 10.0, 1.0, ())
+    file = tmp_path / "r.jsonl"
+    mine = MyRatings(file)
+    mine.rate(tmp_path / "a.ts", shot, 3)
+    mine.unrate(tmp_path / "a.ts", shot)
+    assert MyRatings(file).count == 0 and len(file.read_text(encoding="utf-8").splitlines()) == 2

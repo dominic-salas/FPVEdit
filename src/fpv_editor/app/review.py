@@ -303,6 +303,7 @@ class ReviewPage(QWidget):
         for sequence, slot in keys:
             shortcut = QShortcut(sequence, widget, slot)
             shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+            shortcut.setAutoRepeat(False)
 
     def _build_overview(self) -> QWidget:
         self._overview_total = label(role="hero")

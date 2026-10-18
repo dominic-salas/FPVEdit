@@ -4,7 +4,7 @@ Pressing 1-5 while a shot plays (or clicking the stars in the shot panel) append
 of JSON to ``my-ratings.jsonl`` in the app's data folder: the recording, the shot's times,
 his stars, and the app's own rating with its parts and reasons, so the two can be compared
 later. Nothing leaves the computer. A later rating of the same shot replaces the earlier one
-when the file is read.
+when the file is read, and an undo is a line with 0 stars (the file is only appended to).
 """
 
 from __future__ import annotations
@@ -30,7 +30,11 @@ class MyRatings:
             for line in file.read_text(encoding="utf-8").splitlines():
                 try:
                     entry: dict[str, Any] = json.loads(line)
-                    self._stars[str(entry["key"])] = int(entry["stars"])
+                    stars = int(entry["stars"])
+                    if stars == 0:  # an undone rating
+                        self._stars.pop(str(entry["key"]), None)
+                    else:
+                        self._stars[str(entry["key"])] = stars
                 except (ValueError, KeyError, TypeError):
                     continue  # a damaged line; the others still count
 
@@ -61,6 +65,21 @@ class MyRatings:
             "tricks": [m.name for m in shot.moments],
             "rated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         }
+        self.file.parent.mkdir(parents=True, exist_ok=True)
+        with self.file.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(entry) + "\n")
+
+    def unrate(self, path: Path, shot: Shot, why: str = "undone") -> None:
+        """Forget the rating of ``shot`` (appends an undo line; nothing is deleted)."""
+        key = shot_key(path, shot)
+        self.unrate_key(key, why)
+
+    def unrate_key(self, key: str, why: str = "undone") -> None:
+        self._stars.pop(key, None)
+        if self.file is None:
+            return
+        stamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        entry = {"key": key, "stars": 0, "why": why, "rated_at": stamp}
         self.file.parent.mkdir(parents=True, exist_ok=True)
         with self.file.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(entry) + "\n")
