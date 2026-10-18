@@ -11,13 +11,7 @@ from __future__ import annotations
 import subprocess
 
 from fpv_editor.media import NO_WINDOW, MediaInfo, Tools
-
-
-def file_seconds(info: MediaInfo, seconds: float) -> float:
-    """``seconds`` on the analysis timeline as a position for FFmpeg's ``-ss``."""
-    video_start = info.video.start_time if info.video.start_time is not None else info.start_time
-    quarter_frame = 0.25 / float(info.video.nominal_rate or 30)
-    return max(0.0, seconds + video_start - info.start_time - quarter_frame)
+from fpv_editor.seeking import file_seconds
 
 
 def preview_size(info: MediaInfo, height: int) -> tuple[int, int]:

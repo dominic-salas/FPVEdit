@@ -44,7 +44,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from fpv_editor import __version__
+from fpv_editor import __version__, scenery
 from fpv_editor.app import theme
 from fpv_editor.app.analyser import BackgroundAnalysis
 from fpv_editor.app.cliplist import (
@@ -72,6 +72,7 @@ from fpv_editor.cli import (
     PipelineConfig,
     Progress,
     combine_clips,
+    judge_scenery,
     render_montage,
 )
 from fpv_editor.errors import CancelledError, FPVEditError
@@ -855,7 +856,16 @@ class MainWindow(QMainWindow):
         config = PipelineConfig().montage  # every distinct shot; no target length
         plan = combine_clips(infos, results, config, warnings)
         self._end_finding()
-        self._plan_ready(plan)
+        if not plan.shots or not scenery.available():
+            self._plan_ready(judge_scenery(self._tools, plan))  # adds a note when not installed
+            return
+        tools, cache = self._tools, self._cache_dir
+
+        def work(progress: Progress) -> object:
+            progress("Comparing indoor and outdoor shots with the image model", 0.5)
+            return judge_scenery(tools, plan, cache_dir=cache)
+
+        self._run(work, self._plan_ready, self.CLIPS, "STEP 2 OF 4", "Finding the best shots")
 
     def _end_finding(self) -> None:
         self._finding = None
@@ -876,6 +886,11 @@ class MainWindow(QMainWindow):
             f"Picked from {result.footage_duration / 60:.0f} min of usable flying in "
             f"{plural(len(result.clips), 'clip')}."
         )
+        if result.left_out:
+            self._last_summary += (
+                f" Left out {plural(len(result.left_out), 'indoor shot')} weaker than your best "
+                "outdoor ones; Add a shot brings them back."
+            )
         self._review.set_montage(result.infos, self._shots, self._last_summary)
         self._refresh()
         if result.shots:

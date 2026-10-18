@@ -22,7 +22,7 @@ Revised 2026-10-11 after testing on Dom's first real flights (see "Real-flight r
 | FFmpeg/ffprobe ≥ 6 (system) | decode `.ts`/`.mp4` directly, render, validate | M2 |
 | numpy | feature arrays, scoring | M2 |
 | opencv-python-headless | optical flow (Farneback, DIS), robust fitting | M2 |
-| torch + transformers (`ml` extra) | SigLIP 2 inference, only if it passes its test | M3 |
+| torch + transformers + Pillow (`ml` extra) | SigLIP 2 inference: tells indoor shots from outdoor ones (CUDA wheels from download.pytorch.org cu128) | M3 |
 | PyInstaller (`build` group) | the standalone Windows app (GPL-2.0 with a bootloader exception: the built app may use any licence) | R5 |
 | PySide6-Essentials (`app` extra; dev) | desktop app window, drag and drop, threads (Qt for Python, LGPL-3.0, used unmodified) | UI |
 | pytest, ruff, mypy (dev) | tests, lint/format, types | M1 |
@@ -43,7 +43,7 @@ Revised 2026-10-11 after testing on Dom's first real flights (see "Real-flight r
 | R4 | App polish: settings, remembered folders, icon, version, time left | done 2026-10-17 (offscreen checks) |
 | R5 | Windows installer with FFmpeg bundled (runs without uv or the project folder); Linux as a plain install | standalone build and installer workflow done 2026-10-17; waiting on Dom to install it |
 | R6 | Public 1.0: docs, licences (Qt, FFmpeg), validation report, tagged GitHub release | not started |
-| M3 | ML (SigLIP 2) as a measured addition | after 1.0 |
+| M3 | ML (SigLIP 2) as a measured addition | scenery (indoor vs outdoor) added 2026-10-18 at Dom's request; measured on his labels, not yet on held-out recordings |
 
 Road to 1.0 (Dom, 2026-10-17): 1.0 is a public release. Claude may commit; pushing, releases and repo settings still need Dom's OK. Nothing may cost Dom money or credits: only free, local tools (no paid APIs, Hugging Face inference or cloud GPUs). The old M5 (reliability) and M6 (release readiness) are now R2 and R6; ME is R3.
 
@@ -159,6 +159,15 @@ Details and per-claim evidence: `docs/review-2026-10-11.md`.
 
 ## Validation log
 (newest first; exact commands and outcomes)
+
+### 2026-10-18 — Image model: weak indoor shots left out (Dom's PC, RTX 4070 Ti shared with AnaHD)
+- Dom (2026-10-18): compare the worst trick with the best, so lame indoor tricks drop out and weaving outdoors stays; he approved downloading the model and PyTorch.
+- Motion cannot do it: over the 128 distinct shots of the 16 testdata1 recordings, the indoor clip's shots and Dom's labelled weaves have the same median image speed, rotation, brightness and contrast; only the median |divergence| differs (1.30 vs 0.94) and the ranges overlap (0.56-1.85 vs 0.16-1.72). The shot score even ranks indoor above the weaves (1.42 vs 1.17).
+- SigLIP 2 base (`google/siglip2-base-patch16-224`, revision `75de2d5`, Apache-2.0, 375 M parameters, ~1.5 GB in the Hugging Face cache): indoorness = best similarity to five indoor descriptions minus best to five outdoor ones, median of the shot's frames. AUC indoor-clip shots vs Dom's labelled keepers 0.97 (vs all outdoor shots 0.96); one-word prompts "indoors"/"outdoors" gave 0.95. The 14 most indoor-looking shots were 12 indoor ones and 1 keeper.
+- Rule (`montage.leave_out_weak_indoor`): a shot with indoorness > 0.03 stays only if its score per sqrt(second) reaches the 75th percentile of the session's outdoor shots; a session without outdoor shots keeps all. On the 16 recordings: 11 of the 14 indoor shots left out, none of Dom's labelled keepers; 117 shots / 20.7 min kept. Margin and quantile were chosen on these same recordings (only one indoor recording exists), so they are not validated on held-out footage.
+- Runs after the shots are picked, in its own process so its GPU memory (0.8 GB peak, fp16, batches of 16) is released when done; scores per frame are cached in `scenery.json` in the measurement folder. First run on the 16 recordings 36.2 s (grabbing 3 frames per shot is most of it), cached 0.3 s. App: Find shots runs it and says how many indoor shots were left out; Add a shot brings them back. CLI: on by default when the `ml` extra is installed, `--no-scenery` to skip; without the extra, a note says it was skipped. The installer does not include the model or PyTorch.
+- App check (offscreen): indoors cruising + 3 outdoor clips gave 24 shots and left 8 indoor shots out.
+- Checks: ruff, format, mypy (57 files) clean; pytest 213 passed (the model is never loaded in normal tests); `pytest -m model tests/test_scenery.py` 1 passed (a drawn room scores more indoor than a drawn forest).
 
 ### 2026-10-18 — Every worthy shot instead of a target length (Dom's PC)
 - Dom (2026-10-18): a montage length setting misrepresents what he wants; the montage should take all the clips and all the tricks and keep the ones worth keeping.
