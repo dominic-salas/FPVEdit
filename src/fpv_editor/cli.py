@@ -784,7 +784,10 @@ def montage_document(
                 "start": round(shot.start, 3),
                 "end": round(shot.end, 3),
                 "score": round(shot.score, 2),
-                "moments": [{"time": round(m.time, 2), "kind": m.kind.value} for m in shot.moments],
+                "moments": [
+                    {"time": round(m.time, 2), "kind": m.kind.value, "trick": m.name}
+                    for m in shot.moments
+                ],
             }
             for shot in shots
         ],

@@ -5,7 +5,9 @@ time disarmed, static, sitting on the ground, crashes with the failed move befor
 and re-arm churn are never usable. What remains is searched for *moments*:
 
 - flips and rolls: the camera turns 180 degrees or more within a second (a big flip,
-  330 degrees or more, counts extra);
+  330 degrees or more, counts extra); `tricks.py` names each one by its axis (back or
+  front flip, roll, yaw spin, doubles), and a slow full pitch turn away from any flip
+  is a power loop;
 - spins and orbits: turning sustained over four seconds, well above the clip's usual
   level and at least ``spin_floor`` on average (a flip in calm flying also counts as
   one: on Dom's labelled flights, scoring it both ways picked his tricks more often);
@@ -46,6 +48,8 @@ from fpv_editor.highlights import (
     window_sum,
 )
 from fpv_editor.measure import Measurements
+from fpv_editor.motion import CONFIDENCE
+from fpv_editor.tricks import TrickConfig, name_fast_turn, power_loop_frames
 
 FloatArray = NDArray[np.float64]
 BoolArray = NDArray[np.bool_]
@@ -75,6 +79,11 @@ class Moment:
     time: float
     kind: MomentKind
     weight: float
+    trick: str = ""  # what the turn looks like (`tricks.py`), e.g. "back flip", "roll"
+
+    @property
+    def name(self) -> str:
+        return self.trick or self.kind.value
 
 
 @dataclass(frozen=True)
@@ -121,6 +130,8 @@ class MontageConfig:
     pass_gap_s: float = 1.5
     pass_prominence: float = 0.75  # ... and this far above the median over ...
     pass_baseline_s: float = 4.0  # ... this long around it
+    loop_gap_s: float = 3.0  # between two power loops
+    loop_flip_gap_s: float = 1.5  # a slow pitch turn this close to a flip is part of it
     # scores
     flip_weight: float = 3.0
     big_flip_weight: float = 1.5  # added to flip_weight
@@ -177,19 +188,31 @@ def find_moments(
     sustained = window_sum(np.linalg.norm(smoothed, axis=1), four) / four
     approach = rolling_median(motion.divergence, max(1, round(0.25 * fps)))
 
+    confidence = np.nan_to_num(measurements.motion[:, CONFIDENCE])
     moments = []
-    for index in _peaks(np.where(usable, turned_1s, 0.0), config.flip_deg, config.flip_gap_s, fps):
+    flips = _peaks(np.where(usable, turned_1s, 0.0), config.flip_deg, config.flip_gap_s, fps)
+    for index in flips:
         big = turned_1s[index] >= config.big_flip_deg
         weight = config.flip_weight + (config.big_flip_weight if big else 0.0)
-        moments.append(Moment(index / fps, MomentKind.FLIP, weight))
+        trick = name_fast_turn(motion.rotation, confidence, index, fps)
+        moments.append(Moment(index / fps, MomentKind.FLIP, weight, trick))
+    # Power loops: a full pitch turn too slow to count as a flip, away from any flip.
+    loops = power_loop_frames(motion.rotation, usable, fps)
+    near_flip = np.zeros(len(loops), dtype=bool)
+    reach = round(config.loop_flip_gap_s * fps)
+    for index in flips:
+        near_flip[max(0, index - reach) : index + reach] = True
+    loops[near_flip] = 0.0
+    for index in _peaks(loops, TrickConfig().loop_deg, config.loop_gap_s, fps):
+        moments.append(Moment(index / fps, MomentKind.FLIP, config.flip_weight, "power loop"))
     spin = max(config.spin_floor, config.spin_factor * float(np.median(sustained[usable])))
     for index in _peaks(np.where(usable, sustained, 0.0), spin, config.spin_gap_s, fps):
-        moments.append(Moment(index / fps, MomentKind.SPIN, config.spin_weight))
+        moments.append(Moment(index / fps, MomentKind.SPIN, config.spin_weight, "spin"))
     close = max(config.pass_floor, float(np.quantile(approach[usable], config.pass_quantile)))
     baseline = rolling_median(approach, max(1, round(config.pass_baseline_s * fps)))
     sudden = usable & (approach - baseline >= config.pass_prominence)
     for index in _peaks(np.where(sudden, approach, -np.inf), close, config.pass_gap_s, fps):
-        moments.append(Moment(index / fps, MomentKind.PROXIMITY, config.pass_weight))
+        moments.append(Moment(index / fps, MomentKind.PROXIMITY, config.pass_weight, "close pass"))
     return sorted(moments, key=lambda m: m.time)
 
 

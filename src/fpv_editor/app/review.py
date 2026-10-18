@@ -36,7 +36,7 @@ from fpv_editor.app.settings import AppSettings
 from fpv_editor.app.timeline import Block, Timeline, clip_colour
 from fpv_editor.errors import FPVEditError
 from fpv_editor.media import MUSIC_SUFFIXES, AudioFile, MediaInfo, Tools, probe_audio
-from fpv_editor.montage import MomentKind, Shot
+from fpv_editor.montage import Shot
 
 THUMB_HEIGHT = 144  # grabbed once, drawn at timeline, list and panel sizes
 TRIM_STEPS = (-0.5, 0.5)
@@ -55,14 +55,12 @@ def plural(count: int, noun: str) -> str:
 
 
 def describe(shot: Shot) -> str:
-    counts: dict[MomentKind, int] = {}
+    counts: dict[str, int] = {}
     for moment in shot.moments:
-        counts[moment.kind] = counts.get(moment.kind, 0) + 1
+        counts[moment.name] = counts.get(moment.name, 0) + 1
     names = [
-        f"{count} {kind.value}{'es' if kind is MomentKind.PROXIMITY else 's'}"
-        if count > 1
-        else kind.value
-        for kind, count in counts.items()
+        f"{count} {name}{'es' if name.endswith('ss') else 's'}" if count > 1 else name
+        for name, count in counts.items()
     ]
     return ", ".join(names) or "flying"
 

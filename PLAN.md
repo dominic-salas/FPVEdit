@@ -160,6 +160,14 @@ Details and per-claim evidence: `docs/review-2026-10-11.md`.
 ## Validation log
 (newest first; exact commands and outcomes)
 
+### 2026-10-18 — Trick names from the turn's axis (Dom's PC)
+- Dom (2026-10-18): the app only knows flips, spins and close passes; it should know more real tricks.
+- Measured on every fast turn of the 16 testdata1 recordings: the camera's net pitch, yaw and roll over the second around it. Dom's labelled backflip is +232 pitch (so positive pitch is a back flip), a front flip -226, his "big side flip" a roll (-194 roll), his "trippy spin" yaw with roll the opposite way (-153 yaw, +91 roll), and rolls show yaw the same way as roll (the camera's up-tilt). A full 360 measures 200-280 degrees.
+- Built (`tricks.py`): back flip, front flip, roll, yaw spin, double back/front flip, double roll by the dominant axis and those signs; mixed axes or a motion fit below 0.45 confidence (blur) stay a plain "flip"; power loop = 250 degrees of pitch over 2.5 s with no second turning 180, at least 1.5 s from any flip. The review step, the shot panel and the montage JSON show the names. A split-S namer (half roll, then half pitch) was tried and named five of Dom's labelled flips in 20261009-182156 as split-S, so it was dropped.
+- Result on the 16 recordings (fast turns): 29 back flips, 19 yaw spins, 18 plain flips, 15 rolls, 4 front flips, 1 power loop. Every labelled flip, side flip and spin got a name of the right family; the power loop has no label to check, and rolls versus flips are only checked on the one side flip Dom named (he labels both as "flip").
+- Not possible from this signal: tricks defined by where the quad goes rather than how it turns (dives, gaps, orbits around an object, matty flips, juicy flicks) would need the quad's attitude and path, which a DVR recording does not carry.
+- Checks: ruff, format, mypy (59 files) clean; pytest 216 passed (new `tests/test_tricks.py`).
+
 ### 2026-10-18 — Image model: weak indoor shots left out (Dom's PC, RTX 4070 Ti shared with AnaHD)
 - Dom (2026-10-18): compare the worst trick with the best, so lame indoor tricks drop out and weaving outdoors stays; he approved downloading the model and PyTorch.
 - Motion cannot do it: over the 128 distinct shots of the 16 testdata1 recordings, the indoor clip's shots and Dom's labelled weaves have the same median image speed, rotation, brightness and contrast; only the median |divergence| differs (1.30 vs 0.94) and the ranges overlap (0.56-1.85 vs 0.16-1.72). The shot score even ranks indoor above the weaves (1.42 vs 1.17).
