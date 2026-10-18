@@ -160,6 +160,12 @@ Details and per-claim evidence: `docs/review-2026-10-11.md`.
 ## Validation log
 (newest first; exact commands and outcomes)
 
+### 2026-10-18 — Saved measurements survive app updates (Dom's PC)
+- Dom: clips he analysed before are analysed again. Cause: the cache key held the source bytes of `analysis/measure/motion/picture/media.py` and the clip's full path, so every edit of those files (several on 2026-10-17/18; 182 cache files for ~120 clips, up to 4 per clip) and every clip opened from another folder (e.g. the SD card, then `D:\clips`) meant measuring again.
+- Change: the key holds `analysis.MEASUREMENT_VERSION` (bumped by hand only when measurements would differ), the file name, size and modification time, FFmpeg major and the measuring settings. `tests/test_cache_key.py` pins the measuring code's hash, so editing it fails the tests until the version is bumped or the hash re-pinned. Measurements made by the code of b865e7b are adopted (renamed to the new key) the first time a clip is seen, so nothing already measured is measured again; the standalone build now shares the same keys.
+- Measured: `fpv-editor "res/testdata1/clip 1.mp4" --analyze-only --cache-dir <new folder>`: uncached 113.0 s, cached 5.1 s; with the app's cache folder (old-key file adopted) 4.7 s; the same 5 shots all three times. 16 of the 18 testdata1 recordings had old-key measurements that are adopted.
+- Checks: ruff, format, mypy clean; pytest 223 passed.
+
 ### 2026-10-18 — Smooth playback while clips analyse (Dom's PC, offscreen)
 - Dom: he cannot watch shots properly because so much happens in the background.
 - Measured on the rating screen (one shot looping while the 18 testdata1 recordings analyse uncached; 10 s): 29.2 frames/s on average but the 99th percentile gap between frames was 238-240 ms (stutter); with nothing in the background it is 35 ms.

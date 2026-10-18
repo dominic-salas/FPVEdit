@@ -6,6 +6,7 @@ import hashlib
 import itertools
 import json
 import os
+import shutil
 import subprocess
 from fractions import Fraction
 from pathlib import Path
@@ -240,6 +241,12 @@ def test_cache_reuses_measurements_and_gives_the_same_edit(flight: Path, tmp_pat
     second = run(flight, analyze_only=True, force=True, cache_dir=cache, config=FAST)
     assert second.from_cache
     assert second.selection == first.selection
+
+    # The same recording copied to another folder (times kept) reuses them.
+    moved = tmp_path / "elsewhere" / flight.name
+    moved.parent.mkdir()
+    shutil.copy2(flight, moved)
+    assert run(moved, analyze_only=True, cache_dir=cache, config=FAST).from_cache
 
     # A changed recording (new modification time) is measured again.
     os.utime(flight, ns=(flight.stat().st_atime_ns, flight.stat().st_mtime_ns + 10**9))
