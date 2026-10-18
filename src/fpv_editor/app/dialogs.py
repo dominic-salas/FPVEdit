@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -162,8 +163,17 @@ BAD_NAME_CHARACTERS = '<>:"/\\|?*'
 class ExportDialog(QDialog):
     """Where the montage goes and how it is made, asked when Export is clicked."""
 
-    def __init__(self, default: Path, settings: AppSettings, music: str, parent: QWidget) -> None:
+    def __init__(
+        self,
+        default: Path,
+        settings: AppSettings,
+        music: str,
+        parent: QWidget,
+        remember: Callable[[Path], bool] = lambda folder: True,
+    ) -> None:
+        """``remember(folder)`` says whether the chosen folder becomes the next default."""
         super().__init__(parent)
+        self._remember = remember
         self.setWindowTitle("Export montage")
         self.setMinimumWidth(560)
         self._settings = settings
@@ -224,7 +234,8 @@ class ExportDialog(QDialog):
                 return
             replace = True
         encoder = str(self._encoder.currentData())
-        self._settings.output_folder = folder
+        if self._remember(folder):
+            self._settings.output_folder = folder
         self._settings.encoder = encoder
         self._settings.open_folder_after_export = self._open.isChecked()
         self.choice = ExportChoice(path, replace, encoder, self._open.isChecked())

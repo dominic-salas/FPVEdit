@@ -10,6 +10,7 @@ such because a copy changes it.
 from __future__ import annotations
 
 import re
+import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -62,3 +63,30 @@ def describe_clip(info: MediaInfo) -> str:
     if recorded is not None:
         parts.append(recorded.label())
     return "   ".join(parts)
+
+
+def is_removable(path: Path) -> bool:
+    """Whether ``path`` is on a removable drive (an SD card or USB stick), on Windows.
+
+    Montages are never saved there unless the user picks it: it is usually the card the
+    goggles record to, holding the original footage.
+    """
+    if sys.platform != "win32":
+        return False
+    import ctypes
+
+    drive = path.resolve().anchor
+    if not drive:
+        return False
+    removable = 2  # DRIVE_REMOVABLE from GetDriveTypeW
+    return bool(ctypes.windll.kernel32.GetDriveTypeW(drive) == removable)
+
+
+def default_output_folder(remembered: Path | None, sources: list[Path], videos: Path) -> Path:
+    """Where a montage is saved unless the user picks a place: the folder they used last,
+    unless it holds the clips or is on a removable card; otherwise ``videos``."""
+    if remembered is not None and remembered.is_dir() and not is_removable(remembered):
+        folders = {source.resolve().parent for source in sources}
+        if remembered.resolve() not in folders:
+            return remembered
+    return videos

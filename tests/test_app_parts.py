@@ -130,3 +130,18 @@ def test_dot_letters_share_the_x_height_and_baseline() -> None:
         assert max(lit) == (ROWS - 1 if letter in descenders else BASELINE), letter
         if letter not in ascenders:
             assert min(lit) == X_TOP, letter
+
+
+def test_montages_default_to_the_videos_folder_not_the_clips_card(tmp_path: Path) -> None:
+    from fpv_editor.app.clips import default_output_folder
+
+    card = tmp_path / "DCIM"
+    card.mkdir()
+    videos = tmp_path / "Videos" / "FPV Editor"
+    other = tmp_path / "montages"
+    other.mkdir()
+    clips = [card / "a.ts", card / "b.ts"]
+    assert default_output_folder(None, clips, videos) == videos
+    assert default_output_folder(card, clips, videos) == videos  # never the clips' folder
+    assert default_output_folder(other, clips, videos) == other  # the folder used last
+    assert default_output_folder(tmp_path / "gone", clips, videos) == videos
