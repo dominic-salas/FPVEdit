@@ -6,8 +6,6 @@ from pathlib import Path
 
 from PySide6.QtCore import QByteArray, QSettings
 
-from fpv_editor.montage import MontageConfig
-
 ENCODERS = ("auto", "cpu")  # the GPU when it works, or always the CPU
 
 
@@ -21,18 +19,6 @@ class AppSettings:
 
     def _set_path(self, key: str, path: Path | None) -> None:
         self._store.setValue(key, str(path) if path is not None else "")
-
-    @property
-    def length_s(self) -> float:
-        value = self._store.value("montage/length_s", MontageConfig().length_s)
-        try:
-            return min(1800.0, max(10.0, float(str(value))))
-        except ValueError:
-            return MontageConfig().length_s
-
-    @length_s.setter
-    def length_s(self, seconds: float) -> None:
-        self._store.setValue("montage/length_s", float(seconds))
 
     @property
     def encoder(self) -> str:

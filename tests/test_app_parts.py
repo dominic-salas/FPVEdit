@@ -24,16 +24,14 @@ def settings_in(folder: Path) -> AppSettings:
 
 def test_settings_are_remembered_and_bad_values_fall_back(tmp_path: Path) -> None:
     settings = settings_in(tmp_path)
-    assert settings.length_s == 90 and settings.encoder == "auto"
+    assert settings.encoder == "auto"
     assert settings.output_folder is None
-    settings.length_s = 45
     settings.encoder = "cpu"
     settings.output_folder = tmp_path
     again = settings_in(tmp_path)
-    assert (again.length_s, again.encoder, again.output_folder) == (45, "cpu", tmp_path)
+    assert (again.encoder, again.output_folder) == ("cpu", tmp_path)
     again.encoder = "quantum"
-    again.length_s = 99999
-    assert again.encoder == "auto" and again.length_s == 1800
+    assert again.encoder == "auto"
     again.output_folder = None
     assert again.output_folder is None
 

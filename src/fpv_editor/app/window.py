@@ -6,7 +6,6 @@ user's local app-data folder, and the montage is written where the user chooses.
 
 from __future__ import annotations
 
-import dataclasses
 import logging
 import os
 import threading
@@ -30,7 +29,6 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
-    QDoubleSpinBox,
     QFileDialog,
     QFrame,
     QHBoxLayout,
@@ -378,12 +376,6 @@ class MainWindow(QMainWindow):
         tools.addWidget(self._remove_clips_button)
         tools.addStretch(1)
         tools.addWidget(self._clips_summary)
-        self._length = QDoubleSpinBox()
-        self._length.setRange(10, 1800)
-        self._length.setDecimals(0)
-        self._length.setSuffix(" S")
-        self._length.setValue(self._settings.length_s)
-        self._length.valueChanged.connect(self._length_changed)
         self._find = button("FIND SHOTS  →", self._find_shots, primary=True)
         list_page = DotGrid()
         self._list_page = list_page
@@ -406,7 +398,14 @@ class MainWindow(QMainWindow):
         self._clip_stack = QStackedWidget()
         self._clip_stack.addWidget(self._drop_zone)
         self._clip_stack.addWidget(list_page)
-        self._clips_bar = self._action_bar([eyebrow("MONTAGE LENGTH"), self._length], [self._find])
+        self._clips_bar = self._action_bar(
+            [
+                eyebrow(
+                    "EVERY FLIP, SPIN AND CLOSE PASS FROM EVERY CLIP. REMOVE ANY YOU DON'T WANT."
+                )
+            ],
+            [self._find],
+        )
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -740,9 +739,6 @@ class MainWindow(QMainWindow):
             self._review.set_montage((), None)
         self._refresh()
 
-    def _length_changed(self, seconds: float) -> None:
-        self._settings.length_s = seconds
-
     def _mirror_clips(self) -> None:
         """The progress screen's list shows the same clips, cards and progress."""
         target = self._work_clips
@@ -856,7 +852,7 @@ class MainWindow(QMainWindow):
                 results.append(state.result.moved_to(index))
             else:
                 warnings[index] = [f"{path.name}: could not be analysed ({state.error})"]
-        config = dataclasses.replace(PipelineConfig().montage, length_s=self._length.value())
+        config = PipelineConfig().montage  # every distinct shot; no target length
         plan = combine_clips(infos, results, config, warnings)
         self._end_finding()
         self._plan_ready(plan)
@@ -1151,7 +1147,6 @@ class MainWindow(QMainWindow):
     def _open_settings(self) -> None:
         dialog = SettingsDialog(self._settings, self._cache_dir, self)
         if dialog.exec():
-            self._length.setValue(self._settings.length_s)
             self._refresh_output()
 
     def _show_log(self) -> None:

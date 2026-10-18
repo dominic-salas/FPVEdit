@@ -11,7 +11,6 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
-    QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
     QHBoxLayout,
@@ -54,12 +53,6 @@ class SettingsDialog(QDialog):
         self._cache_dir = cache_dir
         self._folder = settings.output_folder
 
-        self._length = QDoubleSpinBox()
-        self._length.setRange(10, 1800)
-        self._length.setDecimals(0)
-        self._length.setSuffix(" s")
-        self._length.setValue(settings.length_s)
-
         self._encoder = QComboBox()
         self._encoder.addItem("NVIDIA GPU when available, else CPU", "auto")
         self._encoder.addItem("CPU only", "cpu")
@@ -91,7 +84,6 @@ class SettingsDialog(QDialog):
         buttons.rejected.connect(self.reject)
 
         form = QFormLayout(self)
-        form.addRow("Montage length to aim for", self._length)
         form.addRow("Video encoding", self._encoder)
         form.addRow("Save montages in", folder_row)
         form.addRow("Saved measurements", cache_row)
@@ -118,7 +110,6 @@ class SettingsDialog(QDialog):
         self._show_cache()
 
     def _save(self) -> None:
-        self._settings.length_s = self._length.value()
         self._settings.encoder = str(self._encoder.currentData())
         self._settings.output_folder = self._folder
         self.accept()

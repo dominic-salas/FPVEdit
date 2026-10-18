@@ -160,7 +160,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--length",
         type=float,
         metavar="SECONDS",
-        help=f"montage length to aim for (default {MontageConfig().length_s:g})",
+        help="make the montage about this long, best shots first (default: every "
+        "distinct shot with a flip, spin or close pass, however long that is)",
     )
     parser.add_argument(
         "--trim",
