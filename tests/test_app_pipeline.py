@@ -164,15 +164,21 @@ def test_window_lists_and_edits_the_shots(clips: tuple[Path, Path], tmp_path: Pa
         assert video_files([clips[0].with_name("missing.ts")]) == []
         plan = plan_montage(tools, [probe(tools, p) for p in window.clip_paths()], config=FAST)
         window._plan_ready(plan)
-        assert window._shot_list.count() == len(plan.shots)
-        window._shot_list.setCurrentRow(0)
+        review = window._review
+        assert len(review._timeline._blocks) == len(plan.shots)
+        review._picked(0, 0.0)  # a click on the first shot on the timeline
         before = window._current_shots()[0]
-        window._trim(False, 0.25)
+        review._trim(False, 0.25)
         assert window._current_shots()[0].start == pytest.approx(before.start + 0.25)
-        window._remove_current()
-        assert window._shot_list.count() == len(plan.shots) - 1
+        review.remove_selected()
+        assert len(review._timeline._blocks) == len(plan.shots) - 1
         window._undo()
         window._undo()
+        assert window._current_shots() == plan.shots
+        if len(plan.shots) > 1:
+            review._moved(0, len(plan.shots))  # drag the first shot to the end
+            assert window._current_shots()[-1] == plan.shots[0]
+            window._undo()
         assert window._current_shots() == plan.shots
         app.processEvents()
     finally:
