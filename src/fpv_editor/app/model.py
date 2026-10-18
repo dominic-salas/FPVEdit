@@ -185,9 +185,10 @@ def strength(shot: Shot) -> float:
 
 
 def rating(shot: Shot, montage: Sequence[Shot]) -> int:
-    """1-5 stars for ``shot`` against the shots of ``montage``: where it falls among them
-    (5 is the top fifth). Relative to this montage, so the weakest shot of a great
-    session still gets 1; one shot alone gets 3."""
+    """1-5 stars for ``shot``: its own rating (`rating.py`) when it has one; otherwise
+    where its strength falls among the shots of ``montage`` (one shot alone gets 3)."""
+    if shot.quality is not None:
+        return shot.quality.stars
     others = [strength(s) for s in montage if s != shot]
     if not others:
         return 3

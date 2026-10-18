@@ -149,6 +149,7 @@ def test_window_lists_and_edits_the_shots(clips: tuple[Path, Path], tmp_path: Pa
     from PySide6.QtCore import QSettings
     from PySide6.QtWidgets import QApplication
 
+    from fpv_editor.app.myratings import MyRatings
     from fpv_editor.app.settings import AppSettings
     from fpv_editor.app.window import MainWindow, video_files
 
@@ -175,6 +176,9 @@ def test_window_lists_and_edits_the_shots(clips: tuple[Path, Path], tmp_path: Pa
         window._undo()
         window._undo()
         assert window._current_shots() == plan.shots
+        review._mine = MyRatings(tmp_path / "my-ratings.jsonl")  # not the user's file
+        review.rate_current(4)  # Dom's own stars for the open shot
+        assert review._mine.stars(plan.infos[0].path, window._current_shots()[0]) == 4
         if len(plan.shots) > 1:
             review._moved(0, len(plan.shots))  # drag the first shot to the end
             assert window._current_shots()[-1] == plan.shots[0]

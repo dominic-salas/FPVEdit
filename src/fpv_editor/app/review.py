@@ -38,6 +38,7 @@ from fpv_editor.app.model import (
     shot_starts,
 )
 from fpv_editor.app.music import MusicPreview
+from fpv_editor.app.myratings import MyRatings
 from fpv_editor.app.preview import PREVIEW_HEIGHT, PreviewView, Segment
 from fpv_editor.app.settings import AppSettings
 from fpv_editor.app.timeline import Block, Timeline, clip_colour, rating_colour, stars_text
@@ -57,6 +58,7 @@ HINTS = (
     ("DRAG", "MOVE A SHOT", "#ffd166"),
     ("SPACE", "PLAY / PAUSE", "#2ee6a8"),
     ("F", "FULL SCREEN", "#ff5fa2"),
+    ("1-5", "YOUR RATING", "#8fb8ff"),
     ("CTRL+Z", "UNDO", "#9a9a9a"),
 )
 PLAY_COLOUR = HINTS[2][2]
@@ -185,11 +187,16 @@ class ReviewPage(QWidget):
     changed = Signal()
 
     def __init__(
-        self, tools: Tools, settings: AppSettings | None = None, parent: QWidget | None = None
+        self,
+        tools: Tools,
+        settings: AppSettings | None = None,
+        parent: QWidget | None = None,
+        ratings_file: Path | None = None,
     ) -> None:
         super().__init__(parent)
         self._tools = tools
         self._settings = settings or AppSettings()
+        self._mine = MyRatings(ratings_file)
         self._music: list[AudioFile] = []
         self._music_preview = MusicPreview(tools)
         self._full_screen: FullScreen | None = None
@@ -288,6 +295,10 @@ class ReviewPage(QWidget):
             (QKeySequence(Qt.Key.Key_Escape), self.leave_full_screen),
             (QKeySequence(Qt.Key.Key_Left), functools.partial(self._step_shot, -1)),
             (QKeySequence(Qt.Key.Key_Right), functools.partial(self._step_shot, 1)),
+            *(
+                (QKeySequence(str(stars)), functools.partial(self.rate_current, stars))
+                for stars in range(1, 6)
+            ),
         ]
         for sequence, slot in keys:
             shortcut = QShortcut(sequence, widget, slot)
@@ -384,6 +395,21 @@ class ReviewPage(QWidget):
         column.addWidget(self._shot_picture)
         column.addWidget(self._shot_title)
         column.addWidget(self._shot_source)
+        self._shot_reasons = label(role="muted")
+        self._shot_reasons.setWordWrap(True)
+        column.addWidget(self._shot_reasons)
+        mine = QHBoxLayout()
+        mine.setSpacing(4)
+        mine.addWidget(label("YOUR RATING"))
+        self._my_star_buttons: list[QPushButton] = []
+        for stars in range(1, 6):
+            star = button("☆", functools.partial(self.rate_current, stars))
+            star.setToolTip(f"{stars} star{'s' if stars > 1 else ''} (or press {stars})")
+            star.setFixedWidth(34)
+            mine.addWidget(star)
+            self._my_star_buttons.append(star)
+        mine.addStretch(1)
+        column.addLayout(mine)
         column.addSpacing(6)
         column.addWidget(label("TRIM"))
         column.addLayout(trims)
@@ -695,10 +721,35 @@ class ReviewPage(QWidget):
             f"{self._name(shot).upper()}<br>{clock(shot.start)} TO {clock(shot.end)}   "
             f"{shot.duration:.1f} S"
         )
+        reasons = shot.quality.reasons if shot.quality is not None else ()
+        self._shot_reasons.setText("  ·  ".join(reasons))
+        given = self._mine.stars(self._info(shot).path, shot) or 0
+        for number, star in enumerate(self._my_star_buttons, start=1):
+            star.setText("★" if number <= given else "☆")
         self._previous.setEnabled(index > 0)
         self._next.setEnabled(index < len(shots) - 1)
         looping = self._mode == "shot" and self._video.playing
         self._loop_button.setText("▶  PLAY THE MONTAGE" if looping else "↻  LOOP THIS SHOT")
+
+    def rate_current(self, stars: int) -> None:
+        """Dom's own stars for the shot open in the panel, else the one playing."""
+        shots = self._current()
+        if not shots or self._choosing is not None:
+            return
+        index = self._selected if self._selected is not None else locate(shots, self._position)[0]
+        shot = shots[index]
+        try:
+            self._mine.rate(self._info(shot).path, shot, stars)
+        except OSError as exc:
+            self._say(f"Could not save your rating: {exc}")
+            return
+        count = self._mine.count
+        self._say(
+            f"Shot {index + 1}: you gave {stars}★ (app: {rating(shot, shots)}★). "
+            f"{count} shot{'s' if count != 1 else ''} rated; 30-50 is enough to tune it."
+        )
+        self._now.setText(f"YOU RATED SHOT {index + 1:02d}  {stars_text(stars)}")
+        self._show_editor()
 
     def _say(self, text: str) -> None:
         self._message.setText(text.upper())

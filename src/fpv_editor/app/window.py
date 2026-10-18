@@ -72,7 +72,7 @@ from fpv_editor.cli import (
     PipelineConfig,
     Progress,
     combine_clips,
-    judge_scenery,
+    keep_rated,
     render_montage,
 )
 from fpv_editor.errors import CancelledError, FPVEditError
@@ -467,7 +467,9 @@ class MainWindow(QMainWindow):
         return page
 
     def _build_review_page(self) -> QWidget:
-        self._review = ReviewPage(self._tools, self._settings)
+        base = data_folder()
+        mine = base / "my-ratings.jsonl" if base is not None else None
+        self._review = ReviewPage(self._tools, self._settings, ratings_file=mine)
         self._review.changed.connect(self._review_changed)
 
         self._notes_button = button("", self._show_notes)
@@ -551,6 +553,7 @@ class MainWindow(QMainWindow):
         menu.addSeparator()
         menu.addAction(action("Settings…", self._open_settings, "Ctrl+,"))
         menu.addAction(action("Show the log file", self._show_log))
+        menu.addAction(action("Show my shot ratings", self._show_my_ratings))
         menu.addAction(action("About FPV Editor", self._about))
         menu.addSeparator()
         menu.addAction(action("Quit", self.close, QKeySequence.StandardKey.Quit))
@@ -856,14 +859,15 @@ class MainWindow(QMainWindow):
         config = PipelineConfig().montage  # every distinct shot; no target length
         plan = combine_clips(infos, results, config, warnings)
         self._end_finding()
+        min_stars = self._settings.min_stars
         if not plan.shots or not scenery.available():
-            self._plan_ready(judge_scenery(self._tools, plan))  # adds a note when not installed
+            self._plan_ready(keep_rated(self._tools, plan, min_stars=min_stars))
             return
         tools, cache = self._tools, self._cache_dir
 
         def work(progress: Progress) -> object:
-            progress("Comparing indoor and outdoor shots with the image model", 0.5)
-            return judge_scenery(tools, plan, cache_dir=cache)
+            progress("Rating the shots (with the image model)", 0.5)
+            return keep_rated(tools, plan, min_stars=min_stars, cache_dir=cache)
 
         self._run(work, self._plan_ready, self.CLIPS, "STEP 2 OF 4", "Finding the best shots")
 
@@ -888,8 +892,8 @@ class MainWindow(QMainWindow):
         )
         if result.left_out:
             self._last_summary += (
-                f" Left out {plural(len(result.left_out), 'indoor shot')} weaker than your best "
-                "outdoor ones; Add a shot brings them back."
+                f" Left out {plural(len(result.left_out), 'shot')} rated below "
+                f"{self._settings.min_stars}★; Add a shot brings them back."
             )
         self._review.set_montage(result.infos, self._shots, self._last_summary)
         self._refresh()
@@ -1164,6 +1168,12 @@ class MainWindow(QMainWindow):
         if dialog.exec():
             self._refresh_output()
             self._review.refresh()  # the timeline colours may have changed
+
+    def _show_my_ratings(self) -> None:
+        base = data_folder()
+        if base is not None:
+            base.mkdir(parents=True, exist_ok=True)
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(base)))
 
     def _show_log(self) -> None:
         if self._log_file is not None:

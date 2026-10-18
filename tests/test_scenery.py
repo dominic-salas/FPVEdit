@@ -1,4 +1,4 @@
-"""The image-model step around the model itself: notes, fallbacks, what is left out.
+"""Keeping shots by rating, with and without the image model's nudge.
 
 The model is replaced by fixed scores here; `-m model` runs the real one."""
 
@@ -11,49 +11,57 @@ import numpy as np
 import pytest
 
 from fpv_editor import scenery
-from fpv_editor.cli import MontagePlan, judge_scenery
+from fpv_editor.cli import MontagePlan, keep_rated
 from fpv_editor.media import Tools
 from fpv_editor.montage import Moment, MomentKind, MontageConfig, Shot
+from fpv_editor.rating import Quality
 
 TOOLS = Tools(ffmpeg="ffmpeg", ffprobe="ffprobe", ffmpeg_major=7)
 
 
-def shot(clip: int, start: float, score: float) -> Shot:
-    return Shot(clip, start, start + 9, score, (Moment(start + 3, MomentKind.FLIP, 3.0),))
+def shot(clip: int, start: float, level: float) -> Shot:
+    """A shot whose rating parts are all ``level`` (0-1)."""
+    quality = Quality(level, level, level, level, ("test",))
+    moment = Moment(start + 3, MomentKind.FLIP, 3.0, "back flip")
+    return Shot(clip, start, start + 9, 3.0, (moment,), quality)
 
 
 def plan(shots: list[Shot]) -> MontagePlan:
     return MontagePlan((), (), tuple(shots), tuple(shots), MontageConfig(), ())
 
 
-def test_without_the_ml_extra_the_plan_is_kept_with_a_note(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(scenery, "available", lambda: False)
-    shots = [shot(0, 0, 3), shot(1, 0, 9)]
-    judged = judge_scenery(TOOLS, plan(shots))
-    assert judged.shots == tuple(shots) and judged.left_out == ()
+def test_shots_below_the_minimum_are_left_out() -> None:
+    great, fine, weak = shot(0, 0, 0.9), shot(0, 20, 0.66), shot(1, 0, 0.3)
+    assert (great.quality.stars, fine.quality.stars, weak.quality.stars) == (5, 3, 1)  # type: ignore[union-attr]
+    judged = keep_rated(TOOLS, plan([great, fine, weak]), min_stars=3)
+    assert judged.shots == (great, fine) and judged.left_out == (weak,)
     assert any("not installed" in note for note in judged.warnings)
+    everything = keep_rated(TOOLS, plan([great, fine, weak]), min_stars=1)
+    assert everything.left_out == ()
 
 
-def test_weak_indoor_shots_are_left_out(monkeypatch: pytest.MonkeyPatch) -> None:
-    outdoor = [shot(0, 20 * i, 3.0 * (i + 1)) for i in range(4)]
-    weak, strong = shot(1, 0, 3.0), shot(1, 20, 12.0)
-    scores = [-0.05] * 4 + [0.06, 0.07]
+def test_when_nothing_reaches_the_minimum_the_best_shots_stay() -> None:
+    a, b = shot(0, 0, 0.3), shot(0, 20, 0.6)  # 1 and 2 stars
+    judged = keep_rated(TOOLS, plan([a, b]), min_stars=4)
+    assert judged.shots == (b,) and judged.left_out == (a,)
+
+
+def test_the_image_model_nudges_ratings(monkeypatch: pytest.MonkeyPatch) -> None:
+    edge = shot(0, 0, 0.64)  # 3 stars by itself
     monkeypatch.setattr(scenery, "available", lambda: True)
-    monkeypatch.setattr(scenery, "score_shots_in_process", lambda *a, **k: scores)
-    judged = judge_scenery(TOOLS, plan([*outdoor, weak, strong]))
-    assert judged.left_out == (weak,) and judged.shots == (*outdoor, strong)
-    assert any("left out 1 indoor" in note for note in judged.warnings)
+    monkeypatch.setattr(scenery, "score_shots_in_process", lambda *a, **k: [0.06, -0.05])
+    judged = keep_rated(TOOLS, plan([edge, shot(1, 0, 0.9)]), min_stars=3)
+    assert judged.left_out and judged.left_out[0].quality.indoorness == 0.06  # type: ignore[union-attr]
 
 
-def test_a_failing_model_keeps_every_shot(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_failing_model_keeps_the_plain_ratings(monkeypatch: pytest.MonkeyPatch) -> None:
     def fail(*args: object, **kwargs: object) -> list[float | None]:
         raise scenery.SceneryError("no weights")
 
     monkeypatch.setattr(scenery, "available", lambda: True)
     monkeypatch.setattr(scenery, "score_shots_in_process", fail)
-    shots = [shot(0, 0, 3)]
-    judged = judge_scenery(TOOLS, plan(shots))
-    assert judged.shots == tuple(shots) and any("could not run" in n for n in judged.warnings)
+    judged = keep_rated(TOOLS, plan([shot(0, 0, 0.9)]))
+    assert len(judged.shots) == 1 and any("could not run" in n for n in judged.warnings)
 
 
 @pytest.mark.model

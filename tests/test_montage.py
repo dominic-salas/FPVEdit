@@ -173,17 +173,3 @@ def test_no_shot_starts_or_ends_in_a_flip() -> None:
         for edge in (candidate.start, candidate.end):
             near = flipping[max(0, round((edge - 0.4) * FPS)) : round((edge + 0.4) * FPS)]
             assert not near.any(), f"a cut at {edge:.2f} s is in or next to a flip"
-
-
-def test_weak_indoor_shots_are_left_out_strong_ones_stay() -> None:
-    from fpv_editor.montage import leave_out_weak_indoor
-
-    outdoor = [shot(0, 20 * i, 20 * i + 9, score=3.0 * (i + 1)) for i in range(4)]
-    weak = shot(1, 0, 9, score=3.0)  # as good as the weakest outdoor shot: out
-    strong = shot(1, 20, 29, score=12.0)  # as good as the best: stays
-    shots = [*outdoor, weak, strong]
-    kept, left_out = leave_out_weak_indoor(shots, [-0.05] * 4 + [0.06, 0.07])
-    assert left_out == (weak,) and kept == (*outdoor, strong)
-    # An all-indoor session keeps everything; unknown scenery counts as outdoor.
-    assert leave_out_weak_indoor([weak, strong], [0.06, 0.07]) == ((weak, strong), ())
-    assert leave_out_weak_indoor([weak], [None]) == ((weak,), ())

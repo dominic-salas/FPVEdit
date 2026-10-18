@@ -48,13 +48,7 @@ from fpv_editor.media import (
     probe,
     probe_audio,
 )
-from fpv_editor.montage import (
-    MontageConfig,
-    Shot,
-    candidate_shots,
-    leave_out_weak_indoor,
-    pick_shots,
-)
+from fpv_editor.montage import MontageConfig, Shot, candidate_shots, pick_shots
 from fpv_editor.picture import PictureConfig, decoded_size
 from fpv_editor.render import (
     DEVICES,
@@ -74,6 +68,8 @@ from fpv_editor.render import (
     validate_output,
     with_fallback,
 )
+
+DEFAULT_MIN_STARS = 3  # shots rated below this are left out of a montage (can be added)
 
 
 @dataclass(frozen=True)
@@ -186,10 +182,18 @@ def build_parser() -> argparse.ArgumentParser:
         "cut and faded at the end, silence after if they are shorter)",
     )
     parser.add_argument(
+        "--min-stars",
+        type=int,
+        choices=range(1, 6),
+        default=DEFAULT_MIN_STARS,
+        metavar="1-5",
+        help=f"keep shots rated at least this many stars (default {DEFAULT_MIN_STARS}; 1 keeps "
+        "every shot found)",
+    )
+    parser.add_argument(
         "--no-scenery",
         action="store_true",
-        help="keep indoor-looking shots that are weaker than the outdoor ones (by default "
-        "the image model leaves them out when the ml extra is installed)",
+        help="rate shots without the image model's indoor/outdoor nudge",
     )
     parser.add_argument(
         "--force", action="store_true", help="replace the output file if it already exists"
@@ -312,7 +316,7 @@ class MontagePlan:
     shots: tuple[Shot, ...]  # in montage order
     config: MontageConfig
     warnings: tuple[str, ...]
-    left_out: tuple[Shot, ...] = ()  # weak indoor shots the image model left out
+    left_out: tuple[Shot, ...] = ()  # shots rated below the minimum, offered to add back
 
     @property
     def footage_duration(self) -> float:
@@ -332,6 +336,7 @@ def run_montage(
     device: str = "cpu",
     music: Sequence[Path] = (),
     scenery: bool = True,
+    min_stars: int = DEFAULT_MIN_STARS,
 ) -> MontageResult:
     config = config or PipelineConfig()
     started = time.monotonic()
@@ -350,8 +355,8 @@ def run_montage(
         raise OutputExistsError(f"{plan_file} already exists; use --force to replace it")
 
     plan = plan_montage(tools, infos, length=length, cache_dir=cache_dir, config=config)
-    if scenery and length is None:
-        plan = judge_scenery(tools, plan, cache_dir=cache_dir)
+    if length is None:
+        plan = keep_rated(tools, plan, min_stars=min_stars, scenery=scenery, cache_dir=cache_dir)
     warnings = list(plan.warnings)
     if not plan.shots:
         raise NoFlightContentError(
@@ -462,48 +467,53 @@ def combine_clips(
     )
 
 
-def judge_scenery(
+def keep_rated(
     tools: Tools,
     plan: MontagePlan,
     *,
+    min_stars: int = DEFAULT_MIN_STARS,
+    scenery: bool = True,
     cache_dir: Path | None = None,
     device: str = "auto",
 ) -> MontagePlan:
-    """Leave out indoor-looking shots that are weaker than the session's best outdoor
-    ones (`montage.leave_out_weak_indoor`), using the image model in its own process.
-
-    Without the ``ml`` extra, or if the model fails, the plan is returned with a note.
+    """Keep the shots rated ``min_stars`` or more (`rating.py`); the rest are left out and
+    can be added back. With ``scenery`` and the ``ml`` extra, the image model first adds
+    its small indoor/outdoor nudge to each rating (in its own process). If no shot reaches
+    ``min_stars``, the best-rated ones are kept.
     """
-    from fpv_editor import scenery
+    from fpv_editor import scenery as scenery_model
 
     if not plan.shots:
         return plan
-    if not scenery.available():
-        return dataclasses.replace(
-            plan,
-            warnings=(
-                *plan.warnings,
-                "the image model is not installed (uv sync --extra "
-                "ml), so indoor shots were not compared with outdoor ones",
-            ),
+    shots = plan.shots
+    notes = list(plan.warnings)
+    if scenery and scenery_model.available():
+        try:
+            indoorness = scenery_model.score_shots_in_process(
+                tools, plan.infos, shots, cache_dir=cache_dir, device=device
+            )
+            shots = tuple(
+                dataclasses.replace(s, quality=dataclasses.replace(s.quality, indoorness=v))
+                if s.quality is not None
+                else s
+                for s, v in zip(shots, indoorness, strict=True)
+            )
+        except FPVEditError as exc:
+            notes.append(f"the image model could not run: {exc}")
+    elif scenery:
+        notes.append(
+            "the image model is not installed (uv sync --extra ml), so the ratings do not "
+            "include scenery"
         )
-    try:
-        indoorness = scenery.score_shots_in_process(
-            tools, plan.infos, plan.shots, cache_dir=cache_dir, device=device
-        )
-    except FPVEditError as exc:
-        return dataclasses.replace(
-            plan, warnings=(*plan.warnings, f"the image model could not run: {exc}")
-        )
-    kept, left_out = leave_out_weak_indoor(plan.shots, indoorness, plan.config)
-    notes = plan.warnings
+    stars = [s.quality.stars if s.quality is not None else 3 for s in shots]
+    bar = min(min_stars, max(stars))
+    kept = tuple(s for s, n in zip(shots, stars, strict=True) if n >= bar)
+    left_out = tuple(s for s, n in zip(shots, stars, strict=True) if n < bar)
     if left_out:
-        notes = (
-            *notes,
-            f"left out {len(left_out)} indoor-looking shot(s) weaker than the best outdoor "
-            "shots; they can be added back",
+        notes.append(
+            f"left out {len(left_out)} shot(s) rated below {bar} stars; they can be added back"
         )
-    return dataclasses.replace(plan, shots=kept, left_out=left_out, warnings=notes)
+    return dataclasses.replace(plan, shots=kept, left_out=left_out, warnings=tuple(notes))
 
 
 # Each analysis runs one FFmpeg decode (multi-threaded) and one Python process; a quarter
@@ -891,6 +901,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     device=args.device,
                     music=args.music,
                     scenery=not args.no_scenery,
+                    min_stars=args.min_stars,
                 )
             )
         result = run(

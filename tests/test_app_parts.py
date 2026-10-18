@@ -145,3 +145,26 @@ def test_montages_default_to_the_videos_folder_not_the_clips_card(tmp_path: Path
     assert default_output_folder(card, clips, videos) == videos  # never the clips' folder
     assert default_output_folder(other, clips, videos) == other  # the folder used last
     assert default_output_folder(tmp_path / "gone", clips, videos) == videos
+
+
+def test_my_ratings_are_saved_and_read_back(tmp_path: Path) -> None:
+    import json
+
+    from fpv_editor.app.myratings import MyRatings
+    from fpv_editor.montage import Moment, MomentKind, Shot
+    from fpv_editor.rating import Quality
+
+    quality = Quality(0.8, 0.7, 0.5, 1.0, ("back flip", "smooth recovery"))
+    shot = Shot(0, 10.0, 19.0, 3.0, (Moment(13.0, MomentKind.FLIP, 3.0, "back flip"),), quality)
+    file = tmp_path / "my-ratings.jsonl"
+    clip = tmp_path / "flight.ts"
+    mine = MyRatings(file)
+    assert mine.stars(clip, shot) is None
+    mine.rate(clip, shot, 2)
+    mine.rate(clip, shot, 4)  # changed his mind: the later one counts
+    again = MyRatings(file)
+    assert again.stars(clip, shot) == 4 and again.count == 1
+    last = json.loads(file.read_text(encoding="utf-8").splitlines()[-1])
+    assert last["app_stars"] == quality.stars and last["tricks"] == ["back flip"]
+    with pytest.raises(ValueError):
+        mine.rate(clip, shot, 6)
