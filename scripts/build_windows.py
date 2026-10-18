@@ -53,12 +53,14 @@ def write_icon(path: Path) -> None:
 
 
 def copy_ffmpeg(source: Path, target: Path) -> str:
-    """Copy ffmpeg, ffprobe and their DLLs; return the build's licence ("GPL" or "LGPL")."""
+    """Copy ffmpeg, ffprobe (and ffplay, which plays the music in the app's preview, when
+    the build has it) and their DLLs; return the build's licence ("GPL" or "LGPL")."""
     for name in ("ffmpeg.exe", "ffprobe.exe"):
         if not (source / name).is_file():
             raise SystemExit(f"{source} has no {name}")
     target.mkdir(parents=True, exist_ok=True)
-    for path in [source / "ffmpeg.exe", source / "ffprobe.exe", *source.glob("*.dll")]:
+    optional = [source / "ffplay.exe"] if (source / "ffplay.exe").is_file() else []
+    for path in [source / "ffmpeg.exe", source / "ffprobe.exe", *optional, *source.glob("*.dll")]:
         shutil.copy2(path, target / path.name)
     for name in ("LICENSE", "LICENSE.txt", "COPYING.GPLv3", "COPYING.LGPLv2.1"):
         for folder in (source, source.parent):

@@ -87,3 +87,19 @@ class AppSettings:
     @geometry.setter
     def geometry(self, value: QByteArray) -> None:
         self._store.setValue("window/geometry", value)
+
+    @property
+    def music_folder(self) -> Path | None:
+        return self._path("folders/music")
+
+    @music_folder.setter
+    def music_folder(self, folder: Path | None) -> None:
+        self._set_path("folders/music", folder)
+
+    @property
+    def open_folder_after_export(self) -> bool:
+        return str(self._store.value("export/open_folder", "true")).lower() == "true"
+
+    @open_folder_after_export.setter
+    def open_folder_after_export(self, value: bool) -> None:
+        self._store.setValue("export/open_folder", "true" if value else "false")

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
 from fractions import Fraction
 from pathlib import Path
 
@@ -127,3 +128,48 @@ def test_cli_montage_summary_and_option_checks(
     with pytest.raises(SystemExit):
         main([str(small), str(large), "--trim"])
     assert main([str(small), "--length", "-5", "-o", str(small.with_name("n.mp4"))]) == 1
+
+
+def make_tone(path: Path, seconds: float, frequency: int) -> Path:
+    tools = find_tools()
+    args = [
+        *(tools.ffmpeg, "-nostdin", "-v", "error", "-y", "-f", "lavfi"),
+        *("-i", f"sine=frequency={frequency}:duration={seconds}", "-c:a", "libmp3lame"),
+        str(path),
+    ]
+    subprocess.run(args, check=True)
+    return path
+
+
+def test_music_tracks_become_the_soundtrack(copies: tuple[Path, Path], tmp_path: Path) -> None:
+    from fpv_editor.media import probe_audio
+    from fpv_editor.render import soundtrack_filter
+
+    first = make_tone(tmp_path / "first.mp3", 2.0, 440)
+    second = make_tone(tmp_path / "second song.mp3", 60.0, 660)
+    result = run_montage(list(copies), config=FAST, music=[first, second])
+    info = probe(find_tools(), result.output)
+    assert info.audio is not None and info.audio.codec == "aac"
+    assert info.duration == pytest.approx(result.edited_duration, abs=0.1)
+    # Tracks longer than the montage are cut and faded; shorter ones end in silence.
+    tracks = [probe_audio(find_tools(), first), probe_audio(find_tools(), second)]
+    assert tracks[0].duration == pytest.approx(2.0, abs=0.1)
+    assert "afade=t=out" in soundtrack_filter(tracks, 20.0)
+    assert "afade" not in soundtrack_filter(tracks[:1], 20.0)
+    silent = tmp_path / "silent.mp4"
+    subprocess.run(
+        [
+            find_tools().ffmpeg,
+            "-nostdin",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=size=64x64:duration=1",
+            str(silent),
+        ],
+        check=True,
+    )
+    with pytest.raises(InvalidInputError):
+        probe_audio(find_tools(), silent)  # a video without audio is no music

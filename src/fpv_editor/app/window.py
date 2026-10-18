@@ -62,11 +62,11 @@ from fpv_editor.app.cliplist import (
 )
 from fpv_editor.app.clips import clock as clock_short
 from fpv_editor.app.clips import describe_clip
-from fpv_editor.app.dialogs import SettingsDialog, about_text, ask_for_ffmpeg
+from fpv_editor.app.dialogs import ExportDialog, SettingsDialog, about_text, ask_for_ffmpeg
 from fpv_editor.app.logs import start_logging
 from fpv_editor.app.look import DotTitle, StatusDot, app_icon
 from fpv_editor.app.model import ShotList
-from fpv_editor.app.review import ReviewPage
+from fpv_editor.app.review import ReviewPage, describe_music
 from fpv_editor.app.settings import AppSettings
 from fpv_editor.cli import (
     MONTAGE_SUFFIX,
@@ -273,6 +273,7 @@ class MainWindow(QMainWindow):
         self._task_page = self.CLIPS  # where to return if the work fails or is cancelled
         self._output: Path | None = None  # chosen by the user; None = automatic name
         self._force = False  # the user confirmed replacing ``_output``
+        self._open_after = False  # open the folder once the export is done
         self._last_output: Path | None = None
         self._last_summary = ""
         self._fonts = theme.load_fonts()
@@ -466,7 +467,7 @@ class MainWindow(QMainWindow):
         return page
 
     def _build_review_page(self) -> QWidget:
-        self._review = ReviewPage(self._tools)
+        self._review = ReviewPage(self._tools, self._settings)
         self._review.changed.connect(self._review_changed)
 
         self._notes_button = button("", self._show_notes)
@@ -476,7 +477,7 @@ class MainWindow(QMainWindow):
         back = button("←  CLIPS", lambda: self._show_page(self.CLIPS))
         bar = self._action_bar(
             [back, self._notes_button],
-            [self._output_label, button("CHANGE", self._choose_output), self._export],
+            [self._output_label, self._export],
         )
         page = QWidget()
         layout = QVBoxLayout(page)
@@ -951,32 +952,32 @@ class MainWindow(QMainWindow):
 
     def _refresh_output(self) -> None:
         output = self._output or self._default_output()
-        self._output_label.setText(f"SAVES AS  {output.name}" if output else "")
-        self._output_label.setToolTip(str(output) if output else "")
-
-    def _choose_output(self) -> None:
-        start = str(self._output or self._default_output() or "")
-        name, _ = QFileDialog.getSaveFileName(self, "Save montage as", start, "MP4 video (*.mp4)")
-        if name:
-            path = Path(name)
-            if path.suffix.lower() != ".mp4":
-                path = path.with_suffix(".mp4")
-            # The dialog asks before returning an existing file, but not about the name
-            # changed here.
-            if path.exists() and path != Path(name):
-                answer = QMessageBox.question(
-                    self, "Replace file?", f"{path} already exists. Replace it?"
-                )
-                if answer != QMessageBox.StandardButton.Yes:
-                    return
-            self._output, self._force = path, path.exists()
-            self._refresh_output()
+        text = f"SAVES TO  {output}" if output else ""
+        metrics = self._output_label.fontMetrics()
+        self._output_label.setText(metrics.elidedText(text, Qt.TextElideMode.ElideMiddle, 560))
+        tip = f"{output}\nYou can change it when you click Export." if output else ""
+        self._output_label.setToolTip(tip)
 
     def _start_render(self) -> None:
+        """Ask where and how (the export window), then render."""
         if self._plan is None or self._shots is None or self._busy():
             return
+        default = self._output or self._default_output()
+        if default is None:
+            QMessageBox.warning(self, "Cannot export", "No place to save the montage was found.")
+            return
+        music = self._review.music
+        total = sum(shot.duration for shot in self._shots.shots)
+        fit = describe_music(music, total).capitalize()
+        dialog = ExportDialog(default, self._settings, fit, self)
+        if not dialog.exec() or dialog.choice is None:
+            return
+        choice = dialog.choice
+        self._output, self._force = choice.path, choice.replace
+        self._open_after = choice.open_folder
+        self._refresh_output()
         plan, shots = self._plan, self._shots.shots
-        tools, force, device = self._tools, self._force, self._settings.encoder
+        tools, force, device = self._tools, self._force, choice.encoder
         try:
             final = resolve_output_path(
                 [info.path for info in plan.infos],
@@ -996,7 +997,14 @@ class MainWindow(QMainWindow):
             length, used = with_fallback(
                 choices,
                 lambda encode: render_montage(
-                    tools, plan.clips, shots, final, force=force, encode=encode, progress=progress
+                    tools,
+                    plan.clips,
+                    shots,
+                    final,
+                    force=force,
+                    encode=encode,
+                    progress=progress,
+                    music=music,
                 ),
             )
             where = "the GPU (NVENC)" if used == NVENC else "the CPU"
@@ -1017,9 +1025,11 @@ class MainWindow(QMainWindow):
             f"{plural(len(self._current_shots()), 'shot')}. "
             f"Made on {where} in {elapsed:.0f} s and checked frame by frame."
         )
-        self._done_path.setText(str(final))
+        self._done_path.setText(f"SAVED TO  {final}")
         self._refresh()
         self._show_page(self.DONE)
+        if self._open_after:
+            self._show_output()
 
     def _open_output(self) -> None:
         if self._last_output is not None:

@@ -401,3 +401,37 @@ def _int(value: object) -> int | None:
         return int(value)
     except ValueError:
         return None
+
+
+MUSIC_SUFFIXES = (".mp3", ".m4a", ".aac", ".wav", ".flac", ".ogg", ".opus", ".wma")
+
+
+@dataclass(frozen=True)
+class AudioFile:
+    """A music track for a montage's soundtrack."""
+
+    path: Path
+    duration: float
+
+
+def probe_audio(tools: Tools, path: Path) -> AudioFile:
+    """Describe a music file; raises InvalidInputError without a readable audio stream."""
+    path = path.resolve()
+    if not path.is_file():
+        raise InvalidInputError(f"music file not found: {path}")
+    args = [tools.ffprobe, "-v", "error", "-print_format", "json", "-show_format"]
+    args += ["-show_streams", "-select_streams", "a:0", "-i", str(path)]
+    try:
+        result = run_tool(args, action=f"ffprobe {path.name}")
+    except MediaToolError as exc:
+        raise InvalidInputError(f"{path.name} is not a readable audio file. {exc}") from exc
+    data: dict[str, Any] = json.loads(result.stdout)
+    streams: list[dict[str, Any]] = data.get("streams", [])
+    if not streams:
+        raise InvalidInputError(f"{path.name} has no audio")
+    duration = _positive_float(data.get("format", {}).get("duration")) or _positive_float(
+        streams[0].get("duration")
+    )
+    if duration is None:
+        raise InvalidInputError(f"{path.name}: the length of its audio is unknown")
+    return AudioFile(path, duration)

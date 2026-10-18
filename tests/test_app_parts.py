@@ -120,3 +120,15 @@ def test_timeline_click_picks_and_drag_moves_a_shot() -> None:
     assert moved == [(0, 3)]  # the first shot dropped after the last
     QTest.mouseClick(timeline, Qt.MouseButton.LeftButton, pos=QPoint(250, 4))  # the ruler
     assert len(seeked) == 1 and 24 < seeked[0] < 26
+
+
+def test_dot_letters_share_the_x_height_and_baseline() -> None:
+    from fpv_editor.app.look import BASELINE, GLYPHS, ROWS, X_TOP
+
+    ascenders, descenders = set("bdfhiklt"), set("gjpqy")
+    for letter, rows in GLYPHS.items():
+        assert len(rows) == ROWS and all(len(row) == 5 for row in rows), letter
+        lit = [y for y, row in enumerate(rows) if "#" in row]
+        assert max(lit) == (ROWS - 1 if letter in descenders else BASELINE), letter
+        if letter not in ascenders:
+            assert min(lit) == X_TOP, letter

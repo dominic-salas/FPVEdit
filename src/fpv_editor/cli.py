@@ -37,6 +37,7 @@ from fpv_editor.flight import FlightConfig
 from fpv_editor.highlights import Interval, Selection, SelectionConfig
 from fpv_editor.measure import MeasureConfig
 from fpv_editor.media import (
+    AudioFile,
     MediaInfo,
     Tools,
     find_tools,
@@ -44,6 +45,7 @@ from fpv_editor.media import (
     frame_times,
     is_variable_rate,
     probe,
+    probe_audio,
 )
 from fpv_editor.montage import MontageConfig, Shot, candidate_shots, pick_shots
 from fpv_editor.picture import PictureConfig, decoded_size
@@ -52,6 +54,7 @@ from fpv_editor.render import (
     NVENC,
     EncodeConfig,
     Fit,
+    add_music,
     encoders,
     expected_frame_count,
     finalize_output,
@@ -164,6 +167,15 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="edit one recording as a whole flight (cut downtime, crashes, dull stretches) "
         "instead of making a montage",
+    )
+    parser.add_argument(
+        "--music",
+        type=Path,
+        action="append",
+        default=[],
+        metavar="FILE",
+        help="background music for the montage (repeat for more tracks, played in order; "
+        "cut and faded at the end, silence after if they are shorter)",
     )
     parser.add_argument(
         "--force", action="store_true", help="replace the output file if it already exists"
@@ -303,6 +315,7 @@ def run_montage(
     cache_dir: Path | None = None,
     config: PipelineConfig | None = None,
     device: str = "cpu",
+    music: Sequence[Path] = (),
 ) -> MontageResult:
     config = config or PipelineConfig()
     started = time.monotonic()
@@ -312,6 +325,7 @@ def run_montage(
         raise InvalidInputError("--length must be a positive number of seconds")
     tools = find_tools()
     infos = [probe(tools, source) for source in sources]  # fail early on a bad path
+    tracks = [probe_audio(tools, track) for track in music]
     final = resolve_output_path(
         [info.path for info in infos], output, force or analyze_only, suffix=MONTAGE_SUFFIX
     )
@@ -335,7 +349,7 @@ def run_montage(
         edited_duration, used = with_fallback(
             encoders(tools, device, config.encode),
             lambda encode: render_montage(
-                tools, plan.clips, plan.shots, final, force=force, encode=encode
+                tools, plan.clips, plan.shots, final, force=force, encode=encode, music=tracks
             ),
         )
         encoder = used.video_codec
@@ -586,8 +600,12 @@ def render_montage(
     force: bool,
     encode: EncodeConfig,
     progress: Progress | None = None,
+    music: Sequence[AudioFile] = (),
 ) -> float:
-    """Render ``shots`` in the order given to ``final`` and validate it; returns its duration."""
+    """Render ``shots`` in the order given to ``final`` and validate it; returns its duration.
+
+    ``music`` tracks play one after another as the soundtrack (the recordings' own audio
+    is never used)."""
     if not shots:
         raise InvalidInputError("no shots to render")
     fit = montage_fit(clips, shots)
@@ -615,7 +633,14 @@ def render_montage(
                 files.append(part)
             if progress is not None:
                 progress("Joining and checking the montage", 1.0)
-            join_parts(tools, files, temporary, work_dir)
+            if music:
+                video = work_dir / "video.mp4"
+                join_parts(tools, files, video, work_dir)
+                if progress is not None:
+                    progress("Adding the music", 1.0)
+                add_music(tools, video, music, temporary, frames / float(fit.rate))
+            else:
+                join_parts(tools, files, temporary, work_dir)
         validate_output(
             tools,
             temporary,
@@ -623,6 +648,7 @@ def render_montage(
             rate=fit.rate,
             expected_frames=frames,
             segments=len(shots),
+            music=bool(music),
         )
         if progress is not None:
             progress("Checked", 1.0)  # last chance to cancel before the file appears
@@ -777,6 +803,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.trim and len(args.inputs) != 1:
         parser.error("--trim edits exactly one recording")
+    if args.trim and args.music:
+        parser.error("--music is for montages")
     if args.trim and args.length is not None:
         parser.error("--length is for montages; --trim keeps all good flying")
     try:
@@ -791,6 +819,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     analyze_only=args.analyze_only,
                     cache_dir=args.cache_dir,
                     device=args.device,
+                    music=args.music,
                 )
             )
         result = run(

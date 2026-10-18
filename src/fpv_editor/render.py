@@ -36,7 +36,7 @@ from fpv_editor.errors import (
     ValidationError,
 )
 from fpv_editor.highlights import Interval
-from fpv_editor.media import MediaInfo, Tools, probe, run_tool, run_tool_with_progress
+from fpv_editor.media import AudioFile, MediaInfo, Tools, probe, run_tool, run_tool_with_progress
 
 OUTPUT_SUFFIX = "_highlight"
 DEFAULT_RATE = Fraction(30)  # only for sources that report no usable frame rate
@@ -389,8 +389,12 @@ def validate_output(
     rate: Fraction | None = None,
     expected_frames: int | None = None,
     segments: int = 1,
+    music: bool = False,
 ) -> MediaInfo:
-    """Check the stream, frame rate, frame count, colour range and duration, then decode it all."""
+    """Check the stream, frame rate, frame count, colour range and duration, then decode it all.
+
+    With ``music`` the file must have one AAC audio track (the soundtrack); otherwise none.
+    """
     try:
         info = probe(tools, path, count_frames=True)
     except InvalidInputError as exc:
@@ -407,7 +411,9 @@ def validate_output(
             f"rendered video is {video.pix_fmt} / {video.color_range} range, "
             "expected yuv420p limited (tv) range"
         )
-    if info.audio is not None:
+    if music and (info.audio is None or info.audio.codec != "aac"):
+        raise ValidationError("rendered file has no AAC soundtrack")
+    if not music and info.audio is not None:
         raise ValidationError("rendered file has an audio track; expected video only")
     if expected_frames is not None and video.frame_count is not None:
         # Recordings with dropped frames have a few fewer frames than their timestamps
@@ -444,6 +450,45 @@ def validate_output(
     if decode.stderr.strip():
         raise ValidationError(f"decoding the rendered video reported errors: {decode.stderr}")
     return info
+
+
+MUSIC_FADE_S = 2.0  # a track cut by the end of the montage fades out over this time
+MUSIC_RATE = 48000
+MUSIC_BITRATE = "192k"
+
+
+def soundtrack_filter(tracks: Sequence[AudioFile], duration: float) -> str:
+    """Filter graph for inputs 1..n (the tracks): played one after another, cut to
+    ``duration`` (faded out when cut), silence after the last track if they are short."""
+    if not tracks:
+        raise ValueError("at least one track is required")
+    chains = [
+        f"[{i}:a:0]aresample={MUSIC_RATE},aformat=sample_fmts=fltp:channel_layouts=stereo[t{i}]"
+        for i in range(1, len(tracks) + 1)
+    ]
+    joined = "".join(f"[t{i}]" for i in range(1, len(tracks) + 1))
+    chain = f"{joined}concat=n={len(tracks)}:v=0:a=1,apad,atrim=end={duration:.3f}"
+    if sum(track.duration for track in tracks) > duration + 0.05:
+        fade = min(MUSIC_FADE_S, duration / 2)
+        chain += f",afade=t=out:st={duration - fade:.3f}:d={fade:.3f}"
+    return ";".join([*chains, f"{chain},asetpts=N/SR/TB[music]"])
+
+
+def add_music(
+    tools: Tools, video: Path, tracks: Sequence[AudioFile], destination: Path, duration: float
+) -> None:
+    """Write ``video`` (copied, not encoded again) with ``tracks`` as its soundtrack."""
+    args = [tools.ffmpeg, "-nostdin", "-hide_banner", "-v", "error", "-y", "-i", str(video)]
+    for track in tracks:
+        args += ["-i", str(track.path)]
+    args += [
+        *("-filter_complex", soundtrack_filter(tracks, duration)),
+        *("-map", "0:v:0", "-map", "[music]", "-c:v", "copy"),
+        *("-c:a", "aac", "-b:a", MUSIC_BITRATE, "-ar", str(MUSIC_RATE), "-ac", "2"),
+        *("-t", f"{duration:.3f}", "-sn", "-dn"),
+        *("-movflags", "+faststart", "-f", "mp4", str(destination)),
+    ]
+    run_tool(args, action="adding the music")
 
 
 def temporary_output(final: Path) -> Path:
