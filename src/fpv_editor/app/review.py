@@ -14,8 +14,9 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from PySide6.QtCore import QObject, Qt, QThread, Signal
-from PySide6.QtGui import QIcon, QKeySequence, QPixmap, QShortcut
+from PySide6.QtGui import QCloseEvent, QIcon, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
+    QFileDialog,
     QHBoxLayout,
     QLabel,
     QListWidget,
@@ -29,14 +30,19 @@ from PySide6.QtWidgets import (
 from fpv_editor.app import theme
 from fpv_editor.app.frames import grab_frame
 from fpv_editor.app.model import ShotList, drop_position, locate, montage_time, shot_starts
-from fpv_editor.app.preview import PreviewView, Segment
+from fpv_editor.app.music import MusicPreview
+from fpv_editor.app.preview import PREVIEW_HEIGHT, PreviewView, Segment
+from fpv_editor.app.settings import AppSettings
 from fpv_editor.app.timeline import Block, Timeline, clip_colour
-from fpv_editor.media import MediaInfo, Tools
+from fpv_editor.errors import FPVEditError
+from fpv_editor.media import MUSIC_SUFFIXES, AudioFile, MediaInfo, Tools, probe_audio
 from fpv_editor.montage import MomentKind, Shot
 
 THUMB_HEIGHT = 144  # grabbed once, drawn at timeline, list and panel sizes
 TRIM_STEPS = (-0.5, 0.5)
 SIDE_WIDTH = 360
+FULL_SCREEN_HEIGHT = 720  # decoded picture height in full screen
+HINT = "CLICK A SHOT TO EDIT IT   DRAG TO MOVE   SPACE PLAY   F FULL SCREEN"
 
 
 def clock(seconds: float) -> str:
@@ -105,13 +111,46 @@ class ThumbnailLoader(QThread):
                 self.ready.emit((info.path, seconds), png)
 
 
+class FullScreen(QWidget):
+    """The player and timeline on their own, full screen; ``closing`` when it goes."""
+
+    closing = Signal()
+
+    def __init__(self) -> None:
+        super().__init__(None, Qt.WindowType.Window)
+        self.setWindowTitle("FPV Editor")
+        self.layout_ = QVBoxLayout(self)
+        self.layout_.setContentsMargins(32, 24, 32, 20)
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        self.closing.emit()
+        super().closeEvent(event)
+
+
+def describe_music(tracks: Sequence[AudioFile], montage: float) -> str:
+    """How the music fits the montage, in one line."""
+    if not tracks:
+        return "NO MUSIC. THE MONTAGE IS SILENT."
+    music = sum(track.duration for track in tracks)
+    if music > montage + 0.05:
+        return f"{clock(music)} OF MUSIC, CUT AND FADED OUT AT {clock(montage)}"
+    return f"MUSIC ENDS AT {clock(music)}; THE LAST {clock(montage - music)} ARE SILENT"
+
+
 class ReviewPage(QWidget):
     """The review step. ``changed`` fires after every edit of the shots."""
 
     changed = Signal()
 
-    def __init__(self, tools: Tools, parent: QWidget | None = None) -> None:
+    def __init__(
+        self, tools: Tools, settings: AppSettings | None = None, parent: QWidget | None = None
+    ) -> None:
         super().__init__(parent)
+        self._tools = tools
+        self._settings = settings or AppSettings()
+        self._music: list[AudioFile] = []
+        self._music_preview = MusicPreview(tools)
+        self._full_screen: FullScreen | None = None
         self._infos: tuple[MediaInfo, ...] = ()
         self._shots: ShotList | None = None
         self._summary = ""
@@ -134,6 +173,7 @@ class ReviewPage(QWidget):
         self._video = PreviewView(tools)
         self._video.position.connect(self._playing_at)
         self._video.ended.connect(self._ended)
+        self._video.doubleClicked.connect(self.toggle_full_screen)
         self._play = button("▶  PLAY", self.toggle_play)
         self._play.setFixedWidth(96)
         self._time = label()
@@ -146,6 +186,9 @@ class ReviewPage(QWidget):
         transport.addWidget(self._time)
         transport.addStretch(1)
         transport.addWidget(self._now)
+        self._full_button = button("⛶  FULL SCREEN", self.toggle_full_screen)
+        self._full_button.setProperty("flat", True)
+        transport.addWidget(self._full_button)
         self._timeline = Timeline()
         self._timeline.picked.connect(self._picked)
         self._timeline.seeked.connect(self._seek)
@@ -154,14 +197,18 @@ class ReviewPage(QWidget):
         self._legend.setProperty("role", "caption")
         self._legend.setTextFormat(Qt.TextFormat.RichText)
         self._legend.setWordWrap(True)
+        legend_row = QHBoxLayout()
+        legend_row.addWidget(self._legend, 1)
+        legend_row.addWidget(label(HINT))
         stage = QWidget()
+        self._stage = stage
         stage_column = QVBoxLayout(stage)
         stage_column.setContentsMargins(0, 0, 0, 0)
         stage_column.setSpacing(10)
         stage_column.addWidget(self._video, 1)
         stage_column.addLayout(transport)
         stage_column.addWidget(self._timeline)
-        stage_column.addWidget(self._legend)
+        stage_column.addLayout(legend_row)
 
         self._side = QStackedWidget()
         self._side.addWidget(self._build_overview())
@@ -170,6 +217,7 @@ class ReviewPage(QWidget):
         self._side.setFixedWidth(SIDE_WIDTH)
 
         body = QHBoxLayout()
+        self._body = body
         body.setSpacing(28)
         body.addWidget(stage, 1)
         body.addWidget(self._side)
@@ -185,37 +233,56 @@ class ReviewPage(QWidget):
         column.addSpacing(14)
         column.addLayout(body, 1)
 
-        space = QShortcut(QKeySequence(Qt.Key.Key_Space), self, self.toggle_play)
-        space.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        self._add_shortcuts(self)
         delete = QShortcut(QKeySequence.StandardKey.Delete, self, self.remove_selected)
         delete.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
-        for key, step in ((Qt.Key.Key_Left, -1), (Qt.Key.Key_Right, 1)):
-            arrow = QShortcut(QKeySequence(key), self, functools.partial(self._step_shot, step))
-            arrow.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+
+    def _add_shortcuts(self, widget: QWidget) -> None:
+        """Space, F, Esc and the arrows, on the page and on the full-screen window."""
+        keys: list[tuple[QKeySequence, Callable[[], object]]] = [
+            (QKeySequence(Qt.Key.Key_Space), self.toggle_play),
+            (QKeySequence(Qt.Key.Key_F), self.toggle_full_screen),
+            (QKeySequence(Qt.Key.Key_Escape), self.leave_full_screen),
+            (QKeySequence(Qt.Key.Key_Left), functools.partial(self._step_shot, -1)),
+            (QKeySequence(Qt.Key.Key_Right), functools.partial(self._step_shot, 1)),
+        ]
+        for sequence, slot in keys:
+            shortcut = QShortcut(sequence, widget, slot)
+            shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
 
     def _build_overview(self) -> QWidget:
-        self._overview_total = label()
-        help_text = label(
-            "Press play to watch the whole montage. The timeline shows which recording each "
-            "shot comes from.\n\nClick a shot on the timeline to trim, swap or remove it. "
-            "Drag a shot along the timeline to move it. Space plays and pauses; Ctrl+Z "
-            "undoes.",
-            "muted",
-        )
-        help_text.setWordWrap(True)
+        self._overview_total = label(role="hero")
         self._message = label()
         self._message.setWordWrap(True)
+        self._music_list = QListWidget()
+        self._music_list.currentRowChanged.connect(lambda _: self._refresh_music_buttons())
+        self._music_fit = label()
+        self._music_fit.setWordWrap(True)
+        self._music_up = button("↑", lambda: self._move_music(-1))
+        self._music_up.setToolTip("Play this track earlier")
+        self._music_down = button("↓", lambda: self._move_music(1))
+        self._music_down.setToolTip("Play this track later")
+        self._music_remove = button("REMOVE", self._remove_music)
+        music_buttons = QHBoxLayout()
+        music_buttons.setSpacing(6)
+        music_buttons.addWidget(button("+  ADD MUSIC", self._add_music))
+        music_buttons.addStretch(1)
+        music_buttons.addWidget(self._music_up)
+        music_buttons.addWidget(self._music_down)
+        music_buttons.addWidget(self._music_remove)
         panel = QWidget()
         column = QVBoxLayout(panel)
         column.setContentsMargins(0, 0, 0, 0)
-        column.setSpacing(10)
+        column.setSpacing(8)
         column.addWidget(label("THE MONTAGE"))
         column.addWidget(self._overview_total)
-        column.addSpacing(6)
-        column.addWidget(help_text)
-        column.addSpacing(10)
         column.addWidget(button("+  ADD A SHOT", lambda: self._open_chooser("add")))
-        column.addSpacing(10)
+        column.addSpacing(18)
+        column.addWidget(label("MUSIC   TRACKS PLAY IN THIS ORDER"))
+        column.addWidget(self._music_list)
+        column.addWidget(self._music_fit)
+        column.addLayout(music_buttons)
+        column.addSpacing(18)
         column.addWidget(self._message)
         column.addStretch(1)
         return panel
@@ -306,8 +373,8 @@ class ReviewPage(QWidget):
     def set_montage(
         self, infos: Sequence[MediaInfo], shots: ShotList | None, summary: str = ""
     ) -> None:
-        """Show a new montage (or none); playback starts over."""
-        self._video.stop()
+        """Show a new montage (or none); playback starts over. The music stays."""
+        self._pause_all()
         self._infos, self._shots, self._summary = tuple(infos), shots, summary
         self._selected, self._position, self._mode = None, 0.0, "montage"
         self._choosing = None
@@ -321,12 +388,143 @@ class ReviewPage(QWidget):
             self._play_montage(self._position if self._position < self._total() - 0.1 else 0.0)
 
     def deactivate(self) -> None:
-        self._video.stop()
+        self.leave_full_screen()
+        self._pause_all()
         self._show_play_state()
 
     def shutdown(self) -> None:
-        self._video.stop()
+        self.leave_full_screen()
+        self._pause_all()
         self._loader.stop()
+
+    @property
+    def music(self) -> tuple[AudioFile, ...]:
+        return tuple(self._music)
+
+    # ----- full screen -----
+
+    def toggle_full_screen(self) -> None:
+        if self._full_screen is None:
+            self.enter_full_screen()
+        else:
+            self.leave_full_screen()
+
+    def enter_full_screen(self) -> None:
+        if self._full_screen is not None or not self._current():
+            return
+        window = FullScreen()
+        self._add_shortcuts(window)
+        self._body.removeWidget(self._stage)
+        window.layout_.addWidget(self._stage)
+        window.closing.connect(self._full_screen_closed)
+        self._full_screen = window
+        self._full_button.setText("EXIT FULL SCREEN")
+        self._video.height_px = FULL_SCREEN_HEIGHT
+        window.showFullScreen()
+        self._restart_playback()
+
+    def leave_full_screen(self) -> None:
+        if self._full_screen is not None:
+            self._full_screen.close()  # puts the player back through `closing`
+
+    def _full_screen_closed(self) -> None:
+        if self._full_screen is None:
+            return
+        self._full_screen.layout_.removeWidget(self._stage)
+        self._body.insertWidget(0, self._stage, 1)
+        self._full_screen.deleteLater()
+        self._full_screen = None
+        self._full_button.setText("⛶  FULL SCREEN")
+        self._video.height_px = PREVIEW_HEIGHT
+        self._restart_playback()
+
+    def _restart_playback(self) -> None:
+        """Play on at the new picture size, if something was playing."""
+        if not self._video.playing:
+            return
+        if self._mode == "montage":
+            self._play_montage(self._position)
+        elif self._mode == "shot":
+            self._loop_selected()
+
+    # ----- music -----
+
+    def _add_music(self) -> None:
+        start = str(self._settings.music_folder or "")
+        pattern = " ".join(f"*{suffix}" for suffix in MUSIC_SUFFIXES)
+        names, _ = QFileDialog.getOpenFileNames(
+            self, "Add music", start, f"Music ({pattern});;All files (*)"
+        )
+        if not names:
+            return
+        self._settings.music_folder = Path(names[0]).parent
+        problems = []
+        for name in names:
+            try:
+                self._music.append(probe_audio(self._tools, Path(name)))
+            except FPVEditError as exc:
+                problems.append(str(exc))
+        self._say("; ".join(problems) if problems else "")
+        self._music_changed(len(self._music) - 1)
+
+    def _remove_music(self) -> None:
+        row = self._music_list.currentRow()
+        if 0 <= row < len(self._music):
+            del self._music[row]
+            self._music_changed(min(row, len(self._music) - 1))
+
+    def _move_music(self, step: int) -> None:
+        row = self._music_list.currentRow()
+        to = row + step
+        if 0 <= row < len(self._music) and 0 <= to < len(self._music):
+            self._music.insert(to, self._music.pop(row))
+            self._music_changed(to)
+
+    def _music_changed(self, row: int) -> None:
+        self._refresh_music(row)
+        self.changed.emit()
+        if self._mode == "montage" and self._video.playing:
+            self._music_preview.play(self._music, self._position, self._total())
+
+    def _refresh_music(self, row: int | None = None) -> None:
+        keep = self._music_list.currentRow() if row is None else row
+        self._music_list.blockSignals(True)
+        self._music_list.clear()
+        for number, track in enumerate(self._music, start=1):
+            self._music_list.addItem(f"{number:02d}   {track.path.name}   {clock(track.duration)}")
+        self._music_list.blockSignals(False)
+        self._music_list.setVisible(bool(self._music))
+        self._music_list.setFixedHeight(min(len(self._music), 5) * 34 + 6)
+        if self._music:
+            self._music_list.setCurrentRow(min(max(keep, 0), len(self._music) - 1))
+        fit = describe_music(self._music, self._total())
+        if self._music and self._music_preview.ffplay is None:
+            fit += " (NOT HEARD IN THIS PREVIEW: FFPLAY WAS NOT FOUND)"
+        self._music_fit.setText(fit)
+        self._refresh_music_buttons()
+
+    def _refresh_music_buttons(self) -> None:
+        row = self._music_list.currentRow()
+        has = 0 <= row < len(self._music)
+        self._music_remove.setEnabled(has)
+        self._music_up.setEnabled(has and row > 0)
+        self._music_down.setEnabled(has and row < len(self._music) - 1)
+
+    def _pause_all(self) -> None:
+        self._music_preview.stop()
+        self._video.stop()
+
+    def _play_video(
+        self,
+        segments: Sequence[Segment],
+        index: int = 0,
+        first: float | None = None,
+        *,
+        loop: bool = False,
+    ) -> None:
+        """Play pictures only (a shot on a loop, a candidate): the music stays quiet."""
+        self._music_preview.stop()
+        self._video.play(segments, index, first, loop=loop)
 
     def set_theme(self, palette: theme.Palette, fonts: theme.Fonts) -> None:
         self._palette = palette
@@ -393,7 +591,8 @@ class ReviewPage(QWidget):
                 for clip in used
             )
         )
-        self._overview_total.setText(f"{plural(len(shots), 'SHOT').upper()}   {clock(total)}")
+        self._overview_total.setText(f"{plural(len(shots), 'shot')}, {clock(total)}")
+        self._refresh_music()
         self._heading_summary.setText(
             f"{plural(len(shots), 'shot')}, {clock(total)} long. {self._summary}"
         )
@@ -466,7 +665,7 @@ class ReviewPage(QWidget):
         if not self._current() or self._choosing is not None:
             return
         if self._video.playing:
-            self._video.stop()
+            self._pause_all()
             self._show_play_state()
         elif self._mode == "shot" and self._selected is not None:
             self._loop_selected()
@@ -480,7 +679,8 @@ class ReviewPage(QWidget):
         self._mode = "montage"
         index, clip_seconds = locate(shots, seconds)
         self._position = montage_time(shots, index, clip_seconds)
-        self._video.play(self._segments(), index, clip_seconds)
+        self._play_video(self._segments(), index, clip_seconds)
+        self._music_preview.play(self._music, self._position, self._total())
         self._show_play_state()
         self.refresh()
 
@@ -489,7 +689,7 @@ class ReviewPage(QWidget):
             return
         shot = self._current()[self._selected]
         self._mode = "shot"
-        self._video.play([Segment(self._info(shot), shot.start, shot.end)], 0, first, loop=True)
+        self._play_video([Segment(self._info(shot), shot.start, shot.end)], 0, first, loop=True)
         self._show_play_state()
         self._show_editor()
 
@@ -533,6 +733,7 @@ class ReviewPage(QWidget):
         self._time.setText(f"{clock(self._position)} / {clock(self._total())}")
 
     def _ended(self) -> None:
+        self._music_preview.stop()
         self._position = self._total()
         self._timeline.set_position(self._position)
         self._show_play_state()
@@ -580,6 +781,7 @@ class ReviewPage(QWidget):
         """After an edit: tell the window, redraw, and play from ``play_from``."""
         self.changed.emit()
         if not self._current():
+            self._pause_all()
             self._video.clear_picture()
             self._position = 0.0
             self.refresh()
@@ -651,7 +853,7 @@ class ReviewPage(QWidget):
         if self._alts:
             self._alternatives.setCurrentRow(0)
         else:
-            self._video.stop()
+            self._pause_all()
             self._show_play_state()
 
     def _close_chooser(self) -> None:
@@ -665,7 +867,7 @@ class ReviewPage(QWidget):
         if 0 <= row < len(self._alts):
             shot = self._alts[row]
             self._mode = "preview"
-            self._video.play([Segment(self._info(shot), shot.start, shot.end)], loop=True)
+            self._play_video([Segment(self._info(shot), shot.start, shot.end)], loop=True)
             self._now.setText(
                 f"PREVIEW, NOT IN THE MONTAGE   "
                 f"<span style='color:{clip_colour(shot.clip)}'>■</span> "

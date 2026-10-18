@@ -16,7 +16,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from PySide6.QtCore import QObject, Qt, QThread, Signal
-from PySide6.QtGui import QImage, QPixmap, QResizeEvent
+from PySide6.QtGui import QImage, QMouseEvent, QPixmap, QResizeEvent
 from PySide6.QtWidgets import QLabel, QSizePolicy, QWidget
 
 from fpv_editor.app.frames import preview_args, preview_size
@@ -49,10 +49,12 @@ class _Playback(QThread):
         index: int,
         first: float,
         loop: bool,
+        height: int,
         parent: QObject,
     ) -> None:
         super().__init__(parent)
         self._tools = tools
+        self._height = height
         self._segments = tuple(segments)
         self._index, self._first, self._loop = index, first, loop
         self._stop = threading.Event()
@@ -68,7 +70,7 @@ class _Playback(QThread):
         self.wait()
 
     def _open(self, segment: Segment, begin: float) -> subprocess.Popen[bytes] | None:
-        size = preview_size(segment.info, PREVIEW_HEIGHT)
+        size = preview_size(segment.info, self._height)
         args = preview_args(self._tools, segment.info, begin, segment.end, size, PREVIEW_FPS)
         with self._lock:
             if self._stop.is_set():
@@ -134,7 +136,7 @@ class _Playback(QThread):
         self, process: subprocess.Popen[bytes], index: int, segment: Segment, begin: float
     ) -> int:
         """Read ``process``'s frames at real speed; returns how many were shown."""
-        width, height = preview_size(segment.info, PREVIEW_HEIGHT)
+        width, height = preview_size(segment.info, self._height)
         frame_bytes = width * height * 3
         if process.stdout is None:  # pragma: no cover - guaranteed by stdout=PIPE
             return 0
@@ -162,6 +164,7 @@ class PreviewView(QLabel):
 
     position = Signal(int, float)
     ended = Signal()
+    doubleClicked = Signal()
 
     def __init__(self, tools: Tools, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -169,6 +172,7 @@ class PreviewView(QLabel):
         self._playback: _Playback | None = None
         self._image: QImage | None = None
         self._generation = 0  # frames of an older playback can still be queued
+        self.height_px = PREVIEW_HEIGHT  # decoded picture height (more in full screen)
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setMinimumSize(320, 180)
         self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
@@ -193,7 +197,7 @@ class PreviewView(QLabel):
         segment = segments[index]
         begin = segment.start if first is None else min(max(first, segment.start), segment.end)
         self._generation += 1
-        playback = _Playback(self._tools, segments, index, begin, loop, self)
+        playback = _Playback(self._tools, segments, index, begin, loop, self.height_px, self)
         generation = self._generation
         playback.frame.connect(
             lambda image, at, seconds: self._show(generation, image, at, seconds)
@@ -234,6 +238,9 @@ class PreviewView(QLabel):
                 Qt.TransformationMode.SmoothTransformation,
             )
             self.setPixmap(pixmap)
+
+    def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
+        self.doubleClicked.emit()
 
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)

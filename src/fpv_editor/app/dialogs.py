@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -14,6 +16,7 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QMessageBox,
     QPushButton,
     QWidget,
@@ -152,3 +155,86 @@ def ask_for_ffmpeg(parent: QWidget | None) -> Path | None:
         return None
     name = QFileDialog.getExistingDirectory(parent, "Folder with ffmpeg and ffprobe")
     return Path(name) if name else None
+
+
+@dataclass(frozen=True)
+class ExportChoice:
+    path: Path
+    replace: bool  # the user agreed to replace an existing file
+    encoder: str
+    open_folder: bool
+
+
+BAD_NAME_CHARACTERS = '<>:"/\\|?*'
+
+
+class ExportDialog(QDialog):
+    """Where the montage goes and how it is made, asked when Export is clicked."""
+
+    def __init__(self, default: Path, settings: AppSettings, music: str, parent: QWidget) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Export montage")
+        self.setMinimumWidth(560)
+        self._settings = settings
+        self.choice: ExportChoice | None = None
+        self._folder = QLineEdit(str(default.parent))
+        browse = QPushButton("Browse…")
+        browse.clicked.connect(self._browse)
+        folder_row = QHBoxLayout()
+        folder_row.addWidget(self._folder, 1)
+        folder_row.addWidget(browse)
+        self._name = QLineEdit(default.stem)
+        name_row = QHBoxLayout()
+        name_row.addWidget(self._name, 1)
+        name_row.addWidget(QLabel(".mp4"))
+        self._encoder = QComboBox()
+        self._encoder.addItem("NVIDIA GPU when available, else CPU", "auto")
+        self._encoder.addItem("CPU only", "cpu")
+        self._encoder.setCurrentIndex(max(0, self._encoder.findData(settings.encoder)))
+        self._open = QCheckBox("Open the folder when it is done")
+        self._open.setChecked(settings.open_folder_after_export)
+        music_label = QLabel(music)
+        music_label.setWordWrap(True)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel)
+        export = buttons.addButton("Export", QDialogButtonBox.ButtonRole.AcceptRole)
+        export.setProperty("primary", True)
+        buttons.accepted.connect(self._accept)
+        buttons.rejected.connect(self.reject)
+        form = QFormLayout(self)
+        form.addRow("Save in", folder_row)
+        form.addRow("File name", name_row)
+        form.addRow("Video", QLabel("H.264 MP4, the size and frame rate of your clips"))
+        form.addRow("Encoding", self._encoder)
+        form.addRow("Music", music_label)
+        form.addRow("", self._open)
+        form.addRow(buttons)
+
+    def _browse(self) -> None:
+        name = QFileDialog.getExistingDirectory(self, "Save the montage in", self._folder.text())
+        if name:
+            self._folder.setText(name)
+
+    def _accept(self) -> None:
+        folder = Path(self._folder.text().strip())
+        stem = self._name.text().strip().removesuffix(".mp4")
+        if not stem or any(c in stem for c in BAD_NAME_CHARACTERS):
+            QMessageBox.warning(
+                self, "File name", f"A file name cannot be empty or use {BAD_NAME_CHARACTERS}"
+            )
+            return
+        if not folder.is_dir():
+            QMessageBox.warning(self, "Folder", f"{folder} is not a folder.")
+            return
+        path = folder / f"{stem}.mp4"
+        replace = False
+        if path.exists():
+            answer = QMessageBox.question(self, "Replace file?", f"{path} exists. Replace it?")
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+            replace = True
+        encoder = str(self._encoder.currentData())
+        self._settings.output_folder = folder
+        self._settings.encoder = encoder
+        self._settings.open_folder_after_export = self._open.isChecked()
+        self.choice = ExportChoice(path, replace, encoder, self._open.isChecked())
+        self.accept()
