@@ -59,7 +59,7 @@ from fpv_editor.app.cliplist import (
     thumbnail_pixmap,
 )
 from fpv_editor.app.clips import clock as clock_short
-from fpv_editor.app.clips import describe_clip
+from fpv_editor.app.clips import default_output_folder, describe_clip, is_removable
 from fpv_editor.app.dialogs import ExportDialog, SettingsDialog, about_text, ask_for_ffmpeg
 from fpv_editor.app.logs import start_logging
 from fpv_editor.app.look import DotTitle, StatusDot, app_icon
@@ -951,13 +951,10 @@ class MainWindow(QMainWindow):
         if self._plan is None or not self._plan.infos:
             return None
         first = self._plan.infos[0].path
-        folder = self._settings.output_folder
+        sources = [info.path for info in self._plan.infos]
+        folder = default_output_folder(self._settings.output_folder, sources, videos_folder())
         try:
-            if folder is not None and folder.is_dir():
-                return default_output_path(folder / first.name, MONTAGE_SUFFIX)
-            return resolve_output_path(
-                [info.path for info in self._plan.infos], None, False, suffix=MONTAGE_SUFFIX
-            )
+            return default_output_path(folder / first.name, MONTAGE_SUFFIX)
         except FPVEditError:
             return None
 
@@ -980,7 +977,10 @@ class MainWindow(QMainWindow):
         music = self._review.music
         total = sum(shot.duration for shot in self._shots.shots)
         fit = describe_music(music, total).capitalize()
-        dialog = ExportDialog(default, self._settings, fit, self)
+        default.parent.mkdir(parents=True, exist_ok=True)  # the Videos\FPV Editor folder
+        dialog = ExportDialog(
+            default, self._settings, fit, self, remember=lambda f: not is_removable(f)
+        )
         if not dialog.exec() or dialog.choice is None:
             return
         choice = dialog.choice
@@ -1177,6 +1177,12 @@ class MainWindow(QMainWindow):
         except FPVEditError:
             first = ""
         QMessageBox.about(self, "About FPV Editor", about_text(first))
+
+
+def videos_folder() -> Path:
+    """``FPV Editor`` in the user's Videos folder (made when it is first needed)."""
+    base = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.MoviesLocation)
+    return (Path(base) if base else Path.home() / "Videos") / "FPV Editor"
 
 
 def data_folder() -> Path | None:
