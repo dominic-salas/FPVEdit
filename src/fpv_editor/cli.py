@@ -467,6 +467,18 @@ def combine_clips(
     )
 
 
+def is_cached(tools: Tools, info: MediaInfo, cache_dir: Path, config: PipelineConfig) -> bool:
+    """Whether ``info`` has measurements in ``cache_dir`` for the current code and settings.
+
+    (Kept out of `analysis.py`, whose source is part of the cache key.)"""
+    from fpv_editor.analysis import _cache_path
+
+    try:
+        return _cache_path(cache_dir, tools, info, config.analysis).is_file()
+    except OSError:
+        return False
+
+
 def keep_rated(
     tools: Tools,
     plan: MontagePlan,

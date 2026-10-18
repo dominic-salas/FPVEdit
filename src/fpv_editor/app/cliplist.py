@@ -8,6 +8,7 @@ cards are drawn by `ClipCard` in the app's theme.
 from __future__ import annotations
 
 import queue
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from PySide6.QtCore import (
@@ -41,7 +42,7 @@ from PySide6.QtWidgets import (
 from fpv_editor.app import theme
 from fpv_editor.app.frames import grab_frame
 from fpv_editor.errors import FPVEditError
-from fpv_editor.media import Tools, probe
+from fpv_editor.media import MediaInfo, Tools, probe
 
 PATH = Qt.ItemDataRole.UserRole  # str: the clip's file
 DETAILS = Qt.ItemDataRole.UserRole + 1  # str: length, rate, recording time
@@ -55,6 +56,7 @@ THUMB_SIZE = QSize(112, 63)
 COMPACT_HEIGHT = 52  # the read-only list on the progress screen
 COMPACT_THUMB = QSize(64, 36)
 THUMB_HEIGHT = 126  # grabbed at twice the drawn size for high-DPI screens
+PROBES_AT_ONCE = 6
 THUMB_AT = 0.3  # thumbnail from 30 % into the clip: past take-off, into the flight
 
 
@@ -83,16 +85,42 @@ class ClipReader(QThread):
         self.wait()
 
     def run(self) -> None:
-        while (path := self._requests.get()) is not None:
-            try:
-                info = probe(self._tools, path)
-            except FPVEditError as exc:
-                self.failed.emit(path, str(exc))
-                continue
-            self.probed.emit(info)
-            png = grab_frame(self._tools, info, THUMB_AT * (info.duration or 0.0), THUMB_HEIGHT)
-            if png is not None:
-                self.thumbnail.emit(path, png)
+        # Probing comes first and runs several at a time (the analysis waits for it);
+        # thumbnails are grabbed one by one whenever no clip is waiting to be probed.
+        thumbs: list[MediaInfo] = []
+        with ThreadPoolExecutor(PROBES_AT_ONCE) as pool:
+            while True:
+                try:
+                    first = self._requests.get(block=not thumbs)
+                except queue.Empty:
+                    info = thumbs.pop(0)
+                    seconds = THUMB_AT * (info.duration or 0.0)
+                    png = grab_frame(self._tools, info, seconds, THUMB_HEIGHT)
+                    if png is not None:
+                        self.thumbnail.emit(info.path, png)
+                    continue
+                batch = [first]
+                while True:
+                    try:
+                        batch.append(self._requests.get_nowait())
+                    except queue.Empty:
+                        break
+                if None in batch:
+                    return
+                futures = {pool.submit(self._probe, p): p for p in batch if p is not None}
+                for done in as_completed(futures):  # each clip as soon as it is probed
+                    path, result = futures[done], done.result()
+                    if isinstance(result, str):
+                        self.failed.emit(path, result)
+                    else:
+                        self.probed.emit(result)
+                        thumbs.append(result)
+
+    def _probe(self, path: Path) -> MediaInfo | str:
+        try:
+            return probe(self._tools, path)
+        except FPVEditError as exc:
+            return str(exc)
 
 
 class ClipList(QListWidget):

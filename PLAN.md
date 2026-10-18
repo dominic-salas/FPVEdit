@@ -160,6 +160,13 @@ Details and per-claim evidence: `docs/review-2026-10-11.md`.
 ## Validation log
 (newest first; exact commands and outcomes)
 
+### 2026-10-18 — Many clips load faster (Dom's PC)
+- Dom: loading many clips takes too long (his `D:\clips` has 205 recordings, 79 GB; 106 are already measured for the current code, 99 with 267 min of footage are not).
+- Measured on the 18 testdata1 recordings, nothing cached: all probed after 5.8 s, first shot to rate after 143 s, all analysed after 302 s. Analysis runs about 12x real time on this PC whether 6 or 12 worker processes run (12 clips, 47 min: 240 s vs 235 s; the GPU was 92 % busy with Dom's other project at the time), so more workers were not added.
+- Changes: clips are probed 6 at a time, each passed on as soon as it is probed, and thumbnails come after (before, each clip's thumbnail held up the next clip's probe); clips whose measurements are already cached are analysed first, then the shortest uncached ones. `cli.is_cached` lives outside `analysis.py`, whose source is part of the cache key, so the existing caches stay valid.
+- After (same 18 recordings, cached): all probed 0.9 s, first shot to rate 2.8 s, all analysed 7.3 s. For Dom's folder: his 106 measured clips come first; the other 99 need about 267 / 12 = 22 min in the background.
+- Checks: ruff, format, mypy clean; pytest 222 passed.
+
 ### 2026-10-18 — Rating screen without false ratings; one click from the start (Dom's PC)
 - Dom: holding a number key may have given false ratings; he wants to just see shots and rate them. His file had 11 ratings of 3 stars in one second (03:02:48), one per held-key repeat; they were undone by appending undo lines (`my-ratings.jsonl` is only appended to; a copy of the file before is `my-ratings.backup-2026-10-18.jsonl`). 39 real ratings remain: 6 / 11 / 18 / 2 / 2.
 - Rating screen: number keys no longer repeat, a rating within 1 s of a shot appearing is ignored, and Backspace (or Undo last) forgets the last rating and shows that shot again; a short note confirms each rating. The start screen has "Just rate shots": pick a folder (the last one is offered) and the rating starts as soon as its clips are analysed. The review step's keys do not repeat either. The goal shown is now 150 ratings.
