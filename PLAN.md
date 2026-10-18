@@ -160,6 +160,11 @@ Details and per-claim evidence: `docs/review-2026-10-11.md`.
 ## Validation log
 (newest first; exact commands and outcomes)
 
+### 2026-10-18 — FLAC music on the SD card, coloured control hints (Dom's PC)
+- Dom (2026-10-18): exporting with two FLAC tracks (with cover art) failed with "adding the music failed ... Error submitting a packet to the muxer: Invalid argument"; the log shows the montage was being saved to `F:\DCIM@HDZRO`, the DVR's FAT32 SD card. The same two tracks muxed fine here into the PC's drive (synthetic 10, 300 and 600 s videos, and real CLI montages of `clip 1.mp4` and `20261010-203859.ts`), so the card is the likely cause; not reproduced on a FAT32 volume (none here, and Dom's card was not written to). Fix: the music is muxed in the local temporary folder and the finished file copied next to the output. New test: FLAC with an attached cover picture, twice. Waiting on Dom to retry on the card.
+- Dom: the hints under the timeline should use colour to show which control does what. They are now key chips (CLICK, DRAG, SPACE, F, CTRL+Z) in colours kept apart from the recording colours, the Play and Full screen buttons take their chip's colour, and the recording legend moved to the side panel. Checked in offscreen screenshots, dark and light.
+- Checks: ruff, format, mypy clean; pytest 217 passed.
+
 ### 2026-10-18 — Trick names from the turn's axis (Dom's PC)
 - Dom (2026-10-18): the app only knows flips, spins and close passes; it should know more real tricks.
 - Measured on every fast turn of the 16 testdata1 recordings: the camera's net pitch, yaw and roll over the second around it. Dom's labelled backflip is +232 pitch (so positive pitch is a back flip), a front flip -226, his "big side flip" a roll (-194 roll), his "trippy spin" yaw with roll the opposite way (-153 yaw, +91 roll), and rolls show yaw the same way as roll (the camera's up-tilt). A full 360 measures 200-280 degrees.
