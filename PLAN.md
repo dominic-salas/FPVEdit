@@ -160,6 +160,15 @@ Details and per-claim evidence: `docs/review-2026-10-11.md`.
 ## Validation log
 (newest first; exact commands and outcomes)
 
+### 2026-10-18 — Rating by trick, cleanliness, impressiveness, picture (Dom's PC)
+- Dom approved `docs/rating-plan.md` and asked for an easy way to show his own preferences.
+- Measured first, on the 128 distinct shots of the 16 testdata1 recordings: only 2 shots overlap Dom's labelled failures (the analysis already cuts most crashes); both end within 6 s of a crash cut and one wobbles 3x more after its trick. In clip 1 and clip 2, the 8 shots in Dom's finished edit kept their speed through tricks (median 1.21x) where the 7 he cut lost it (0.64x). The old strength ranked kept below cut (AUC 0.43).
+- Built `rating.py`: trick (type values, links within 3 s, repeats count half), clean (crash within 6 s caps the rating at 2 stars, within 10 s x0.7; wobble after a trick; speed kept; full turn when the fit was confident), impressive (approach rate, speed; the image model's indoor/outdoor result is now a small nudge, -0.1/+0.05 on this part), watchable (share of frames the fit followed, darkness). Weights 0.35/0.35/0.2/0.1. Star bounds 0.56/0.64/0.71/0.76 are the 15/35/65/85 % points of the 128 shots, so they spread as 18/26/39/27/18. A jolt criterion (sudden speed change) was tried and dropped: it also fired on clean flips.
+- Result: both failure shots 1-2 stars; kept vs cut AUC 0.61 (clip 2: 0.75, clip 1: 0.27); 15 shots, too few to call it validated. With the default minimum of 3 stars, 84 of 128 shots stay, 6 of Dom's 8 kept shots and 13 of 18 shots with labelled tricks; the rest are offered under Add a shot. Weights and bounds are not tuned on held-out data yet; Dom's own ratings are meant for that.
+- Montages keep shots rated at least `min_stars` (Settings, default 3; CLI `--min-stars`), replacing the indoor rule (`leave_out_weak_indoor` removed). If none reach it, the best-rated stay.
+- Dom's ratings: press 1-5 while a shot plays (or click the stars in the shot panel); each goes to `%LOCALAPPDATA%pv-editor\my-ratings.jsonl` with the app's rating and its parts for comparison (Menu > Show my shot ratings). The shot panel lists why a shot got its rating.
+- Checks: ruff, format, mypy (61 files) clean; pytest 220 passed; offscreen screenshot of the review step (16 shots kept, 6 left out).
+
 ### 2026-10-18 — Shot ratings on the timeline (Dom's PC, offscreen)
 - Dom (2026-10-18): give each shot a rating and colour the timeline by it, with a switch in Settings.
 - Rating (`app/model.rating`): 1-5 stars by where a shot's strength (moments and speed per sqrt(second), what the montage ranks by) falls among the montage's other shots; 5 is the top fifth. It is relative to this montage and is not a measure of how good a trick is in general. Timeline blocks are tinted red (1) to green (5) and labelled with their stars; the shot panel shows the stars, Add a shot and Swap show where a candidate would fall; the side panel explains the colours. Settings: "Colour shots on the timeline by rating", on by default; off shows the recording colours as before.

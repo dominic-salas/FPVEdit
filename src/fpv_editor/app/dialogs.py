@@ -89,6 +89,12 @@ class SettingsDialog(QDialog):
         self._rating = QCheckBox("Colour shots on the timeline by rating (1-5) instead of by clip")
         self._rating.setChecked(settings.colour_by_rating)
         form.addRow("Review", self._rating)
+        self._min_stars = QComboBox()
+        for stars in range(1, 6):
+            text = "every shot found" if stars == 1 else f"{stars} stars and up"
+            self._min_stars.addItem(text, stars)
+        self._min_stars.setCurrentIndex(settings.min_stars - 1)
+        form.addRow("Keep shots rated", self._min_stars)
         form.addRow("Save montages in", folder_row)
         form.addRow("Saved measurements", cache_row)
         form.addRow(buttons)
@@ -116,6 +122,7 @@ class SettingsDialog(QDialog):
     def _save(self) -> None:
         self._settings.encoder = str(self._encoder.currentData())
         self._settings.colour_by_rating = self._rating.isChecked()
+        self._settings.min_stars = int(self._min_stars.currentData())
         self._settings.output_folder = self._folder
         self.accept()
 

@@ -30,6 +30,7 @@ order the clips were given, then in recording order.
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
@@ -49,6 +50,7 @@ from fpv_editor.highlights import (
 )
 from fpv_editor.measure import Measurements
 from fpv_editor.motion import CONFIDENCE
+from fpv_editor.rating import ClipSignals, Quality, rate_shot
 from fpv_editor.tricks import TrickConfig, name_fast_turn, power_loop_frames
 
 FloatArray = NDArray[np.float64]
@@ -93,6 +95,7 @@ class Shot:
     end: float
     score: float
     moments: tuple[Moment, ...]
+    quality: Quality | None = None  # the 1-5 star rating's parts (`rating.py`)
 
     @property
     def duration(self) -> float:
@@ -142,10 +145,6 @@ class MontageConfig:
     # picking
     clip_share: float = 0.5  # most of the montage one clip may fill (unless it is alone)
     min_gap_s: float = 4.0  # between two shots of the same clip
-    # scenery (with the image model): an indoor-looking shot stays only if it is as good
-    # as the best quarter of the session's outdoor shots
-    indoor_margin: float = 0.03  # indoorness above this looks indoor (`scenery.py`)
-    indoor_bar_quantile: float = 0.75
 
 
 def usable_footage(
@@ -256,6 +255,16 @@ def candidate_shots(
     longest = round(config.shot_max_s * fps)
     reach = round(config.snap_s * fps)
     lengths = {shortest, round((shortest + longest) / 2), longest}
+    signals = ClipSignals(
+        fps=fps,
+        rate=rolling_median(motion.rate, max(1, round(0.1 * fps))),
+        rotation=motion.rotation,
+        speed=motion.speed_smooth,
+        approach=motion.divergence,
+        confidence=np.nan_to_num(measurements.motion[:, CONFIDENCE]),
+        brightness=np.nan_to_num(measurements.brightness),
+        crashes=tuple(c.start for c in selection.cuts if c.reason is CutReason.CRASH),
+    )
     shots: dict[tuple[int, int], Shot] = {}
     for low, high in runs(usable):
         if high - low < shortest:
@@ -275,7 +284,9 @@ def candidate_shots(
                 start, end = edges
                 shot = _score(clip, start / fps, end / fps, inside, motion, config)
                 if shot is not None:
-                    shots[(start, end)] = shot
+                    named = [(m.time, m.name) for m in shot.moments]
+                    quality = rate_shot(shot.start, shot.end, named, signals)
+                    shots[(start, end)] = dataclasses.replace(shot, quality=quality)
     return list(shots.values())
 
 
@@ -380,29 +391,3 @@ def pick_shots(
         used += shot.duration
         per_clip[shot.clip] += shot.duration
     return tuple(sorted(chosen, key=lambda s: (s.clip, s.start)))
-
-
-def leave_out_weak_indoor(
-    shots: Sequence[Shot], indoorness: Sequence[float | None], config: MontageConfig | None = None
-) -> tuple[tuple[Shot, ...], tuple[Shot, ...]]:
-    """Split ``shots`` into those kept and the indoor-looking ones left out.
-
-    Indoor shots are compared with the outdoor shots of the same session: one stays only
-    if its score per sqrt(second), the ranking `pick_shots` uses, reaches the
-    ``indoor_bar_quantile`` of the outdoor shots. A session with no outdoor shots keeps
-    everything; a shot without an indoorness (no readable frame) counts as outdoor.
-    """
-    config = config or MontageConfig()
-    if len(indoorness) != len(shots):
-        raise ValueError("one indoorness per shot is required")
-    indoor = [v is not None and v > config.indoor_margin for v in indoorness]
-    outdoor = [s.score / s.duration**0.5 for s, i in zip(shots, indoor, strict=True) if not i]
-    if not outdoor:
-        return tuple(shots), ()
-    bar = float(np.quantile(outdoor, config.indoor_bar_quantile))
-    kept: list[Shot] = []
-    left_out: list[Shot] = []
-    for shot, inside in zip(shots, indoor, strict=True):
-        weak = inside and shot.score / shot.duration**0.5 < bar
-        (left_out if weak else kept).append(shot)
-    return tuple(kept), tuple(left_out)

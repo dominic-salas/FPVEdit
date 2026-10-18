@@ -1,4 +1,4 @@
-# Shot rating: criteria plan (proposed 2026-10-18, waiting for Dom's OK)
+# Shot rating: criteria plan (approved by Dom 2026-10-18; built, see PLAN.md for results)
 
 Goal (Dom): the rating decides which shots make a good montage. An indoor shot can beat an
 outdoor one and the other way round; what counts is how clean and how impressive the trick

@@ -98,3 +98,16 @@ class AppSettings:
     @colour_by_rating.setter
     def colour_by_rating(self, value: bool) -> None:
         self._store.setValue("review/colour_by_rating", "true" if value else "false")
+
+    @property
+    def min_stars(self) -> int:
+        """Shots rated below this many stars are left out of a new montage."""
+        try:
+            value = int(str(self._store.value("review/min_stars", 3)))
+        except ValueError:
+            return 3
+        return min(5, max(1, value))
+
+    @min_stars.setter
+    def min_stars(self, value: int) -> None:
+        self._store.setValue("review/min_stars", min(5, max(1, int(value))))
