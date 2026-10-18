@@ -160,6 +160,10 @@ Details and per-claim evidence: `docs/review-2026-10-11.md`.
 ## Validation log
 (newest first; exact commands and outcomes)
 
+### 2026-10-18 — A screen just for rating shots (Dom's PC, offscreen)
+- Dom (2026-10-18): rating should not need a montage. New Rate shots screen (button on step 1, Menu > Rate shots, Ctrl+R): one shot loops, press 1-5 (or click Boring / Meh / OK / Good / Sick), the next comes; S skips, Esc goes back. Shots are every distinct shot of the clips on step 1, fed in as each clip finishes analysing, clips taking turns and each clip's shots shuffled; rated shots are skipped; the app's own stars are hidden so they do not sway him. Counts toward 40.
+- Checked offscreen with 3 testdata1 clips (22 shots queued, two ratings saved to a temporary file); pytest 221 passed.
+
 ### 2026-10-18 — Rating by trick, cleanliness, impressiveness, picture (Dom's PC)
 - Dom approved `docs/rating-plan.md` and asked for an easy way to show his own preferences.
 - Measured first, on the 128 distinct shots of the 16 testdata1 recordings: only 2 shots overlap Dom's labelled failures (the analysis already cuts most crashes); both end within 6 s of a crash cut and one wobbles 3x more after its trick. In clip 1 and clip 2, the 8 shots in Dom's finished edit kept their speed through tricks (median 1.21x) where the 7 he cut lost it (0.64x). The old strength ranked kept below cut (AUC 0.43).

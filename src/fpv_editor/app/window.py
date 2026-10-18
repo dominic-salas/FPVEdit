@@ -64,6 +64,7 @@ from fpv_editor.app.dialogs import ExportDialog, SettingsDialog, about_text, ask
 from fpv_editor.app.logs import start_logging
 from fpv_editor.app.look import DotTitle, StatusDot, app_icon
 from fpv_editor.app.model import ShotList
+from fpv_editor.app.ratepage import RatePage
 from fpv_editor.app.review import ReviewPage, describe_music
 from fpv_editor.app.settings import AppSettings
 from fpv_editor.cli import (
@@ -77,7 +78,7 @@ from fpv_editor.cli import (
 )
 from fpv_editor.errors import CancelledError, FPVEditError
 from fpv_editor.media import MediaInfo, Tools, find_tools, run_tool
-from fpv_editor.montage import Shot
+from fpv_editor.montage import Shot, pick_shots
 from fpv_editor.render import (
     NVENC,
     EncodeConfig,
@@ -247,7 +248,7 @@ class Steps(QWidget):
 class MainWindow(QMainWindow):
     """Four screens, one step each: add clips, find shots, review, export."""
 
-    CLIPS, WORK, REVIEW, DONE = range(4)
+    CLIPS, WORK, REVIEW, DONE, RATE = range(5)
 
     def __init__(
         self,
@@ -326,6 +327,10 @@ class MainWindow(QMainWindow):
         self._pages.addWidget(self._build_work_page())
         self._pages.addWidget(self._build_review_page())
         self._pages.addWidget(self._build_done_page())
+        self._rate = RatePage(self._tools, self._review._mine)
+        self._rate.back.connect(lambda: self._show_page(self.CLIPS))
+        self._pages.addWidget(self._rate)
+        self._rated_clips: set[Path] = set()  # clips whose shots went to the rating screen
 
         central = QWidget()
         layout = QVBoxLayout(central)
@@ -405,7 +410,7 @@ class MainWindow(QMainWindow):
                     "EVERY FLIP, SPIN AND CLOSE PASS FROM EVERY CLIP. REMOVE ANY YOU DON'T WANT."
                 )
             ],
-            [self._find],
+            [button("RATE SHOTS", self._open_rating), self._find],
         )
         page = QWidget()
         layout = QVBoxLayout(page)
@@ -553,6 +558,7 @@ class MainWindow(QMainWindow):
         menu.addSeparator()
         menu.addAction(action("Settings…", self._open_settings, "Ctrl+,"))
         menu.addAction(action("Show the log file", self._show_log))
+        menu.addAction(action("Rate shots…", self._open_rating, "Ctrl+R"))
         menu.addAction(action("Show my shot ratings", self._show_my_ratings))
         menu.addAction(action("About FPV Editor", self._about))
         menu.addSeparator()
@@ -563,9 +569,13 @@ class MainWindow(QMainWindow):
     def _show_page(self, page: int) -> None:
         if page != self.REVIEW:
             self._review.deactivate()
+        if page != self.RATE:
+            self._rate.stop()
         self._pages.setCurrentIndex(page)
         if page == self.REVIEW:
             self._review.activate()
+        elif page == self.RATE:
+            self._rate.start()
         self._refresh_steps()
 
     def _go_to_step(self, step: int) -> None:
@@ -586,7 +596,7 @@ class MainWindow(QMainWindow):
         if page == self.WORK:
             current = 3 if self._task_page == self.REVIEW else 1
         else:
-            current = {self.CLIPS: 0, self.REVIEW: 2, self.DONE: 3}[page]
+            current = {self.CLIPS: 0, self.REVIEW: 2, self.DONE: 3, self.RATE: 0}[page]
         reachable = {0}
         if self._clips.count():
             reachable.add(1)
@@ -799,6 +809,39 @@ class MainWindow(QMainWindow):
         self._show_work("STEP 2 OF 4", "Finding the best shots")
         self._analysis_changed()
 
+    def _open_rating(self) -> None:
+        """The rating screen: shots of the clips on step 1, one at a time, no montage."""
+        if self._busy():
+            return
+        if not self._clips.count():
+            QMessageBox.information(
+                self, "Rate shots", "Add some clips first; their shots will come up to rate."
+            )
+            return
+        for path in self.clip_paths():
+            info = self._infos.get(path.resolve())
+            if info is not None:
+                self._analysis.add(info)
+        self._show_page(self.RATE)
+        self._feed_rating()
+
+    def _feed_rating(self) -> None:
+        """Give the rating screen the shots of every clip analysed since last time."""
+        waiting = False
+        for path in self.clip_paths():
+            key = path.resolve()
+            state = self._analysis.state(key)
+            if state is None or not state.finished:
+                waiting = waiting or key not in self._unreadable
+                continue
+            if key in self._rated_clips or state.result is None:
+                continue
+            self._rated_clips.add(key)
+            result = state.result.moved_to(0)
+            shots = pick_shots(result.candidates, 1, PipelineConfig().montage)
+            self._rate.add_shots(state.info, list(shots))
+        self._rate.set_waiting(waiting)
+
     def _analysed_share(self) -> tuple[float, str]:
         """Share of the clips' footage analysed so far (by length), and what is going on."""
         total = done = 0.0
@@ -829,6 +872,8 @@ class MainWindow(QMainWindow):
 
     def _analysis_changed(self) -> None:
         self._refresh_clips()
+        if self._pages.currentIndex() == self.RATE:
+            self._feed_rating()
         if self._finding is None:
             return
         share, text = self._analysed_share()
