@@ -168,3 +168,20 @@ def test_my_ratings_are_saved_and_read_back(tmp_path: Path) -> None:
     assert last["app_stars"] == quality.stars and last["tricks"] == ["back flip"]
     with pytest.raises(ValueError):
         mine.rate(clip, shot, 6)
+
+
+def test_rating_screen_mixes_clips_and_skips_rated_shots(tmp_path: Path) -> None:
+    from fpv_editor.app.myratings import MyRatings
+    from fpv_editor.app.ratepage import interleave
+    from fpv_editor.montage import Shot
+
+    a = [Shot(0, 10.0 * i, 10.0 * i + 9, 1.0, ()) for i in range(3)]
+    b = [Shot(1, 10.0 * i, 10.0 * i + 9, 1.0, ()) for i in range(2)]
+    order = interleave([a, b])
+    assert sorted(order, key=lambda s: (s.clip, s.start)) == sorted(
+        [*a, *b], key=lambda s: (s.clip, s.start)
+    )
+    assert [s.clip for s in order[:4]] == [0, 1, 0, 1]  # clips take turns
+    mine = MyRatings(tmp_path / "r.jsonl")
+    mine.rate(tmp_path / "x.ts", a[0], 3)
+    assert mine.stars(tmp_path / "x.ts", a[0]) == 3 and mine.stars(tmp_path / "x.ts", a[1]) is None
