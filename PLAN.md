@@ -160,6 +160,15 @@ Details and per-claim evidence: `docs/review-2026-10-11.md`.
 ## Validation log
 (newest first; exact commands and outcomes)
 
+### 2026-10-18 — Rating tuned to Dom's 50 own ratings (Dom's PC)
+- Dom rated 50 shots from 28 of his recordings in `D:\clips` (read only; their cached measurements): 6 one-star, 11 two, 29 three, 2 four, 2 five. He says he took bumps into obstacles and crashes into account.
+- Agreement before tuning: Spearman 0.27 between the app's score and his stars; in pairs of shots from the same recording with different stars, 9 of 14 ordered like him.
+- What his stars follow (Spearman, tie-aware): more motion-fit blur (+0.28), more rotation (+0.27), darker picture (-0.39 for brightness), more turns (+0.18); the app's clean part -0.07, its watchable part -0.28 (it penalised the blur he likes). Brightness tracks the session's time of day (his evening sessions rated higher), so it was not used. The crash rule did not match: shots with a crash within 0.5-10 s after got 1 to 5 stars; those within about 2 s averaged 2.4 against 2.8 overall. Bump measures (sudden speed drops, rotation spikes) did not track his stars (+0.07, +0.14).
+- Change (`rating.py`): weights 0.4 trick / 0.3 clean / 0.3 impressive / 0 watchable; a crash within 3 s after the shot takes clean x0.6 (the 6/10 s rules and the 2-star cap for failed tricks are gone); star bounds 0.57/0.62/0.81/0.83 match the spread of his own stars.
+- Result on his 50: Spearman 0.30. With the bounds fitted on the other recordings, 52 % exact and 80 % within one star; always answering 3 stars would score 58 % and 84 %, so the stars do not yet predict his taste better than that. On the testdata1 labels: kept vs cut AUC 0.59; one of the two labelled-failure shots now rates 4 (its crash is 5 s after the shot).
+- Conclusion: the measured signals explain little of what Dom values. Next options: more ratings with more 4s and 5s, and learning his taste from what the shots show (image-model embeddings of the shot frames with his stars), which needs on the order of 150-200 ratings.
+- Checks: ruff, format, mypy clean; pytest 221 passed.
+
 ### 2026-10-18 — A screen just for rating shots (Dom's PC, offscreen)
 - Dom (2026-10-18): rating should not need a montage. New Rate shots screen (button on step 1, Menu > Rate shots, Ctrl+R): one shot loops, press 1-5 (or click Boring / Meh / OK / Good / Sick), the next comes; S skips, Esc goes back. Shots are every distinct shot of the clips on step 1, fed in as each clip finishes analysing, clips taking turns and each clip's shots shuffled; rated shots are skipped; the app's own stars are hidden so they do not sway him. Counts toward 40.
 - Checked offscreen with 3 testdata1 clips (22 shots queued, two ratings saved to a temporary file); pytest 221 passed.

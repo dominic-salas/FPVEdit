@@ -7,16 +7,17 @@ quality directly, they are measured stand-ins:
 - **trick** (what): the tricks in the shot by type (doubles above flips, rolls and power
   loops, above yaw spins, above close passes), with a bonus for tricks linked together and
   less for the same trick repeated;
-- **clean** (how well): no crash right after the shot (Dom's failed tricks ended in one
-  within a few seconds; such a shot gets 2 stars at most), little wobble after each trick,
-  speed kept through it (his kept moments held 1.2x their speed, the cut ones 0.6x), and a
-  full turn;
+- **clean** (how well): no crash within 3 s after the shot, little wobble after each
+  trick, speed kept through it (his kept moments held 1.2x their speed, the cut ones 0.6x),
+  and a full turn;
 - **impressive** (context): how close the flying got (approach rate) and how fast it was;
   the image model's scenery is added later as a small nudge, never as a filter;
 - **watchable** (picture): how much of the shot the motion fit could follow (blur and
-  breakup), and that it is not too dark.
+  breakup), and that it is not too dark. Shown, but weighted 0: Dom rated blurry, fast
+  shots higher, not lower.
 
-`Quality.score` weighs them 0.35 / 0.35 / 0.2 / 0.1 and `stars` turns the score into 1-5.
+`Quality.score` weighs them 0.4 / 0.3 / 0.3 / 0 (tuned to Dom's own ratings, see PLAN.md)
+and `stars` turns the score into 1-5.
 """
 
 from __future__ import annotations
@@ -30,7 +31,9 @@ from numpy.typing import NDArray
 
 FloatArray = NDArray[np.float64]
 
-WEIGHTS = {"trick": 0.35, "clean": 0.35, "impressive": 0.2, "watchable": 0.1}
+# Tuned to Dom's 50 own ratings (2026-10-18): the picture part counted against his
+# higher-rated shots (fast, blurry action), so it no longer counts.
+WEIGHTS = {"trick": 0.4, "clean": 0.3, "impressive": 0.3, "watchable": 0.0}
 TRICK_VALUES = {
     "double back flip": 1.2,
     "double front flip": 1.2,
@@ -44,10 +47,10 @@ TRICK_VALUES = {
     "spin": 0.35,
     "close pass": 0.35,
 }
-# Score at which 2, 3, 4 and 5 stars begin: the 15/35/65/85 % points of the 128 distinct
-# shots of the 16 test recordings, so a typical session spreads over all five.
-STAR_BOUNDS = (0.56, 0.64, 0.71, 0.76)
-FAILED_CLEAN = 0.3  # clean below this caps the rating at 2 stars
+# Score at which 2, 3, 4 and 5 stars begin, matched to how Dom spread his own 50 ratings
+# (12 % 1 star, 22 % 2, 58 % 3, 4 % 4, 4 % 5), so the stars read on his scale: most shots
+# are an OK 3, and 4 or 5 stars are rare.
+STAR_BOUNDS = (0.57, 0.62, 0.81, 0.83)
 
 
 @dataclass(frozen=True)
@@ -56,8 +59,8 @@ class RatingConfig:
     combo_bonus: float = 0.2  # per link in a line
     repeat_after: int = 2  # more of the same trick in one shot than this count half
     trick_scale: float = 1.5  # trick part = 1 - exp(-total / trick_scale)
-    crash_near_s: float = 6.0  # a crash this soon after the shot: a failed attempt
-    crash_soon_s: float = 10.0  # ... this soon: probably part of it
+    crash_near_s: float = 3.0  # a crash this soon after (or inside) the shot ...
+    crash_factor: float = 0.6  # ... takes the clean part down this much
     wobble_ok: float = 8.0  # deg/s frame-to-frame rate change after a trick that is fine
     wobble_bad: float = 28.0  # ... and that looks like a messy recovery
     full_turn_deg: float = 200.0  # a full flip or roll measures at least about this
@@ -91,9 +94,7 @@ class Quality:
 
     @property
     def stars(self) -> int:
-        stars = 1 + sum(1 for bound in STAR_BOUNDS if self.score >= bound)
-        # A failed attempt (ending in a crash) is never more than 2 stars, however big.
-        return min(stars, 2) if self.clean < FAILED_CLEAN else stars
+        return 1 + sum(1 for bound in STAR_BOUNDS if self.score >= bound)
 
 
 @dataclass(frozen=True)
@@ -149,11 +150,8 @@ def rate_shot(
     clean = 1.0
     crash = min((c - end for c in signals.crashes if c >= start), default=None)
     if crash is not None and crash <= config.crash_near_s:
-        clean *= 0.25
-        reasons.append("ends in a crash")
-    elif crash is not None and crash <= config.crash_soon_s:
-        clean *= 0.7
-        reasons.append("a crash soon after")
+        clean *= config.crash_factor
+        reasons.append("crash right after")
     turns = [t for t, name in moments if name not in ("close pass", "spin")]
     wobbles, kept, fulls = [], [], []
     for time in turns:
