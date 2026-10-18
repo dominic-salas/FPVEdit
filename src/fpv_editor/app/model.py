@@ -139,3 +139,41 @@ class ShotList:
 def _mostly_same(a: Shot, b: Shot) -> bool:
     shared = min(a.end, b.end) - max(a.start, b.start)
     return a.clip == b.clip and shared > 0.5 * min(a.duration, b.duration)
+
+
+def shot_starts(shots: Sequence[Shot]) -> list[float]:
+    """Where each shot starts on the montage's own timeline (seconds from its start)."""
+    starts: list[float] = []
+    total = 0.0
+    for shot in shots:
+        starts.append(total)
+        total += shot.duration
+    return starts
+
+
+def locate(shots: Sequence[Shot], seconds: float) -> tuple[int, float]:
+    """The shot playing ``seconds`` into the montage and the matching time in its clip.
+
+    Times before the start give the first shot's start; times at or after the end give
+    the last shot's end. Raises ValueError for an empty montage.
+    """
+    if not shots:
+        raise ValueError("the montage has no shots")
+    for index, start in enumerate(shot_starts(shots)):
+        shot = shots[index]
+        if seconds < start + shot.duration:
+            return index, shot.start + max(0.0, seconds - start)
+    return len(shots) - 1, shots[-1].end
+
+
+def montage_time(shots: Sequence[Shot], index: int, clip_seconds: float) -> float:
+    """``clip_seconds`` in shot ``index`` as seconds into the montage."""
+    shot = shots[index]
+    offset = min(max(clip_seconds, shot.start), shot.end) - shot.start
+    return shot_starts(shots)[index] + offset
+
+
+def drop_position(dragged: int, gap: int) -> int:
+    """`ShotList.move` target for a shot at ``dragged`` dropped into ``gap`` (0 = before
+    the first shot, n = after the last)."""
+    return gap if gap <= dragged else gap - 1

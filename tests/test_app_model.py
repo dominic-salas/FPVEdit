@@ -104,3 +104,24 @@ def test_extending_a_trimmed_shot_shows_its_moment_again() -> None:
     assert shots.shots[0].moments == ()
     shots.trim(0, start=-3.0)
     assert shots.shots[0].moments == A.moments
+
+
+def test_montage_timeline_maps_both_ways() -> None:
+    from fpv_editor.app.model import drop_position, locate, montage_time, shot_starts
+
+    shots = [shot(0, 10, 18), shot(1, 4, 9), shot(0, 30, 40)]
+    assert shot_starts(shots) == [0.0, 8.0, 13.0]
+    assert locate(shots, 0) == (0, 10.0)
+    assert locate(shots, 9.5) == (1, 5.5)
+    assert locate(shots, 13) == (2, 30.0)
+    assert locate(shots, 99) == (2, 40.0)
+    assert locate(shots, -3) == (0, 10.0)
+    assert montage_time(shots, 1, 5.5) == 9.5
+    assert montage_time(shots, 2, 99) == 23.0
+    for seconds in (0.0, 3.25, 8.0, 12.9, 20.0):
+        index, clip_seconds = locate(shots, seconds)
+        assert montage_time(shots, index, clip_seconds) == pytest.approx(seconds)
+    # Dropping shot 0 after shot 1 (gap 2) makes it the second shot.
+    assert (drop_position(0, 2), drop_position(2, 0), drop_position(1, 1)) == (1, 0, 1)
+    with pytest.raises(ValueError):
+        locate([], 1)

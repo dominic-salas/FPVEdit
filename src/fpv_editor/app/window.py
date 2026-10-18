@@ -7,17 +7,15 @@ user's local app-data folder, and the montage is written where the user chooses.
 from __future__ import annotations
 
 import dataclasses
-import functools
 import logging
 import os
-import queue
 import threading
 import time
 import traceback
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QPointF, QStandardPaths, Qt, QThread, QTimer, QUrl, Signal
+from PySide6.QtCore import QObject, QPointF, QStandardPaths, Qt, QThread, QUrl, Signal
 from PySide6.QtGui import (
     QAction,
     QCloseEvent,
@@ -25,11 +23,9 @@ from PySide6.QtGui import (
     QDesktopServices,
     QDragEnterEvent,
     QDropEvent,
-    QIcon,
     QKeySequence,
     QPainter,
     QPaintEvent,
-    QPixmap,
 )
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -39,7 +35,6 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
-    QListWidget,
     QListWidgetItem,
     QMainWindow,
     QMenu,
@@ -68,11 +63,10 @@ from fpv_editor.app.cliplist import (
 from fpv_editor.app.clips import clock as clock_short
 from fpv_editor.app.clips import describe_clip
 from fpv_editor.app.dialogs import SettingsDialog, about_text, ask_for_ffmpeg
-from fpv_editor.app.frames import grab_frame
 from fpv_editor.app.logs import start_logging
 from fpv_editor.app.look import DotTitle, StatusDot, app_icon
 from fpv_editor.app.model import ShotList
-from fpv_editor.app.preview import PreviewView
+from fpv_editor.app.review import ReviewPage
 from fpv_editor.app.settings import AppSettings
 from fpv_editor.cli import (
     MONTAGE_SUFFIX,
@@ -84,7 +78,7 @@ from fpv_editor.cli import (
 )
 from fpv_editor.errors import CancelledError, FPVEditError
 from fpv_editor.media import MediaInfo, Tools, find_tools, run_tool
-from fpv_editor.montage import MomentKind, Shot
+from fpv_editor.montage import Shot
 from fpv_editor.render import (
     NVENC,
     EncodeConfig,
@@ -96,8 +90,6 @@ from fpv_editor.render import (
 
 VIDEO_SUFFIXES = (".ts", ".mp4")
 OUTPUT_MARKERS = (MONTAGE_SUFFIX, "_highlight")  # our own renders, skipped in dropped folders
-THUMB_HEIGHT = 72
-TRIM_STEPS = (-0.5, 0.5)
 log = logging.getLogger("fpv_editor.app")
 
 
@@ -137,19 +129,6 @@ def time_left(elapsed: float, share: float) -> str:
     return f"about {round(seconds / 60)} min left"
 
 
-def describe(shot: Shot) -> str:
-    counts: dict[MomentKind, int] = {}
-    for moment in shot.moments:
-        counts[moment.kind] = counts.get(moment.kind, 0) + 1
-    names = [
-        f"{count} {kind.value}{'es' if kind is MomentKind.PROXIMITY else 's'}"
-        if count > 1
-        else kind.value
-        for kind, count in counts.items()
-    ]
-    return ", ".join(names) or "flying"
-
-
 class Task(QThread):
     """Runs ``work(progress)`` in the background; ``cancel()`` stops it at the next report."""
 
@@ -185,36 +164,6 @@ class Task(QThread):
             self.failed.emit(f"Unexpected error:\n{traceback.format_exc()}")
         else:
             self.succeeded.emit(result)
-
-
-class ThumbnailLoader(QThread):
-    """Grabs frames one at a time from a queue of requests."""
-
-    ready = Signal(object, bytes)  # key (path, seconds), PNG
-
-    def __init__(self, tools: Tools, parent: QObject) -> None:
-        super().__init__(parent)
-        self._tools = tools
-        self._requests: queue.Queue[tuple[MediaInfo, float] | None] = queue.Queue()
-
-    def request(self, info: MediaInfo, seconds: float) -> None:
-        self._requests.put((info, seconds))
-
-    def stop(self) -> None:
-        while not self._requests.empty():  # drop what is still waiting
-            try:
-                self._requests.get_nowait()
-            except queue.Empty:
-                break
-        self._requests.put(None)
-        self.wait()
-
-    def run(self) -> None:
-        while (request := self._requests.get()) is not None:
-            info, seconds = request
-            png = grab_frame(self._tools, info, seconds, THUMB_HEIGHT)
-            if png is not None:
-                self.ready.emit((info.path, seconds), png)
 
 
 def heading(text: str) -> QLabel:
@@ -324,11 +273,6 @@ class MainWindow(QMainWindow):
         self._task_page = self.CLIPS  # where to return if the work fails or is cancelled
         self._output: Path | None = None  # chosen by the user; None = automatic name
         self._force = False  # the user confirmed replacing ``_output``
-        self._thumbs: dict[tuple[Path, float], QPixmap] = {}
-        self._requested: set[tuple[Path, float]] = set()
-        self._loop: tuple[float, float] | None = None  # preview range, seconds
-        self._alts: list[Shot] = []  # the shots offered by the chooser, in list order
-        self._choosing: str | None = None  # "swap" or "add" while the chooser is open
         self._last_output: Path | None = None
         self._last_summary = ""
         self._fonts = theme.load_fonts()
@@ -344,10 +288,6 @@ class MainWindow(QMainWindow):
         self._reader.failed.connect(self._clip_unreadable)
         self._reader.thumbnail.connect(self._clip_thumbnail)
         self._reader.start()
-
-        self._loader = ThumbnailLoader(tools, self)
-        self._loader.ready.connect(self._thumbnail_ready)
-        self._loader.start()
 
         self._build()
         self._build_menus()
@@ -526,110 +466,8 @@ class MainWindow(QMainWindow):
         return page
 
     def _build_review_page(self) -> QWidget:
-        # The preview, with what you can do to the shot on screen right under it.
-        self._video = PreviewView(self._tools)
-        self._video.timeChanged.connect(self._show_time)
-        self._caption_left = eyebrow()
-        self._now = eyebrow()
-        caption = QHBoxLayout()
-        caption.addWidget(self._caption_left)
-        caption.addStretch(1)
-        caption.addWidget(self._now)
-
-        self._previous = button("←", lambda: self._step_shot(-1))
-        self._previous.setToolTip("Previous shot")
-        self._next = button("→", lambda: self._step_shot(1))
-        self._next.setToolTip("Next shot")
-        self._trim_buttons: list[QPushButton] = []
-        controls = QHBoxLayout()
-        controls.setSpacing(6)
-        controls.addWidget(self._previous)
-        controls.addWidget(self._next)
-        controls.addSpacing(16)
-        for end in (False, True):
-            controls.addWidget(eyebrow("END" if end else "START"))
-            for step in TRIM_STEPS:
-                trim = button(f"{step:+g}S", functools.partial(self._trim, end, step))
-                trim.setToolTip(
-                    f"{'Lengthen' if (step > 0) == end else 'Shorten'} the shot at its "
-                    f"{'end' if end else 'start'} by {abs(step):g} s"
-                )
-                controls.addWidget(trim)
-                self._trim_buttons.append(trim)
-            controls.addSpacing(12)
-        controls.addStretch(1)
-        self._swap_button = button("SWAP SHOT", lambda: self._open_chooser("swap"))
-        self._swap_button.setToolTip("Pick another shot from the same clip instead")
-        self._remove_shot = button("REMOVE", self._remove_current)
-        controls.addWidget(self._swap_button)
-        controls.addWidget(self._remove_shot)
-
-        stage = QWidget()
-        stage_column = QVBoxLayout(stage)
-        stage_column.setContentsMargins(0, 0, 0, 0)
-        stage_column.setSpacing(10)
-        stage_column.addWidget(self._video, 1)
-        stage_column.addLayout(caption)
-        stage_column.addLayout(controls)
-
-        # Right: the shots in playing order, or (while choosing) other shots to use.
-        self._shot_list = QListWidget()
-        self._shot_list.setIconSize(QPixmap(96, THUMB_HEIGHT).size())
-        self._shot_list.setWordWrap(True)
-        self._shot_list.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
-        self._shot_list.currentRowChanged.connect(self._shot_selected)
-        self._shot_list.model().rowsMoved.connect(lambda *_: QTimer.singleShot(0, self._reorder))
-        self._total = eyebrow()
-        shots_side = QWidget()
-        side = QVBoxLayout(shots_side)
-        side.setContentsMargins(0, 0, 0, 0)
-        side.setSpacing(8)
-        side.addWidget(eyebrow("SHOTS IN PLAYING ORDER   DRAG TO REORDER"))
-        side.addWidget(self._shot_list, 1)
-        side.addWidget(self._total)
-        side.addWidget(button("+  ADD A SHOT", lambda: self._open_chooser("add")))
-
-        self._chooser_title = eyebrow()
-        self._alternatives = QListWidget()
-        self._alternatives.setIconSize(QPixmap(96, THUMB_HEIGHT).size())
-        self._alternatives.setWordWrap(True)
-        self._alternatives.currentRowChanged.connect(self._alternative_selected)
-        self._use = button("USE THIS SHOT", self._use_alternative, primary=True)
-        chooser_buttons = QHBoxLayout()
-        chooser_buttons.addWidget(button("CANCEL", self._close_chooser))
-        chooser_buttons.addStretch(1)
-        chooser_buttons.addWidget(self._use)
-        chooser = QWidget()
-        chooser_column = QVBoxLayout(chooser)
-        chooser_column.setContentsMargins(0, 0, 0, 0)
-        chooser_column.setSpacing(8)
-        chooser_column.addWidget(self._chooser_title)
-        chooser_column.addWidget(self._alternatives, 1)
-        chooser_column.addLayout(chooser_buttons)
-
-        self._side = QStackedWidget()
-        self._side.addWidget(shots_side)
-        self._side.addWidget(chooser)
-        self._side.setFixedWidth(400)
-
-        body = QHBoxLayout()
-        body.setSpacing(24)
-        body.addWidget(stage, 1)
-        body.addWidget(self._side)
-
-        self._review_summary = QLabel()
-        self._review_summary.setProperty("role", "muted")
-        self._review_message = eyebrow()
-        top = QWidget()
-        column = QVBoxLayout(top)
-        column.setContentsMargins(40, 28, 40, 16)
-        column.setSpacing(6)
-        column.addWidget(eyebrow("STEP 3 OF 4"))
-        column.addWidget(heading("Review your montage"))
-        column.addWidget(self._review_summary)
-        column.addSpacing(14)
-        column.addLayout(body, 1)
-        column.addWidget(self._review_message)
+        self._review = ReviewPage(self._tools)
+        self._review.changed.connect(self._review_changed)
 
         self._notes_button = button("", self._show_notes)
         self._notes_button.setProperty("flat", True)
@@ -644,7 +482,7 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        layout.addWidget(top, 1)
+        layout.addWidget(self._review, 1)
         layout.addWidget(bar)
         return page
 
@@ -709,10 +547,6 @@ class MainWindow(QMainWindow):
         menu.addAction(action("Remove all clips", self._clear_clips))
         menu.addSeparator()
         menu.addAction(action("Undo", self._undo, QKeySequence.StandardKey.Undo))
-        delete = action("Remove shot", self._remove_current, QKeySequence.StandardKey.Delete)
-        self.removeAction(delete)  # only while the shot list has focus
-        delete.setShortcutContext(Qt.ShortcutContext.WidgetShortcut)
-        self._shot_list.addAction(delete)
         menu.addSeparator()
         menu.addAction(action("Settings…", self._open_settings, "Ctrl+,"))
         menu.addAction(action("Show the log file", self._show_log))
@@ -724,13 +558,10 @@ class MainWindow(QMainWindow):
 
     def _show_page(self, page: int) -> None:
         if page != self.REVIEW:
-            self._close_chooser()
-            self._video.stop()
+            self._review.deactivate()
         self._pages.setCurrentIndex(page)
         if page == self.REVIEW:
-            row = self._shot_list.currentRow()
-            if row >= 0:
-                self._shot_selected(row)
+            self._review.activate()
         self._refresh_steps()
 
     def _go_to_step(self, step: int) -> None:
@@ -905,6 +736,7 @@ class MainWindow(QMainWindow):
             self._shots = None
             self._set_notes(())
             self._clip_notes.clear()
+            self._review.set_montage((), None)
         self._refresh()
 
     def _length_changed(self, seconds: float) -> None:
@@ -1047,9 +879,9 @@ class MainWindow(QMainWindow):
             f"Picked from {result.footage_duration / 60:.0f} min of usable flying in "
             f"{plural(len(result.clips), 'clip')}."
         )
+        self._review.set_montage(result.infos, self._shots, self._last_summary)
         self._refresh()
         if result.shots:
-            self._shot_list.setCurrentRow(0)
             self._show_page(self.REVIEW)
         else:
             self._show_page(self.CLIPS)
@@ -1062,64 +894,14 @@ class MainWindow(QMainWindow):
 
     # ----- shots -----
 
-    def _info(self, shot: Shot) -> MediaInfo:
-        if self._plan is None:
-            raise RuntimeError("no montage plan")
-        return self._plan.infos[shot.clip]
-
-    def _path(self, shot: Shot) -> Path:
-        return self._info(shot).path
-
-    def _thumb_key(self, shot: Shot) -> tuple[Path, float]:
-        seconds = shot.moments[0].time if shot.moments else (shot.start + shot.end) / 2
-        return (self._path(shot), round(seconds, 2))
-
-    def _icon(self, shot: Shot) -> QIcon:
-        key = self._thumb_key(shot)
-        if key in self._thumbs:
-            return QIcon(self._thumbs[key])
-        if key not in self._requested:
-            self._requested.add(key)
-            self._loader.request(self._info(shot), key[1])
-        return QIcon()
-
-    def _thumbnail_ready(self, key: object, png: bytes) -> None:
-        pixmap = QPixmap()
-        if pixmap.loadFromData(png) and isinstance(key, tuple):
-            self._thumbs[key] = pixmap
-            self._refresh_icons()
-
-    def _shot_text(self, number: int | None, shot: Shot) -> str:
-        prefix = f"{number:02d}   " if number is not None else ""
-        return (
-            f"{prefix}{describe(shot)}\n{self._path(shot).name}   "
-            f"{clock(shot.start)}  ·  {shot.duration:.1f} s"
-        )
-
-    def _refresh(self, *, preview: bool = True) -> None:
-        """Bring every screen up to date; with ``preview`` the shot on screen restarts."""
-        row = self._shot_list.currentRow()
-        self._shot_list.blockSignals(True)
-        self._shot_list.clear()
-        for number, shot in enumerate(self._current_shots(), start=1):
-            item = QListWidgetItem(self._icon(shot), self._shot_text(number, shot))
-            item.setData(Qt.ItemDataRole.UserRole, number - 1)
-            self._shot_list.addItem(item)
-        self._shot_list.blockSignals(False)
-        count = self._shot_list.count()
-        if count:
-            self._shot_list.blockSignals(not preview or not self._on_review())
-            self._shot_list.setCurrentRow(min(max(row, 0), count - 1))
-            self._shot_list.blockSignals(False)
-        else:
-            self._stop_preview()
-            if self._on_review():
-                self._show_page(self.CLIPS)
+    def _refresh(self) -> None:
+        """Bring every screen up to date."""
+        if not self._current_shots() and self._on_review():
+            self._show_page(self.CLIPS)
         clips = self._clips.count()
         self._clip_stack.setCurrentIndex(1 if clips else 0)
         self._clips_bar.setVisible(bool(clips))
         self._refresh_clips()
-        self._refresh_total()
         self._refresh_output()
         self._refresh_buttons()
         self._refresh_steps()
@@ -1127,199 +909,29 @@ class MainWindow(QMainWindow):
     def _on_review(self) -> bool:
         return self._pages.currentIndex() == self.REVIEW
 
-    def _refresh_total(self) -> None:
-        shots = self._current_shots()
-        total = sum(shot.duration for shot in shots)
-        self._total.setText(f"{plural(len(shots), 'SHOT').upper()}   {clock(total)} TOTAL")
-        self._review_summary.setText(
-            f"{plural(len(shots), 'shot')}, {clock(total)} long. {self._last_summary} Click a "
-            "shot to watch it; swap, trim or remove the ones you don't like."
-        )
-
-    def _refresh_icons(self) -> None:
-        for widget, shots in (
-            (self._shot_list, self._current_shots()),
-            (self._alternatives, self._alts),
-        ):
-            for i, shot in enumerate(shots):
-                if i < widget.count():
-                    widget.item(i).setIcon(self._icon(shot))
-
     def _current_shots(self) -> tuple[Shot, ...]:
         return self._shots.shots if self._shots is not None else ()
 
     def _refresh_buttons(self) -> None:
         busy = self._busy()
-        index = self._selected_index()
-        # While choosing another shot, only the chooser's buttons act.
-        selected = index is not None and self._choosing is None
-        for trim in self._trim_buttons:
-            trim.setEnabled(selected and not busy)
-        self._remove_shot.setEnabled(selected and not busy)
-        self._swap_button.setEnabled(selected and not busy)
-        count = len(self._current_shots())
-        self._previous.setEnabled(selected and index is not None and index > 0)
-        self._next.setEnabled(selected and index is not None and index < count - 1)
         self._find.setEnabled(self._clips.count() > 0 and not busy)
-        self._export.setEnabled(bool(count) and not busy)
-        self._use.setEnabled(self._alternatives.currentRow() >= 0 and not busy)
+        self._export.setEnabled(bool(self._current_shots()) and not busy)
         drag = (
             QAbstractItemView.DragDropMode.NoDragDrop
             if busy
             else QAbstractItemView.DragDropMode.InternalMove
         )
         self._clips.setDragDropMode(drag)
-        self._shot_list.setDragDropMode(drag)
 
-    def _selected_index(self) -> int | None:
-        row = self._shot_list.currentRow()
-        return row if row >= 0 and self._shots is not None else None
-
-    def _shot_selected(self, row: int) -> None:
-        if self._shots is not None and 0 <= row < len(self._shots.shots) and self._on_review():
-            self._close_chooser()
-            self._preview(self._shots.shots[row])
-        self._refresh_buttons()
-
-    def _step_shot(self, step: int) -> None:
-        index = self._selected_index()
-        if index is not None:
-            self._shot_list.setCurrentRow(min(max(0, index + step), len(self._current_shots()) - 1))
-
-    def _reorder(self) -> None:
-        if self._shots is None or self._busy():
-            return
-        order = [
-            int(self._shot_list.item(i).data(Qt.ItemDataRole.UserRole))
-            for i in range(self._shot_list.count())
-        ]
-        moved_to = self._shot_list.currentRow()
-        self._shots.reorder(order)
+    def _review_changed(self) -> None:
+        """An edit on the review page."""
         self._refresh()
-        self._shot_list.setCurrentRow(moved_to)
-
-    def _trim(self, end: bool, step: float) -> None:
-        index = self._selected_index()
-        if index is None or self._shots is None or self._busy():
-            return
-        if end:
-            self._shots.trim(index, end=step)
-        else:
-            self._shots.trim(index, start=step)
-        self._refresh(preview=False)
-        shot = self._shots.shots[index]
-        if self._on_review():
-            # An end change plays the last seconds; a start change replays from the start.
-            self._preview(shot, from_seconds=max(shot.start, shot.end - 3) if end else None)
-
-    def _remove_current(self) -> None:
-        index = self._selected_index()
-        if index is not None and self._shots is not None and not self._busy():
-            self._shots.remove(index)
-            self._message("Shot removed. Ctrl+Z brings it back.")
-            self._refresh()
+        self._refresh_buttons()
+        self._refresh_steps()
 
     def _undo(self) -> None:
-        if self._shots is not None and self._shots.can_undo and not self._busy():
-            self._shots.undo()
-            self._refresh()
-
-    def _message(self, text: str) -> None:
-        self._review_message.setText(text.upper())
-
-    # ----- choosing another shot -----
-
-    def _open_chooser(self, mode: str) -> None:
-        if self._shots is None or self._busy():
-            return
-        index = self._selected_index()
-        if mode == "swap":
-            if index is None:
-                return
-            self._alts = self._shots.alternatives(index)
-            title = f"SWAP SHOT {index + 1} FOR ONE OF THESE (SAME CLIP)"
-        else:
-            self._alts = self._shots.alternatives(limit=40)
-            title = "ADD ONE OF THESE SHOTS (ALL CLIPS)"
-        self._choosing = mode
-        self._refresh_buttons()
-        self._chooser_title.setText(title if self._alts else "NO OTHER SHOTS TO OFFER")
-        self._alternatives.blockSignals(True)
-        self._alternatives.clear()
-        for shot in self._alts:
-            self._alternatives.addItem(
-                QListWidgetItem(self._icon(shot), self._shot_text(None, shot))
-            )
-        self._alternatives.blockSignals(False)
-        self._use.setText("USE INSTEAD" if mode == "swap" else "ADD TO MONTAGE")
-        self._side.setCurrentIndex(1)
-        if self._alts:
-            self._alternatives.setCurrentRow(0)
-        self._refresh_buttons()
-
-    def _close_chooser(self) -> None:
-        if self._choosing is None:
-            return
-        self._choosing = None
-        self._side.setCurrentIndex(0)
-        self._refresh_buttons()
-        index = self._selected_index()
-        if index is not None and self._on_review():
-            self._preview(self._current_shots()[index])
-
-    def _alternative_selected(self, row: int) -> None:
-        if 0 <= row < len(self._alts):
-            self._preview(self._alts[row])
-        self._refresh_buttons()
-
-    def _use_alternative(self) -> None:
-        row = self._alternatives.currentRow()
-        if self._shots is None or not 0 <= row < len(self._alts) or self._choosing is None:
-            return
-        chosen = self._alts[row]
-        try:
-            if self._choosing == "swap":
-                index = self._selected_index()
-                if index is None:
-                    return
-                self._shots.replace(index, chosen)
-                position = index
-                self._message(f"Shot {index + 1} swapped. Ctrl+Z undoes it.")
-            else:
-                position = self._shots.add(chosen)
-                self._message(f"Shot added as number {position + 1}. Ctrl+Z undoes it.")
-        except ValueError as exc:
-            self._message(f"Not possible: {exc}.")
-            return
-        self._choosing = None
-        self._side.setCurrentIndex(0)
-        self._refresh()
-        self._shot_list.setCurrentRow(position)
-
-    # ----- preview -----
-
-    def _preview(self, shot: Shot, from_seconds: float | None = None) -> None:
-        self._loop = (shot.start, shot.end)
-        shots = self._current_shots()
-        if shot in shots and self._choosing is None:
-            number = shots.index(shot) + 1
-            self._caption_left.setText(
-                f"FIG. {number:02d}   SHOT {number} OF {len(shots)}   {describe(shot).upper()}"
-            )
-        else:
-            self._caption_left.setText(f"PREVIEW   NOT IN THE MONTAGE   {describe(shot).upper()}")
-        self._video.play(self._info(shot), shot.start, shot.end, from_seconds)
-
-    def _show_time(self, seconds: float) -> None:
-        if self._loop is not None:
-            start, end = self._loop
-            self._now.setText(f"{clock(seconds)}   ({clock(start)} to {clock(end)})")
-
-    def _stop_preview(self) -> None:
-        self._loop = None
-        self._caption_left.setText("")
-        self._video.clear_picture()
-        self._now.setText("")
+        if self._on_review() and not self._busy():
+            self._review.undo()
 
     # ----- export -----
 
@@ -1430,6 +1042,7 @@ class MainWindow(QMainWindow):
         self._title.set_colour(palette.text)
         self._done_title.set_colour(palette.text)
         self._dot.set_colours(palette.faint, palette.accent)
+        self._review.set_theme(palette, self._fonts)
         self._theme_button.setText("LIGHT" if palette is theme.DARK else "DARK")
         self._settings.theme = palette.name
 
@@ -1467,7 +1080,7 @@ class MainWindow(QMainWindow):
         self._show_progress("Starting…", 0.0, "")
         self._dot.set_busy(True)
         self._cancel.setEnabled(True)
-        self._video.stop()
+        self._review.deactivate()
         self._pages.setCurrentIndex(self.WORK)
         self._refresh_buttons()
         self._refresh_steps()
@@ -1520,8 +1133,7 @@ class MainWindow(QMainWindow):
         self._settings.geometry = self.saveGeometry()
         self._analysis.shutdown()
         self._reader.stop()
-        self._loader.stop()
-        self._video.stop()
+        self._review.shutdown()
         super().closeEvent(event)
 
     # ----- menu -----

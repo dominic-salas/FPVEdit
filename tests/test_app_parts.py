@@ -92,3 +92,31 @@ def test_recording_time_comes_from_the_name_or_the_file(tmp_path: Path) -> None:
     assert fallback is not None and not fallback.from_name
     assert recorded_at(tmp_path / "missing.mp4") is None
     assert (clock(189.9), clock(59.4), clock(3723)) == ("3:10", "0:59", "1:02:03")
+
+
+def test_timeline_click_picks_and_drag_moves_a_shot() -> None:
+    from PySide6.QtCore import QPoint, Qt
+    from PySide6.QtTest import QTest
+
+    from fpv_editor.app.timeline import RULER, Block, Timeline
+
+    QApplication.instance() or QApplication([])
+    timeline = Timeline()
+    timeline.resize(306, 90)
+    timeline.set_blocks([Block(10.0, i, f"{i}", "", None) for i in range(3)])
+    picked: list[tuple[int, float]] = []
+    moved: list[tuple[int, int]] = []
+    seeked: list[float] = []
+    timeline.picked.connect(lambda i, share: picked.append((i, share)))
+    timeline.moved.connect(lambda i, gap: moved.append((i, gap)))
+    timeline.seeked.connect(seeked.append)
+    y = RULER + 20
+    QTest.mouseClick(timeline, Qt.MouseButton.LeftButton, pos=QPoint(150, y))
+    assert picked and picked[0][0] == 1 and 0.4 < picked[0][1] < 0.6
+    QTest.mousePress(timeline, Qt.MouseButton.LeftButton, pos=QPoint(20, y))
+    QTest.mouseMove(timeline, QPoint(120, y))
+    QTest.mouseMove(timeline, QPoint(290, y))
+    QTest.mouseRelease(timeline, Qt.MouseButton.LeftButton, pos=QPoint(290, y))
+    assert moved == [(0, 3)]  # the first shot dropped after the last
+    QTest.mouseClick(timeline, Qt.MouseButton.LeftButton, pos=QPoint(250, 4))  # the ruler
+    assert len(seeked) == 1 and 24 < seeked[0] < 26
