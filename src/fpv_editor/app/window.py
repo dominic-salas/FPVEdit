@@ -571,6 +571,8 @@ class MainWindow(QMainWindow):
     # ----- steps -----
 
     def _show_page(self, page: int) -> None:
+        if page == self.CLIPS:
+            self._refresh_clips()  # catch up on progress made while another page was shown
         if page != self.REVIEW:
             self._review.deactivate()
         if page != self.RATE:
@@ -885,9 +887,10 @@ class MainWindow(QMainWindow):
         return (done / total if total else 1.0), text
 
     def _analysis_changed(self) -> None:
-        self._refresh_clips()
         if self._pages.currentIndex() == self.RATE:
-            self._feed_rating()
+            self._feed_rating()  # the clip cards are not on screen: keep the player smooth
+            return
+        self._refresh_clips()
         if self._finding is None:
             return
         share, text = self._analysed_share()

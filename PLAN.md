@@ -160,6 +160,13 @@ Details and per-claim evidence: `docs/review-2026-10-11.md`.
 ## Validation log
 (newest first; exact commands and outcomes)
 
+### 2026-10-18 — Smooth playback while clips analyse (Dom's PC, offscreen)
+- Dom: he cannot watch shots properly because so much happens in the background.
+- Measured on the rating screen (one shot looping while the 18 testdata1 recordings analyse uncached; 10 s): 29.2 frames/s on average but the 99th percentile gap between frames was 238-240 ms (stutter); with nothing in the background it is 35 ms.
+- Changes: analysis worker processes (and the FFmpeg they start) run below normal priority, so the player's decoder and the window come first; while the rating screen is shown, the clip cards are not refreshed on every progress report (they catch up when step 1 is shown again). The window's event loop stayed responsive throughout (10 ms timer: 99th percentile 24 ms).
+- After: 99th percentile gap 53-59 ms over three runs (one run 161 ms with only the priority change).
+- Checks: pytest passed.
+
 ### 2026-10-18 — Many clips load faster (Dom's PC)
 - Dom: loading many clips takes too long (his `D:\clips` has 205 recordings, 79 GB; 106 are already measured for the current code, 99 with 267 min of footage are not).
 - Measured on the 18 testdata1 recordings, nothing cached: all probed after 5.8 s, first shot to rate after 143 s, all analysed after 302 s. Analysis runs about 12x real time on this PC whether 6 or 12 worker processes run (12 clips, 47 min: 240 s vs 235 s; the GPU was 92 % busy with Dom's other project at the time), so more workers were not added.

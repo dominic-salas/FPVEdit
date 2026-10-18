@@ -12,7 +12,9 @@ from __future__ import annotations
 import heapq
 import logging
 import multiprocessing
+import os
 import queue
+import sys
 from collections import deque
 from concurrent.futures import Future, ProcessPoolExecutor
 from dataclasses import dataclass
@@ -48,6 +50,19 @@ class ClipState:
     @property
     def finished(self) -> bool:
         return self.result is not None or self.error is not None
+
+
+def background_priority() -> None:
+    """Run this worker process (and the FFmpeg it starts) below normal priority, so the
+    window and the shot playing in it stay smooth while clips are analysed."""
+    if sys.platform == "win32":
+        import ctypes
+
+        below_normal = 0x4000  # BELOW_NORMAL_PRIORITY_CLASS; child processes inherit it
+        kernel32 = ctypes.windll.kernel32
+        kernel32.SetPriorityClass(kernel32.GetCurrentProcess(), below_normal)
+    else:
+        os.nice(10)
 
 
 class BackgroundAnalysis(QObject):
@@ -167,7 +182,9 @@ class BackgroundAnalysis(QObject):
         self._manager = context.Manager()
         self._shares = self._manager.Queue()
         self._stop = self._manager.Event()
-        self._pool = ProcessPoolExecutor(self._workers, mp_context=context)
+        self._pool = ProcessPoolExecutor(
+            self._workers, mp_context=context, initializer=background_priority
+        )
         return self._pool
 
     def _poll(self) -> None:
