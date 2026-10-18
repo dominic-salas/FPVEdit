@@ -9,9 +9,11 @@ measurement cache makes the next session's analysis of the same clips quick too.
 
 from __future__ import annotations
 
+import heapq
 import logging
 import multiprocessing
 import queue
+from collections import deque
 from concurrent.futures import Future, ProcessPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,7 +21,14 @@ from typing import Any
 
 from PySide6.QtCore import QObject, QTimer, Signal
 
-from fpv_editor.cli import ClipJob, ClipResult, PipelineConfig, default_workers, plan_in_worker
+from fpv_editor.cli import (
+    ClipJob,
+    ClipResult,
+    PipelineConfig,
+    default_workers,
+    is_cached,
+    plan_in_worker,
+)
 from fpv_editor.errors import CancelledError, FPVEditError
 from fpv_editor.media import MediaInfo, Tools
 
@@ -60,6 +69,10 @@ class BackgroundAnalysis(QObject):
         self._workers = workers if workers is not None else default_workers()
         self._states: dict[Path, ClipState] = {}
         self._futures: dict[Path, Future[ClipResult]] = {}
+        # Clips waiting for a worker: already measured ones (cached, seconds each) go first,
+        # then the shortest, so with many clips the first results come quickly.
+        self._cached: deque[Path] = deque()
+        self._uncached: list[tuple[float, int, Path]] = []  # heap of (length, order, clip)
         self._ids: dict[int, Path] = {}  # job index -> clip
         self._next_id = 0
         self._manager: Any = None
@@ -77,19 +90,41 @@ class BackgroundAnalysis(QObject):
         """Start analysing ``info`` unless it is analysed, under way or waiting already."""
         path = info.path.resolve()
         state = self._states.get(path)
-        if state is not None and (state.result is not None or path in self._futures):
+        waiting = path in self._cached or any(item[2] == path for item in self._uncached)
+        if state is not None and (state.result is not None or path in self._futures or waiting):
             return
-        pool = self._start_pool()
         job_id = self._next_id
         self._next_id += 1
         self._ids[job_id] = path
         self._states[path] = ClipState(info, job_id)
-        job = ClipJob(
-            self._tools, info, job_id, self._config, self._config.montage, self._cache_dir
+        cached = self._cache_dir is not None and is_cached(
+            self._tools, info, self._cache_dir, self._config
         )
-        self._futures[path] = pool.submit(plan_in_worker, job, self._shares, self._stop)
-        self._timer.start()
+        if cached:
+            self._cached.append(path)
+        else:
+            heapq.heappush(self._uncached, (info.duration or 0.0, job_id, path))
+        self._submit_more()
         self.changed.emit()
+
+    def _submit_more(self) -> None:
+        """Keep the workers busy with a short line, cached clips first."""
+        while len(self._futures) < 2 * self._workers and (self._cached or self._uncached):
+            path = self._cached.popleft() if self._cached else heapq.heappop(self._uncached)[2]
+            state = self._states.get(path)
+            if state is None:
+                continue
+            pool = self._start_pool()
+            job = ClipJob(
+                self._tools,
+                state.info,
+                state.job,
+                self._config,
+                self._config.montage,
+                self._cache_dir,
+            )
+            self._futures[path] = pool.submit(plan_in_worker, job, self._shares, self._stop)
+            self._timer.start()
 
     def retry_failed(self) -> None:
         """Clips whose analysis failed get one more try (a file that was still copying)."""
@@ -107,6 +142,10 @@ class BackgroundAnalysis(QObject):
             state = self._states.get(path)
             if state is not None and not state.finished:
                 del self._states[path]
+        for path in [*self._cached, *(item[2] for item in self._uncached)]:
+            self._states.pop(path, None)
+        self._cached.clear()
+        self._uncached.clear()
         self._futures.clear()
         self.changed.emit()
 
@@ -163,6 +202,7 @@ class BackgroundAnalysis(QObject):
             except Exception as exc:  # a defect in a worker: keep the app running, log it
                 log.exception("analysing %s failed", path.name)
                 state.error = f"unexpected error: {exc}"
+        self._submit_more()
         if not self._futures:
             self._timer.stop()
         if changed:
