@@ -1163,6 +1163,7 @@ class MainWindow(QMainWindow):
         dialog = SettingsDialog(self._settings, self._cache_dir, self)
         if dialog.exec():
             self._refresh_output()
+            self._review.refresh()  # the timeline colours may have changed
 
     def _show_log(self) -> None:
         if self._log_file is not None:

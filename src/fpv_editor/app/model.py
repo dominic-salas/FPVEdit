@@ -177,3 +177,20 @@ def drop_position(dragged: int, gap: int) -> int:
     """`ShotList.move` target for a shot at ``dragged`` dropped into ``gap`` (0 = before
     the first shot, n = after the last)."""
     return gap if gap <= dragged else gap - 1
+
+
+def strength(shot: Shot) -> float:
+    """What the montage ranks shots by: moments and speed per square root of length."""
+    return float(shot.score / shot.duration**0.5)
+
+
+def rating(shot: Shot, montage: Sequence[Shot]) -> int:
+    """1-5 stars for ``shot`` against the shots of ``montage``: where it falls among them
+    (5 is the top fifth). Relative to this montage, so the weakest shot of a great
+    session still gets 1; one shot alone gets 3."""
+    others = [strength(s) for s in montage if s != shot]
+    if not others:
+        return 3
+    value = strength(shot)
+    below = sum(1 for o in others if o < value) + 0.5 * sum(1 for o in others if o == value)
+    return min(5, 1 + int(5 * below / len(others)))

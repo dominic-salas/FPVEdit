@@ -89,3 +89,12 @@ class AppSettings:
     @open_folder_after_export.setter
     def open_folder_after_export(self, value: bool) -> None:
         self._store.setValue("export/open_folder", "true" if value else "false")
+
+    @property
+    def colour_by_rating(self) -> bool:
+        """Timeline blocks coloured by their 1-5 rating instead of by recording."""
+        return str(self._store.value("review/colour_by_rating", "true")).lower() == "true"
+
+    @colour_by_rating.setter
+    def colour_by_rating(self, value: bool) -> None:
+        self._store.setValue("review/colour_by_rating", "true" if value else "false")

@@ -86,6 +86,9 @@ class SettingsDialog(QDialog):
 
         form = QFormLayout(self)
         form.addRow("Video encoding", self._encoder)
+        self._rating = QCheckBox("Colour shots on the timeline by rating (1-5) instead of by clip")
+        self._rating.setChecked(settings.colour_by_rating)
+        form.addRow("Review", self._rating)
         form.addRow("Save montages in", folder_row)
         form.addRow("Saved measurements", cache_row)
         form.addRow(buttons)
@@ -112,6 +115,7 @@ class SettingsDialog(QDialog):
 
     def _save(self) -> None:
         self._settings.encoder = str(self._encoder.currentData())
+        self._settings.colour_by_rating = self._rating.isChecked()
         self._settings.output_folder = self._folder
         self.accept()
 

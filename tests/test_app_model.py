@@ -125,3 +125,12 @@ def test_montage_timeline_maps_both_ways() -> None:
     assert (drop_position(0, 2), drop_position(2, 0), drop_position(1, 1)) == (1, 0, 1)
     with pytest.raises(ValueError):
         locate([], 1)
+
+
+def test_ratings_are_relative_to_the_montage() -> None:
+    from fpv_editor.app.model import rating
+
+    shots = [shot(0, 20 * i, 20 * i + 9, score=float(i + 1)) for i in range(10)]
+    stars = [rating(s, shots) for s in shots]
+    assert stars == sorted(stars) and stars[0] == 1 and stars[-1] == 5
+    assert rating(shots[0], shots[:1]) == 3  # nothing to compare with

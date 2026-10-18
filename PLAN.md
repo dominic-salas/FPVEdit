@@ -160,6 +160,11 @@ Details and per-claim evidence: `docs/review-2026-10-11.md`.
 ## Validation log
 (newest first; exact commands and outcomes)
 
+### 2026-10-18 — Shot ratings on the timeline (Dom's PC, offscreen)
+- Dom (2026-10-18): give each shot a rating and colour the timeline by it, with a switch in Settings.
+- Rating (`app/model.rating`): 1-5 stars by where a shot's strength (moments and speed per sqrt(second), what the montage ranks by) falls among the montage's other shots; 5 is the top fifth. It is relative to this montage and is not a measure of how good a trick is in general. Timeline blocks are tinted red (1) to green (5) and labelled with their stars; the shot panel shows the stars, Add a shot and Swap show where a candidate would fall; the side panel explains the colours. Settings: "Colour shots on the timeline by rating", on by default; off shows the recording colours as before.
+- Checks: offscreen screenshots (3 testdata1 clips, 22 shots); ruff, format, mypy clean; pytest 219 passed.
+
 ### 2026-10-18 — FLAC music on the SD card, coloured control hints (Dom's PC)
 - Dom (2026-10-18): exporting with two FLAC tracks (with cover art) failed with "adding the music failed ... Error submitting a packet to the muxer: Invalid argument"; the log shows the montage was being saved to `F:\DCIM\100HDZRO`, the DVR's FAT32 SD card. The same two tracks muxed fine here into the PC's drive (synthetic 10, 300 and 600 s videos, and real CLI montages of `clip 1.mp4` and `20261010-203859.ts`), so the card is the likely cause; not reproduced on a FAT32 volume (none here, and Dom's card was not written to). Fix: the music is muxed in the local temporary folder and the finished file copied next to the output. New test: FLAC with an attached cover picture, twice. Waiting on Dom to retry on the card.
 - Dom had not chosen the card: he added clips from it, and the app saved montages beside the first clip by default. Now the app saves to the folder used last unless it holds the clips or is on a removable drive (checked with GetDriveTypeW; F: is removable here), and otherwise to `Videos\FPV Editor`; a folder on a removable drive picked in the export window is used once but not remembered. The CLI still writes beside the first input unless `-o` is given. New test for the choice of folder; app tests 18 passed.

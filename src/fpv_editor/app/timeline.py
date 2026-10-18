@@ -41,6 +41,18 @@ GAP = 3  # px between blocks
 DRAG_START = 5  # px the mouse moves before a press becomes a drag
 
 
+# 1 to 5 stars: red, orange, yellow, light green, green.
+RATING_COLOURS = ("#d9534f", "#e8873a", "#e3c341", "#9cc24f", "#3fb37f")
+
+
+def rating_colour(stars: int) -> str:
+    return RATING_COLOURS[min(5, max(1, stars)) - 1]
+
+
+def stars_text(stars: int) -> str:
+    return "★" * stars + "☆" * (5 - stars)
+
+
 def clip_colour(clip: int) -> str:
     return CLIP_COLOURS[clip % len(CLIP_COLOURS)]
 
@@ -52,6 +64,7 @@ class Block:
     label: str  # e.g. "03  low light.mp4"
     tooltip: str
     thumbnail: QPixmap | None
+    colour: str | None = None  # instead of the recording's colour (e.g. the rating's)
 
 
 def _tick_step(total: float, width: int) -> float:
@@ -267,7 +280,7 @@ class Timeline(QWidget):
         self, painter: QPainter, block: Block, rect: QRectF, index: int, faded: bool
     ) -> None:
         p = self._palette
-        colour = QColor(clip_colour(block.clip))
+        colour = QColor(block.colour or clip_colour(block.clip))
         painter.save()
         if faded:
             painter.setOpacity(0.35)
@@ -289,7 +302,12 @@ class Timeline(QWidget):
         shade.setColorAt(0.0, QColor(0, 0, 0, 40))
         shade.setColorAt(1.0, QColor(0, 0, 0, 190))
         painter.fillRect(rect, shade)
-        painter.fillRect(QRectF(rect.left(), rect.top(), rect.width(), 3), colour)
+        if block.colour:  # rated: the whole block takes the rating's colour
+            tinted = QColor(colour)
+            tinted.setAlpha(110)
+            painter.fillRect(rect, tinted)
+        stripe = 5 if block.colour else 3
+        painter.fillRect(QRectF(rect.left(), rect.top(), rect.width(), stripe), colour)
         if rect.width() > 26:
             painter.setPen(QColor("#ffffff"))
             label_rect = QRect(
