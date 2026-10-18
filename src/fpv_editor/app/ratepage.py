@@ -10,9 +10,10 @@ from __future__ import annotations
 
 import functools
 import random
+import time
 from collections.abc import Callable
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
@@ -22,7 +23,8 @@ from fpv_editor.app.timeline import rating_colour
 from fpv_editor.media import MediaInfo, Tools
 from fpv_editor.montage import Shot
 
-GOAL = 40  # ratings that are enough to tune the rating to Dom's taste
+GOAL = 150  # ratings for learning Dom's taste from what the shots show
+MIN_WATCH_S = 1.0  # a rating within this long of a shot appearing is ignored
 WORDS = {1: "BORING", 2: "MEH", 3: "OK", 4: "GOOD", 5: "SICK"}
 
 
@@ -62,6 +64,8 @@ class RatePage(QWidget):
         self._seen: set[str] = set()  # shots queued or skipped this session
         self._current: tuple[MediaInfo, Shot] | None = None
         self._rated_now = 0
+        self._last: tuple[MediaInfo, Shot] | None = None  # the shot rated last (for undo)
+        self._shown_at = 0.0  # when the shot on screen started (time.monotonic)
         self._waiting = False  # clips are still being analysed
 
         self._video = PreviewView(tools)
@@ -82,8 +86,10 @@ class RatePage(QWidget):
         controls = QHBoxLayout()
         controls.addWidget(_button("←  BACK", self.back.emit))
         controls.addStretch(1)
-        controls.addWidget(_label("PRESS 1-5 TO RATE   S TO SKIP"))
+        controls.addWidget(_label("PRESS 1-5 TO RATE   S TO SKIP   BACKSPACE TO UNDO"))
         controls.addStretch(1)
+        self._undo_button = _button("↶  UNDO LAST", self.undo)
+        controls.addWidget(self._undo_button)
         controls.addWidget(_button("SKIP  →", self.skip))
 
         column = QVBoxLayout(self)
@@ -92,6 +98,8 @@ class RatePage(QWidget):
         column.addWidget(_label("RATE SHOTS"))
         column.addWidget(_label("How good is this shot?", "heading"))
         column.addWidget(self._progress)
+        self._note = _label()
+        column.addWidget(self._note)
         column.addWidget(self._video, 1)
         column.addWidget(self._about)
         column.addLayout(stars)
@@ -100,6 +108,11 @@ class RatePage(QWidget):
         for number in range(1, 6):
             key = QShortcut(QKeySequence(str(number)), self, functools.partial(self.rate, number))
             key.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+            key.setAutoRepeat(False)  # a held key gives one rating, not one per repeat
+        for sequence in ("Backspace", "Ctrl+Z"):
+            undo = QShortcut(QKeySequence(sequence), self, self.undo)
+            undo.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+            undo.setAutoRepeat(False)
         for sequence in ("S", "Right"):
             skip = QShortcut(QKeySequence(sequence), self, self.skip)
             skip.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
@@ -143,6 +156,8 @@ class RatePage(QWidget):
     def rate(self, stars: int) -> None:
         if self._current is None:
             return
+        if time.monotonic() - self._shown_at < MIN_WATCH_S:
+            return  # too soon to have seen it: a key pressed twice or held
         info, shot = self._current
         try:
             self._mine.rate(info.path, shot, stars)
@@ -150,7 +165,32 @@ class RatePage(QWidget):
             self._about.setText(f"COULD NOT SAVE YOUR RATING: {exc}")
             return
         self._rated_now += 1
+        self._last = self._current
         self._next()
+        self._toast(f"SAVED {stars}★ FOR THE LAST SHOT   BACKSPACE UNDOES IT")
+
+    def undo(self) -> None:
+        """Forget the last rating and show that shot again."""
+        if self._last is None:
+            return
+        info, shot = self._last
+        try:
+            self._mine.unrate(info.path, shot)
+        except OSError as exc:
+            self._about.setText(f"COULD NOT UNDO: {exc}")
+            return
+        if self._current is not None:
+            self._queue.insert(0, self._current)
+        self._current, self._last = self._last, None
+        self._show_progress()
+        self._play()
+        self._toast("RATING UNDONE: RATE THIS SHOT AGAIN")
+
+    def _toast(self, text: str) -> None:
+        self._note.setText(text)
+        QTimer.singleShot(
+            2500, lambda: self._note.setText("") if self._note.text() == text else None
+        )
 
     def skip(self) -> None:
         if self._current is not None:
@@ -173,6 +213,7 @@ class RatePage(QWidget):
         if self._current is None:
             return
         info, shot = self._current
+        self._shown_at = time.monotonic()
         self._video.play([Segment(info, shot.start, shot.end)], loop=True)
         tricks = ", ".join(dict.fromkeys(m.name for m in shot.moments)) or "flying"
         self._about.setText(

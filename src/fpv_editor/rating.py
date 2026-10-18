@@ -47,10 +47,10 @@ TRICK_VALUES = {
     "spin": 0.35,
     "close pass": 0.35,
 }
-# Score at which 2, 3, 4 and 5 stars begin, matched to how Dom spread his own 50 ratings
-# (12 % 1 star, 22 % 2, 58 % 3, 4 % 4, 4 % 5), so the stars read on his scale: most shots
-# are an OK 3, and 4 or 5 stars are rare.
-STAR_BOUNDS = (0.57, 0.62, 0.81, 0.83)
+# Score at which 2, 3, 4 and 5 stars begin, matched to how Dom spread his own 39 ratings
+# (15 % 1 star, 28 % 2, 46 % 3, 5 % 4, 5 % 5; 11 ratings a held key made were removed), so
+# the stars read on his scale: most shots are an OK 3, and 4 or 5 stars are rare.
+STAR_BOUNDS = (0.59, 0.63, 0.77, 0.81)
 
 
 @dataclass(frozen=True)

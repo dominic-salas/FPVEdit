@@ -356,6 +356,10 @@ class MainWindow(QMainWindow):
         buttons.setSpacing(8)
         buttons.addWidget(button("ADD CLIPS", self._choose_clips, primary=True))
         buttons.addWidget(button("ADD A FOLDER", self._choose_folder))
+        buttons.addSpacing(24)
+        self._quick_rate = button("★  JUST RATE SHOTS", self._rate_folder)
+        self._quick_rate.setToolTip("Pick a folder of recordings and rate their shots, no montage")
+        buttons.addWidget(self._quick_rate)
         buttons.addStretch(1)
         zone = QVBoxLayout(self._drop_zone)
         zone.setContentsMargins(72, 48, 72, 48)
@@ -718,6 +722,16 @@ class MainWindow(QMainWindow):
         if names:
             self._settings.clip_folder = Path(names[0]).parent
             self.add_paths([Path(n) for n in names])
+
+    def _rate_folder(self) -> None:
+        """Straight to rating: the clips of a folder (the last one used is offered first)."""
+        start = str(self._settings.clip_folder or "")
+        name = QFileDialog.getExistingDirectory(self, "Rate the shots of the clips in", start)
+        if not name:
+            return
+        self._settings.clip_folder = Path(name)
+        self.add_paths([Path(name)])
+        self._open_rating()
 
     def _choose_folder(self) -> None:
         start = str(self._settings.clip_folder or "")
