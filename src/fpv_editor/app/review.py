@@ -29,11 +29,18 @@ from PySide6.QtWidgets import (
 
 from fpv_editor.app import theme
 from fpv_editor.app.frames import grab_frame
-from fpv_editor.app.model import ShotList, drop_position, locate, montage_time, shot_starts
+from fpv_editor.app.model import (
+    ShotList,
+    drop_position,
+    locate,
+    montage_time,
+    rating,
+    shot_starts,
+)
 from fpv_editor.app.music import MusicPreview
 from fpv_editor.app.preview import PREVIEW_HEIGHT, PreviewView, Segment
 from fpv_editor.app.settings import AppSettings
-from fpv_editor.app.timeline import Block, Timeline, clip_colour
+from fpv_editor.app.timeline import Block, Timeline, clip_colour, rating_colour, stars_text
 from fpv_editor.errors import FPVEditError
 from fpv_editor.media import MUSIC_SUFFIXES, AudioFile, MediaInfo, Tools, probe_audio
 from fpv_editor.montage import Shot
@@ -312,7 +319,8 @@ class ReviewPage(QWidget):
         column.setSpacing(8)
         column.addWidget(label("THE MONTAGE"))
         column.addWidget(self._overview_total)
-        column.addWidget(label("RECORDINGS ON THE TIMELINE"))
+        self._legend_title = label()
+        column.addWidget(self._legend_title)
         column.addWidget(self._legend)
         column.addWidget(button("+  ADD A SHOT", lambda: self._open_chooser("add")))
         column.addSpacing(18)
@@ -606,29 +614,47 @@ class ReviewPage(QWidget):
         """Bring the timeline, the panels and the texts up to date."""
         shots = self._current()
         total = self._total()
-        blocks = [
-            Block(
-                duration=shot.duration,
-                clip=shot.clip,
-                label=f"{number:02d}  {self._name(shot)}",
-                tooltip=(
-                    f"Shot {number}: {describe(shot)}\n{self._name(shot)}, "
-                    f"{clock(shot.start)} to {clock(shot.end)} ({shot.duration:.1f} s)"
-                ),
-                thumbnail=self._thumbnail(shot),
+        by_rating = self._settings.colour_by_rating
+        blocks = []
+        for number, shot in enumerate(shots, start=1):
+            stars = rating(shot, shots)
+            blocks.append(
+                Block(
+                    duration=shot.duration,
+                    clip=shot.clip,
+                    label=f"{number:02d}  {stars}★"
+                    if by_rating
+                    else f"{number:02d}  {self._name(shot)}",
+                    tooltip=(
+                        f"Shot {number}: {describe(shot)}, {stars_text(stars)}\n"
+                        f"{self._name(shot)}, {clock(shot.start)} to {clock(shot.end)} "
+                        f"({shot.duration:.1f} s)"
+                    ),
+                    thumbnail=self._thumbnail(shot),
+                    colour=rating_colour(stars) if by_rating else None,
+                )
             )
-            for number, shot in enumerate(shots, start=1)
-        ]
         self._timeline.set_blocks(blocks)
         self._timeline.set_selected(self._selected if self._mode != "preview" else None)
         self._timeline.set_position(self._position)
         used = sorted({shot.clip for shot in shots})
-        self._legend.setText(
-            "<br>".join(
-                f"<span style='color:{clip_colour(clip)}'>■</span> {self._infos[clip].path.name}"
-                for clip in used
+        if by_rating:
+            self._legend_title.setText("TIMELINE COLOURS: RATING IN THIS MONTAGE")
+            self._legend.setText(
+                "  ".join(
+                    f"<span style='color:{rating_colour(n)}'>■</span> {n}★" for n in range(1, 6)
+                )
+                + "<br>5★ is the top fifth of these shots (tricks, passes, speed)"
             )
-        )
+        else:
+            self._legend_title.setText("TIMELINE COLOURS: RECORDINGS")
+            self._legend.setText(
+                "<br>".join(
+                    f"<span style='color:{clip_colour(clip)}'>■</span> "
+                    f"{self._infos[clip].path.name}"
+                    for clip in used
+                )
+            )
         self._overview_total.setText(f"{plural(len(shots), 'shot')}, {clock(total)}")
         self._refresh_music()
         self._heading_summary.setText(
@@ -647,7 +673,11 @@ class ReviewPage(QWidget):
             return
         shot = shots[index]
         self._side.setCurrentIndex(1)
-        self._shot_number.setText(f"SHOT {index + 1:02d} OF {len(shots):02d}")
+        stars = rating(shot, shots)
+        self._shot_number.setText(
+            f"SHOT {index + 1:02d} OF {len(shots):02d}   "
+            f"<span style='color:{rating_colour(stars)}'>{stars_text(stars)}</span>"
+        )
         pixmap = self._thumbnail(shot)
         if pixmap is not None:
             self._shot_picture.setPixmap(
@@ -879,9 +909,10 @@ class ReviewPage(QWidget):
         for shot in self._alts:
             pixmap = self._thumbnail(shot)
             icon = QIcon(pixmap) if pixmap is not None else QIcon()
+            stars = rating(shot, [*self._current(), shot])
             text = (
-                f"{describe(shot)}\n{self._name(shot)}   {clock(shot.start)}  ·  "
-                f"{shot.duration:.1f} s"
+                f"{stars_text(stars)}  {describe(shot)}\n{self._name(shot)}   "
+                f"{clock(shot.start)}  ·  {shot.duration:.1f} s"
             )
             self._alternatives.addItem(QListWidgetItem(icon, text))
         self._alternatives.blockSignals(False)
