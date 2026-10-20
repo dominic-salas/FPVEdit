@@ -78,6 +78,7 @@ class Quality:
     watchable: float
     reasons: tuple[str, ...]  # short notes for the shot panel, best first
     indoorness: float | None = None  # from the image model, added after picking
+    taste: float | None = None  # stars the pilot gave or would give (`taste.py`), if learned
 
     @property
     def score(self) -> float:
@@ -94,6 +95,8 @@ class Quality:
 
     @property
     def stars(self) -> int:
+        if self.taste is not None:
+            return min(5, max(1, round(self.taste)))
         return 1 + sum(1 for bound in STAR_BOUNDS if self.score >= bound)
 
 

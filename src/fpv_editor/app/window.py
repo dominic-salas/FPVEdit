@@ -87,6 +87,7 @@ from fpv_editor.render import (
     resolve_output_path,
     with_fallback,
 )
+from fpv_editor.taste import Taste
 
 VIDEO_SUFFIXES = (".ts", ".mp4")
 OUTPUT_MARKERS = (MONTAGE_SUFFIX, "_highlight")  # our own renders, skipped in dropped folders
@@ -387,6 +388,7 @@ class MainWindow(QMainWindow):
         tools.addStretch(1)
         tools.addWidget(self._clips_summary)
         self._find = button("FIND SHOTS  →", self._find_shots, primary=True)
+        self._rate_button = button("RATE SHOTS", self._open_rating)
         list_page = DotGrid()
         self._list_page = list_page
         column = QVBoxLayout(list_page)
@@ -414,7 +416,7 @@ class MainWindow(QMainWindow):
                     "EVERY FLIP, SPIN AND CLOSE PASS FROM EVERY CLIP. REMOVE ANY YOU DON'T WANT."
                 )
             ],
-            [button("RATE SHOTS", self._open_rating), self._find],
+            [self._rate_button, self._find],
         )
         page = QWidget()
         layout = QVBoxLayout(page)
@@ -562,8 +564,10 @@ class MainWindow(QMainWindow):
         menu.addSeparator()
         menu.addAction(action("Settings…", self._open_settings, "Ctrl+,"))
         menu.addAction(action("Show the log file", self._show_log))
-        menu.addAction(action("Rate shots…", self._open_rating, "Ctrl+R"))
+        self._rate_action = action("Rate shots…", self._open_rating, "Ctrl+R")
+        menu.addAction(self._rate_action)
         menu.addAction(action("Show my shot ratings", self._show_my_ratings))
+        self._show_rating_controls()
         menu.addAction(action("About FPV Editor", self._about))
         menu.addSeparator()
         menu.addAction(action("Quit", self.close, QKeySequence.StandardKey.Quit))
@@ -827,7 +831,7 @@ class MainWindow(QMainWindow):
 
     def _open_rating(self) -> None:
         """The rating screen: shots of the clips on step 1, one at a time, no montage."""
-        if self._busy():
+        if self._busy() or not self._settings.learn_taste:
             return
         if not self._clips.count():
             QMessageBox.information(
@@ -921,15 +925,17 @@ class MainWindow(QMainWindow):
         config = PipelineConfig().montage  # every distinct shot; no target length
         plan = combine_clips(infos, results, config, warnings)
         self._end_finding()
-        min_stars = self._settings.min_stars
+        learn = self._settings.learn_taste
+        min_stars = self._settings.min_stars if learn else 1
+        taste = self._taste() if learn else None
         if not plan.shots or not scenery.available():
-            self._plan_ready(keep_rated(self._tools, plan, min_stars=min_stars))
+            self._plan_ready(keep_rated(self._tools, plan, min_stars=min_stars, taste=taste))
             return
         tools, cache = self._tools, self._cache_dir
 
         def work(progress: Progress) -> object:
             progress("Rating the shots (with the image model)", 0.5)
-            return keep_rated(tools, plan, min_stars=min_stars, cache_dir=cache)
+            return keep_rated(tools, plan, min_stars=min_stars, cache_dir=cache, taste=taste)
 
         self._run(work, self._plan_ready, self.CLIPS, "STEP 2 OF 4", "Finding the best shots")
 
@@ -1226,10 +1232,41 @@ class MainWindow(QMainWindow):
     # ----- menu -----
 
     def _open_settings(self) -> None:
-        dialog = SettingsDialog(self._settings, self._cache_dir, self)
-        if dialog.exec():
-            self._refresh_output()
-            self._review.refresh()  # the timeline colours may have changed
+        dialog = SettingsDialog(self._settings, self._cache_dir, self, self._review._mine)
+        dialog.exec()  # ratings may have been cleared even if it was cancelled
+        self._refresh_output()
+        self._show_rating_controls()
+        self._review.refresh()  # the timeline colours may have changed
+
+    def _show_rating_controls(self) -> None:
+        """Rating shots is part of the app only with the "My ratings" setting on."""
+        on = self._settings.learn_taste
+        self._rate_button.setVisible(on)
+        self._quick_rate.setVisible(on)
+        self._rate_action.setEnabled(on)
+        self._review.set_rating_enabled(on)
+
+    def _taste(self) -> Callable[[Path, Shot], float | None]:
+        """The pilot's stars for shots they rated, predicted stars for the rest."""
+        mine = self._review._mine
+        model = Taste.fit(mine.rated_shots())
+        log.info(
+            "taste from %d ratings: %s (leave-one-out error %.2f stars; app's own %.2f)",
+            model.ratings,
+            f"learned, strength {model.strength}" if model.learned else "app's own rating",
+            model.error,
+            model.base_error,
+        )
+
+        def stars(path: Path, shot: Shot) -> float | None:
+            given = mine.stars(path, shot)
+            if given is not None:
+                return float(given)
+            if shot.quality is None:
+                return None
+            return model.predict(shot.quality, [m.name for m in shot.moments], shot.duration)
+
+        return stars
 
     def _show_my_ratings(self) -> None:
         base = data_folder()

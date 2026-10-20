@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 from fpv_editor import __version__
+from fpv_editor.app.myratings import MyRatings
 from fpv_editor.app.settings import AppSettings
 from fpv_editor.media import INSTALL_HINT
 
@@ -47,10 +48,17 @@ def clear_cache(folder: Path | None) -> int:
 
 
 class SettingsDialog(QDialog):
-    def __init__(self, settings: AppSettings, cache_dir: Path | None, parent: QWidget) -> None:
+    def __init__(
+        self,
+        settings: AppSettings,
+        cache_dir: Path | None,
+        parent: QWidget,
+        ratings: MyRatings | None = None,
+    ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Settings")
         self._settings = settings
+        self._ratings = ratings
         self._cache_dir = cache_dir
         self._folder = settings.output_folder
 
@@ -89,12 +97,27 @@ class SettingsDialog(QDialog):
         self._rating = QCheckBox("Colour shots on the timeline by rating (1-5) instead of by clip")
         self._rating.setChecked(settings.colour_by_rating)
         form.addRow("Review", self._rating)
+        self._learn = QCheckBox(
+            "Rate shots, learn my taste from my ratings and leave out shots I'd likely dislike"
+        )
+        self._learn.setChecked(settings.learn_taste)
         self._min_stars = QComboBox()
-        for stars in range(1, 6):
-            text = "every shot found" if stars == 1 else f"{stars} stars and up"
-            self._min_stars.addItem(text, stars)
-        self._min_stars.setCurrentIndex(settings.min_stars - 1)
-        form.addRow("Keep shots rated", self._min_stars)
+        for stars in range(2, 6):
+            self._min_stars.addItem(f"predicted below {stars} stars", stars)
+        self._min_stars.setCurrentIndex(max(0, self._min_stars.findData(settings.min_stars)))
+        self._min_stars.setEnabled(settings.learn_taste)
+        self._learn.toggled.connect(self._min_stars.setEnabled)
+        form.addRow("My ratings", self._learn)
+        form.addRow("Leave out shots", self._min_stars)
+        self._ratings_label = QLabel()
+        forget = QPushButton("Clear my ratings…")
+        forget.clicked.connect(self._clear_ratings)
+        forget.setEnabled(ratings is not None)
+        ratings_row = QHBoxLayout()
+        ratings_row.addWidget(self._ratings_label, 1)
+        ratings_row.addWidget(forget)
+        self._show_ratings()
+        form.addRow("Saved ratings", ratings_row)
         form.addRow("Save montages in", folder_row)
         form.addRow("Saved measurements", cache_row)
         form.addRow(buttons)
@@ -119,9 +142,32 @@ class SettingsDialog(QDialog):
         clear_cache(self._cache_dir)
         self._show_cache()
 
+    def _show_ratings(self) -> None:
+        count = self._ratings.count if self._ratings is not None else 0
+        self._ratings_label.setText(
+            f"{count} shot{'s' if count != 1 else ''} rated (kept on this computer only)"
+        )
+
+    def _clear_ratings(self) -> None:
+        if self._ratings is None:
+            return
+        answer = QMessageBox.question(
+            self,
+            "Clear my ratings",
+            f"Forget all {self._ratings.count} of your shot ratings? What was learned from "
+            "them goes too. This cannot be undone.",
+        )
+        if answer == QMessageBox.StandardButton.Yes:
+            try:
+                self._ratings.clear()
+            except OSError as exc:
+                QMessageBox.warning(self, "Clear my ratings", f"Could not delete them: {exc}")
+            self._show_ratings()
+
     def _save(self) -> None:
         self._settings.encoder = str(self._encoder.currentData())
         self._settings.colour_by_rating = self._rating.isChecked()
+        self._settings.learn_taste = self._learn.isChecked()
         self._settings.min_stars = int(self._min_stars.currentData())
         self._settings.output_folder = self._folder
         self.accept()
