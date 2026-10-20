@@ -68,6 +68,7 @@ from fpv_editor.render import (
     validate_output,
     with_fallback,
 )
+from fpv_editor.taste import RatedShot, Ratings, Taste
 
 DEFAULT_MIN_STARS = 3  # shots rated below this are left out of a montage (can be added)
 
@@ -491,6 +492,42 @@ def is_cached(tools: Tools, info: MediaInfo, cache_dir: Path, config: PipelineCo
         return False
 
 
+def _rated_without_picture(
+    tools: Tools, infos: Sequence[MediaInfo], rated: Sequence[RatedShot]
+) -> tuple[list[MediaInfo], dict[int, Shot]]:
+    """The recordings and shots (by index in ``rated``) whose picture is still unseen."""
+    infos = list(infos)
+    where = {info.path.resolve(): index for index, info in enumerate(infos)}
+    extra: dict[int, Shot] = {}
+    for index, shot in enumerate(rated):
+        if shot.quality.picture is not None or shot.recording is None:
+            continue
+        path = shot.recording
+        try:
+            key = path.resolve()
+            if key not in where:
+                infos.append(probe(tools, path))
+                where[key] = len(infos) - 1
+        except (FPVEditError, OSError):
+            continue  # moved or deleted since it was rated: learned without its picture
+        extra[index] = Shot(where[key], shot.start, shot.start + shot.duration, 0.0, ())
+    return infos, extra
+
+
+def _taste_for(
+    infos: Sequence[MediaInfo], ratings: Ratings, model: Taste
+) -> Callable[[Shot], float | None]:
+    def stars(shot: Shot) -> float | None:
+        given = ratings.stars(infos[shot.clip].path, shot)
+        if given is not None:
+            return float(given)
+        if shot.quality is None:
+            return None
+        return model.predict(shot.quality, [m.name for m in shot.moments], shot.duration)
+
+    return stars
+
+
 def keep_rated(
     tools: Tools,
     plan: MontagePlan,
@@ -499,14 +536,16 @@ def keep_rated(
     scenery: bool = True,
     cache_dir: Path | None = None,
     device: str = "auto",
-    taste: Callable[[Path, Shot], float | None] | None = None,
+    ratings: Ratings | None = None,
 ) -> MontagePlan:
     """Keep the shots rated ``min_stars`` or more (`rating.py`); the rest are left out and
-    can be added back. ``taste`` gives the stars the pilot gave or would give a shot of the
-    recording at a path (`taste.py`); they replace the app's own stars. With ``scenery``
-    and the ``ml`` extra, the image model first adds its small indoor/outdoor nudge to each
-    rating (in its own process). If no shot reaches
-    ``min_stars``, the best-rated ones are kept.
+    can be added back. If no shot reaches ``min_stars``, the best-rated ones are kept.
+
+    With ``scenery`` and the ``ml`` extra, the image model (in its own process) first adds
+    its small indoor/outdoor nudge and what is in the picture to each rating. With the
+    pilot's own ``ratings``, a taste is learned from them (`taste.py`): shots they rated
+    keep their own stars, the others get the stars it predicts. Their rated shots' pictures
+    are seen in the same pass (once; the frames are cached).
     """
     from fpv_editor import scenery as scenery_model
 
@@ -514,17 +553,33 @@ def keep_rated(
         return plan
     shots = plan.shots
     notes = list(plan.warnings)
+    rated = ratings.rated_shots() if ratings is not None else []
     if scenery and scenery_model.available():
         try:
-            indoorness = scenery_model.score_shots_in_process(
-                tools, plan.infos, shots, cache_dir=cache_dir, device=device
+            infos, extra = _rated_without_picture(tools, plan.infos, rated)
+            scenes = scenery_model.score_shots_in_process(
+                tools, infos, [*shots, *extra.values()], cache_dir=cache_dir, device=device
             )
             shots = tuple(
-                dataclasses.replace(s, quality=dataclasses.replace(s.quality, indoorness=v))
+                dataclasses.replace(
+                    s,
+                    quality=dataclasses.replace(
+                        s.quality, indoorness=scene.indoorness, picture=scene.picture
+                    ),
+                )
                 if s.quality is not None
                 else s
-                for s, v in zip(shots, indoorness, strict=True)
+                for s, scene in zip(shots, scenes, strict=False)
             )
+            seen = dict(zip(extra, scenes[len(shots) :], strict=True))
+            rated = [
+                dataclasses.replace(
+                    r, quality=dataclasses.replace(r.quality, picture=seen[i].picture)
+                )
+                if i in seen
+                else r
+                for i, r in enumerate(rated)
+            ]
         except FPVEditError as exc:
             notes.append(f"the image model could not run: {exc}")
     elif scenery:
@@ -532,11 +587,10 @@ def keep_rated(
             "the image model is not installed (uv sync --extra ml), so the ratings do not "
             "include scenery"
         )
-    if taste is not None:
+    if ratings is not None:
+        stars_for = _taste_for(plan.infos, ratings, Taste.fit(rated))
         shots = tuple(
-            dataclasses.replace(
-                s, quality=dataclasses.replace(s.quality, taste=taste(plan.infos[s.clip].path, s))
-            )
+            dataclasses.replace(s, quality=dataclasses.replace(s.quality, taste=stars_for(s)))
             if s.quality is not None
             else s
             for s in shots

@@ -79,6 +79,8 @@ class Quality:
     reasons: tuple[str, ...]  # short notes for the shot panel, best first
     indoorness: float | None = None  # from the image model, added after picking
     taste: float | None = None  # stars the pilot gave or would give (`taste.py`), if learned
+    # What is in view: similarity of the shot's frames to `scenery.PICTURE` descriptions.
+    picture: tuple[float, ...] | None = None
 
     @property
     def score(self) -> float:

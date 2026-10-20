@@ -158,6 +158,8 @@ def test_window_lists_and_edits_the_shots(clips: tuple[Path, Path], tmp_path: Pa
     from fpv_editor.app.myratings import MyRatings
     from fpv_editor.app.settings import AppSettings
     from fpv_editor.app.window import MainWindow, video_files
+    from fpv_editor.cli import _taste_for
+    from fpv_editor.taste import Taste
 
     app = QApplication.instance() or QApplication([])
     tools = find_tools()
@@ -191,12 +193,12 @@ def test_window_lists_and_edits_the_shots(clips: tuple[Path, Path], tmp_path: Pa
         assert review._mine.stars(plan.infos[0].path, window._current_shots()[0]) == 4
         # The learned taste gives a rated shot its own stars; with fewer ratings than it
         # needs to learn, every other shot keeps the app's own stars.
-        taste = window._taste()
+        taste = _taste_for(plan.infos, review._mine, Taste.fit(review._mine.rated_shots()))
         rated, *others = window._current_shots()
-        assert taste(plan.infos[rated.clip].path, rated) == 4.0
+        assert taste(rated) == 4.0
         for other in others:
             assert other.quality is not None
-            assert taste(plan.infos[other.clip].path, other) == float(other.quality.stars)
+            assert taste(other) == float(other.quality.stars)
         if len(plan.shots) > 1:
             review._moved(0, len(plan.shots))  # drag the first shot to the end
             assert window._current_shots()[-1] == plan.shots[0]

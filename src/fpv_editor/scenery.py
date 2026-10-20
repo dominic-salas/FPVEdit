@@ -8,6 +8,10 @@ sets of short descriptions, rooms and halls against trees, streets and parks. Th
 shot's is the median of its frames. It is a relative signal for comparing shots of one
 session, not a probability, and the model never names tricks.
 
+In the same pass each frame is also compared with the `PICTURE` descriptions (a person,
+legs, a narrow gap, trees, a car close up...); a shot's *picture* is the mean over its
+frames. The learned taste (`taste.py`) uses it to follow what a pilot likes to see.
+
 Optional: needs the ``ml`` extra (PyTorch, transformers, Pillow) and downloads about
 1.5 GB of weights on first use. Scoring runs in its own process, so the GPU memory it
 used (under 1 GB) is free again as soon as it is done.
@@ -19,9 +23,11 @@ import hashlib
 import importlib.util
 import json
 import multiprocessing
+import os
 import subprocess
 from collections.abc import Callable, Sequence
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -49,10 +55,31 @@ OUTSIDE = (
     "a parking lot outside",
     "a park with grass and trees",
 )
+# What a shot shows, for learning a pilot's taste. Chosen before testing them against
+# Dom's ratings; changing them renews the picture cache and needs re-checking (PLAN.md).
+PICTURE = (
+    "a person standing",
+    "a person's legs close up",
+    "flying through a narrow gap",
+    "flying between trees",
+    "a car close up",
+    "a parking lot at night",
+    "an empty open field",
+    "a building close up",
+    "blurry motion",
+    "the ground very close",
+    "the sky",
+    "a dark night scene",
+    "a bright sunny day",
+    "indoors",
+    "a bridge",
+    "water",
+)
 FRAME_SHARES = (0.25, 0.5, 0.75)  # where in a shot its frames are taken
 SIZE = 224  # the model's input size; frames are scaled to it (as the model was tested)
 BATCH = 16  # small batches keep the GPU memory low; it is shared with other work
 CACHE_NAME = "scenery.json"
+PICTURE_CACHE_NAME = "pictures.json"
 
 Frame = NDArray[np.uint8]  # height x width x 3, RGB
 Progress = Callable[[str, float], None]
@@ -111,7 +138,10 @@ class SceneryModel:
         self._torch, self._device, self._dtype = torch, device, dtype
         with torch.inference_mode():
             text = self._processor(
-                text=[*INSIDE, *OUTSIDE], padding="max_length", max_length=64, return_tensors="pt"
+                text=[*INSIDE, *OUTSIDE, *PICTURE],
+                padding="max_length",
+                max_length=64,
+                return_tensors="pt",
             ).to(device)
             self._text = self._normalised(self._model.get_text_features(**text))
 
@@ -119,9 +149,12 @@ class SceneryModel:
         tensor = output.pooler_output if hasattr(output, "pooler_output") else output
         return self._torch.nn.functional.normalize(tensor.float(), dim=-1)
 
-    def indoorness(self, frames: Sequence[Frame]) -> NDArray[np.float64]:
-        """Per frame: best indoor similarity minus best outdoor similarity."""
+    def describe(self, frames: Sequence[Frame]) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+        """Per frame: indoorness (best indoor minus best outdoor similarity), and the
+        similarity to each `PICTURE` description (frames x descriptions)."""
         scores: list[NDArray[np.float64]] = []
+        pictures: list[NDArray[np.float64]] = []
+        split = len(INSIDE) + len(OUTSIDE)
         with self._torch.inference_mode():
             for first in range(0, len(frames), BATCH):
                 batch = self._processor(
@@ -131,9 +164,16 @@ class SceneryModel:
                 images = self._normalised(self._model.get_image_features(pixel_values=pixels))
                 similarity = (images @ self._text.T).cpu().numpy().astype(np.float64)
                 inside = similarity[:, : len(INSIDE)].max(axis=1)
-                outside = similarity[:, len(INSIDE) :].max(axis=1)
+                outside = similarity[:, len(INSIDE) : split].max(axis=1)
                 scores.append(inside - outside)
-        return np.concatenate(scores) if scores else np.zeros(0)
+                pictures.append(similarity[:, split:])
+        if not scores:
+            return np.zeros(0), np.zeros((0, len(PICTURE)))
+        return np.concatenate(scores), np.concatenate(pictures)
+
+    def indoorness(self, frames: Sequence[Frame]) -> NDArray[np.float64]:
+        """Per frame: best indoor similarity minus best outdoor similarity."""
+        return self.describe(frames)[0]
 
 
 def _prompts_key() -> str:
@@ -141,9 +181,49 @@ def _prompts_key() -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
 
 
+def _picture_key() -> str:
+    text = json.dumps([MODEL_ID, MODEL_REVISION, SIZE, PICTURE])
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
+
+
 def _frame_key(info: MediaInfo, seconds: float) -> str:
     stat = info.path.stat()
     return f"{info.path}|{stat.st_size}|{stat.st_mtime_ns}|{seconds:.2f}|{_prompts_key()}"
+
+
+def _picture_frame_key(info: MediaInfo, seconds: float) -> str:
+    stat = info.path.stat()
+    return f"{info.path}|{stat.st_size}|{stat.st_mtime_ns}|{seconds:.2f}|{_picture_key()}"
+
+
+@dataclass(frozen=True)
+class ShotScene:
+    """What the image model saw in one shot (None where no frame could be read)."""
+
+    indoorness: float | None
+    picture: tuple[float, ...] | None
+
+
+def _load(path: Path | None) -> dict[str, Any]:
+    if path is None or not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text("utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _save(path: Path | None, data: dict[str, Any]) -> None:
+    if path is None:
+        return
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_name(f"{path.name}.{os.getpid()}.partial")
+        temporary.write_text(json.dumps(data), encoding="utf-8")
+        temporary.replace(path)
+    except OSError:
+        pass  # only a cache
 
 
 def frame_times(shot: Shot) -> list[float]:
@@ -158,22 +238,30 @@ def score_shots(
     cache_dir: Path | None = None,
     device: str = "auto",
     progress: Progress | None = None,
-) -> list[float | None]:
-    """Indoorness of each shot (None where no frame could be read).
+) -> list[ShotScene]:
+    """What each shot shows: its indoorness and its picture descriptions.
 
     Frame scores are cached in ``cache_dir`` per recording version, time and model, so
     picking again, or the same shots in a later session, needs no model at all.
     """
     cache_file = cache_dir / CACHE_NAME if cache_dir is not None else None
+    picture_file = cache_dir / PICTURE_CACHE_NAME if cache_dir is not None else None
     cache: dict[str, float] = {}
-    if cache_file is not None and cache_file.is_file():
+    for k, v in _load(cache_file).items():
         try:
-            cache = {str(k): float(v) for k, v in json.loads(cache_file.read_text("utf-8")).items()}
-        except (OSError, ValueError, AttributeError):
-            cache = {}
+            cache[str(k)] = float(v)
+        except (TypeError, ValueError):
+            continue
+    seen: dict[str, list[float]] = {}
+    for k, v in _load(picture_file).items():
+        if isinstance(v, list) and len(v) == len(PICTURE):
+            seen[str(k)] = [float(x) for x in v]
     wanted = [(shot.clip, t) for shot in shots for t in frame_times(shot)]
     keys = {(clip, t): _frame_key(infos[clip], t) for clip, t in wanted}
-    missing = sorted({item for item in wanted if keys[item] not in cache})
+    picture_keys = {(clip, t): _picture_frame_key(infos[clip], t) for clip, t in wanted}
+    missing = sorted(
+        {item for item in wanted if keys[item] not in cache or picture_keys[item] not in seen}
+    )
     if missing:
         if progress is not None:
             progress("Reading frames of the shots", 0.0)
@@ -186,22 +274,23 @@ def score_shots(
             if progress is not None:
                 progress("Comparing the scenery of the shots", 0.5)
             model = SceneryModel(device)
-            values = model.indoorness([frame for _, frame in readable])
-            for (item, _), value in zip(readable, values, strict=True):
+            values, pictures = model.describe([frame for _, frame in readable])
+            for (item, _), value, picture in zip(readable, values, pictures, strict=True):
                 cache[keys[item]] = round(float(value), 5)
-            if cache_file is not None:
-                try:
-                    cache_file.parent.mkdir(parents=True, exist_ok=True)
-                    temporary = cache_file.with_suffix(".partial")
-                    temporary.write_text(json.dumps(cache), encoding="utf-8")
-                    temporary.replace(cache_file)
-                except OSError:
-                    pass  # the scores are only a cache
-    result: list[float | None] = []
+                seen[picture_keys[item]] = [round(float(x), 5) for x in picture]
+            _save(cache_file, cache)
+            _save(picture_file, seen)
+    result: list[ShotScene] = []
     for shot in shots:
-        known = [keys[(shot.clip, t)] for t in frame_times(shot)]
-        scores = [cache[key] for key in known if key in cache]
-        result.append(float(np.median(scores)) if scores else None)
+        times = frame_times(shot)
+        scores = [cache[keys[(shot.clip, t)]] for t in times if keys[(shot.clip, t)] in cache]
+        views = [seen[k] for t in times if (k := picture_keys[(shot.clip, t)]) in seen]
+        result.append(
+            ShotScene(
+                float(np.median(scores)) if scores else None,
+                tuple(round(float(x), 5) for x in np.mean(views, axis=0)) if views else None,
+            )
+        )
     return result
 
 
@@ -211,7 +300,7 @@ def _score_in_child(
     shots: Sequence[Shot],
     cache_dir: Path | None,
     device: str,
-) -> list[float | None]:
+) -> list[ShotScene]:
     return score_shots(tools, infos, shots, cache_dir=cache_dir, device=device)
 
 
@@ -222,7 +311,7 @@ def score_shots_in_process(
     *,
     cache_dir: Path | None = None,
     device: str = "auto",
-) -> list[float | None]:
+) -> list[ShotScene]:
     """`score_shots` in a child process: its GPU memory is released when it ends."""
     context = multiprocessing.get_context("spawn")
     with ProcessPoolExecutor(1, mp_context=context) as pool:

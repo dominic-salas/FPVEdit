@@ -53,7 +53,12 @@ def test_the_image_model_nudges_ratings(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setattr(scenery, "available", lambda: True)
     for indoorness, kept in ((0.06, False), (-0.05, True)):  # cramped: down; open: up
         monkeypatch.setattr(
-            scenery, "score_shots_in_process", lambda *a, v=indoorness, **k: [v, -0.05]
+            scenery,
+            "score_shots_in_process",
+            lambda *a, v=indoorness, **k: [
+                scenery.ShotScene(v, None),
+                scenery.ShotScene(-0.05, None),
+            ],
         )
         judged = keep_rated(TOOLS, plan([edge, other]), min_stars=3)
         assert (len(judged.shots) == 2) is kept, indoorness

@@ -1,34 +1,40 @@
 """Learn one pilot's taste from their own star ratings and predict the stars of new shots.
 
-The app's own rating (`rating.py`) is the starting point. The pilot's ratings teach a
-correction to it: a ridge regression of (their stars - the app's stars) on what the app
-measured about each shot (its four rating parts, its tricks, its notes such as "crash
-right after" or "fast", and its length). Nothing is learned from the picture itself, so
-a taste that depends on what is in view (a gap, a person, scenery) is only learned as
-far as these measurements follow it.
+A ridge regression predicts the pilot's stars from what the app knows about a shot:
 
-How strongly the correction counts is chosen by leave-one-out over the ratings: each
-rating is predicted from all the others, for several strengths, including none at all
-(the app's own stars). The strength that predicted best is used, so with few or
-inconsistent ratings the prediction stays the app's own rating, and it moves towards the
-pilot's taste only as far as their ratings show it can. Everything runs on this computer
-in a fraction of a second, so it is fitted again whenever shots are found.
+- what it measured: the four rating parts (`rating.py`), the kinds of tricks, notes such
+  as "crash right after" or "fast", and the length;
+- what is in the picture, when the image model is installed (`scenery.py`): how much the
+  shot's frames look like each of a few plain descriptions (a person, a narrow gap, trees,
+  a car close up, the sky, night...). These are similarities, not probabilities, and they
+  name what is in view, never a trick.
+
+How strongly it is regularised is chosen by leave-one-out over the ratings (each rating
+predicted from all the others), against the app's own stars as the alternative: with few
+or inconsistent ratings the app's own rating stays, and the learned taste takes over only
+when it predicted the ratings better. Measured on Dom's 53 ratings (2026-10-20): the app's
+own stars were off by 0.94 stars on average (rank agreement 0.24); the measurements alone
+did no better; with the picture it was 0.73 (agreement 0.53-0.60). Fitting takes well under
+a second, so it is redone whenever shots are found.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Protocol
 
 import numpy as np
 from numpy.typing import NDArray
 
+from fpv_editor.montage import Shot
 from fpv_editor.rating import Quality
 
 FloatArray = NDArray[np.float64]
 
 MIN_RATINGS = 8  # fewer than this and the app's own rating is used as it is
-STRENGTHS = (1.0, 3.0, 10.0, 30.0, 100.0)  # ridge penalties tried (plus "no correction")
+STRENGTHS = (1.0, 3.0, 10.0, 30.0, 100.0, 300.0, 1000.0)  # ridge penalties tried
 FLIPS = ("flip", "roll", "power loop")
 NOTES = (
     "crash right after",
@@ -44,14 +50,26 @@ NOTES = (
 
 @dataclass(frozen=True)
 class RatedShot:
-    quality: Quality  # the app's rating when it was rated
+    quality: Quality  # the app's rating when it was rated (with its picture, if known)
     tricks: tuple[str, ...]
     duration: float
     stars: int  # the pilot's own, 1-5
+    recording: Path | None = None  # where it came from, to see its picture later
+    start: float = 0.0
 
 
-def features(quality: Quality, tricks: Sequence[str], duration: float) -> FloatArray:
-    """What the correction is learned from, for one shot."""
+class Ratings(Protocol):
+    """A pilot's own ratings (`app/myratings.py` keeps them on disk)."""
+
+    def stars(self, path: Path, shot: Shot) -> int | None: ...
+
+    def rated_shots(self) -> list[RatedShot]: ...
+
+
+def features(
+    quality: Quality, tricks: Sequence[str], duration: float, *, picture: bool = False
+) -> FloatArray:
+    """What the taste is learned from, for one shot (with ``picture``, its picture too)."""
     names = [t.lower() for t in tricks]
     reasons = " | ".join(quality.reasons)
     values = [
@@ -68,6 +86,10 @@ def features(quality: Quality, tricks: Sequence[str], duration: float) -> FloatA
         float("linked" in reasons),
         *(float(note in quality.reasons) for note in NOTES),
     ]
+    if picture:
+        if quality.picture is None:
+            raise ValueError("this shot has no picture features")
+        values.extend(quality.picture)
     return np.asarray(values, dtype=np.float64)
 
 
@@ -86,68 +108,79 @@ def _base(quality: Quality) -> float:
 
 
 @dataclass(frozen=True)
-class Taste:
+class _Model:
     mean: FloatArray
     scale: FloatArray
-    weights: FloatArray | None  # None: the app's own rating is the prediction
-    strength: float | None
+    offset: float
+    weights: FloatArray
+
+    def predict(self, x: FloatArray) -> float:
+        return float(np.clip(self.offset + ((x - self.mean) / self.scale) @ self.weights, 1, 5))
+
+
+@dataclass(frozen=True)
+class Taste:
+    plain: _Model | None  # from the measurements; None: the app's own stars are better
+    pictured: _Model | None  # from the measurements and the picture
     ratings: int
-    error: float  # leave-one-out mean absolute error in stars, with the chosen strength
-    base_error: float  # ... and of the app's own rating
+    error: float  # leave-one-out mean absolute error in stars of what is used
+    base_error: float  # ... and of the app's own stars
+    uses_picture: bool
 
     @property
     def learned(self) -> bool:
-        return self.weights is not None
+        return self.plain is not None or self.pictured is not None
 
     @classmethod
     def fit(cls, rated: Sequence[RatedShot]) -> Taste:
-        count = len(rated)
-        x = np.array([features(r.quality, r.tricks, r.duration) for r in rated])
-        base = np.array([_base(r.quality) for r in rated])
         y = np.array([float(r.stars) for r in rated])
-        width = len(features(Quality(0, 0, 0, 0, ()), (), 0.0))
-        if count < MIN_RATINGS:
-            empty = np.zeros(width)
-            error = float(np.mean(np.abs(y - base))) if count else 0.0
-            return cls(empty, np.ones(width), None, None, count, error, error)
-        mean = x.mean(axis=0)
-        scale = x.std(axis=0)
-        scale[scale < 1e-9] = 1.0
-        z = np.hstack([(x - mean) / scale, np.ones((count, 1))])
-        residual = y - base
-        base_error = float(np.mean(np.abs(y - base)))
-        best: tuple[float, float | None] = (base_error, None)
-        for tried in STRENGTHS:
-            loo = _leave_one_out(z, residual, base, y, tried)
-            if loo < best[0] - 1e-9:
-                best = (loo, tried)
-        error, strength = best
-        if strength is None:
-            return cls(mean, scale, None, None, count, error, base_error)
-        weights = _ridge(z, residual, strength)
-        return cls(mean, scale, weights, strength, count, error, base_error)
+        base = np.array([_base(r.quality) for r in rated])
+        base_error = float(np.mean(np.abs(y - base))) if len(rated) else 0.0
+        if len(rated) < MIN_RATINGS:
+            return cls(None, None, len(rated), base_error, base_error, False)
+        x = np.array([features(r.quality, r.tricks, r.duration) for r in rated])
+        plain, plain_error = _choose(x, y, base_error)
+        seen = [r for r in rated if r.quality.picture is not None]
+        pictured, pictured_error = None, base_error
+        if len(seen) >= MIN_RATINGS:
+            xp = np.array([features(r.quality, r.tricks, r.duration, picture=True) for r in seen])
+            yp = np.array([float(r.stars) for r in seen])
+            seen_base = float(np.mean(np.abs(yp - np.array([_base(r.quality) for r in seen]))))
+            pictured, pictured_error = _choose(xp, yp, min(seen_base, plain_error))
+        uses_picture = pictured is not None
+        error = pictured_error if uses_picture else plain_error
+        return cls(plain, pictured, len(rated), error, base_error, uses_picture)
 
     def predict(self, quality: Quality, tricks: Sequence[str], duration: float) -> float:
         """Predicted stars (1-5, not rounded) for a shot the pilot has not rated."""
-        base = _base(quality)
-        if self.weights is None:
-            return base
-        z = np.append((features(quality, tricks, duration) - self.mean) / self.scale, 1.0)
-        return float(np.clip(base + z @ self.weights, 1.0, 5.0))
+        if self.pictured is not None and quality.picture is not None:
+            return self.pictured.predict(features(quality, tricks, duration, picture=True))
+        if self.plain is not None:
+            return self.plain.predict(features(quality, tricks, duration))
+        return _base(quality)
 
 
-def _ridge(z: FloatArray, target: FloatArray, strength: float) -> FloatArray:
-    gram = z.T @ z + strength * np.eye(z.shape[1])
-    return np.asarray(np.linalg.solve(gram, z.T @ target), dtype=np.float64)
+def _fit(x: FloatArray, y: FloatArray, strength: float) -> _Model:
+    mean = x.mean(axis=0)
+    scale = x.std(axis=0)
+    scale[scale < 1e-9] = 1.0
+    z = (x - mean) / scale
+    offset = float(y.mean())
+    # Dual form: fewer ratings than features (a few dozen against ~35) is the usual case.
+    alpha = np.linalg.solve(z @ z.T + strength * np.eye(len(z)), y - offset)
+    return _Model(mean, scale, offset, np.asarray(z.T @ alpha, dtype=np.float64))
 
 
-def _leave_one_out(
-    z: FloatArray, residual: FloatArray, base: FloatArray, y: FloatArray, strength: float
-) -> float:
-    errors = []
-    for i in range(len(y)):
-        keep = np.arange(len(y)) != i
-        weights = _ridge(z[keep], residual[keep], strength)
-        predicted = float(np.clip(base[i] + z[i] @ weights, 1.0, 5.0))
-        errors.append(abs(round(predicted) - y[i]))
-    return float(np.mean(errors))
+def _choose(x: FloatArray, y: FloatArray, to_beat: float) -> tuple[_Model | None, float]:
+    """The ridge strength that predicts left-out ratings best, if it beats ``to_beat``."""
+    best: tuple[float, float | None] = (to_beat, None)
+    for tried in STRENGTHS:
+        errors = []
+        for i in range(len(y)):
+            keep = np.arange(len(y)) != i
+            errors.append(abs(_fit(x[keep], y[keep], tried).predict(x[i]) - y[i]))
+        loo = float(np.mean(errors))
+        if loo < best[0] - 1e-9:
+            best = (loo, tried)
+    error, strength = best
+    return (_fit(x, y, strength) if strength is not None else None), error

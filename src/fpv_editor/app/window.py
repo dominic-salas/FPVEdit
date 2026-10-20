@@ -87,7 +87,6 @@ from fpv_editor.render import (
     resolve_output_path,
     with_fallback,
 )
-from fpv_editor.taste import Taste
 
 VIDEO_SUFFIXES = (".ts", ".mp4")
 OUTPUT_MARKERS = (MONTAGE_SUFFIX, "_highlight")  # our own renders, skipped in dropped folders
@@ -927,15 +926,15 @@ class MainWindow(QMainWindow):
         self._end_finding()
         learn = self._settings.learn_taste
         min_stars = self._settings.min_stars if learn else 1
-        taste = self._taste() if learn else None
+        ratings = self._review._mine if learn else None
         if not plan.shots or not scenery.available():
-            self._plan_ready(keep_rated(self._tools, plan, min_stars=min_stars, taste=taste))
+            self._plan_ready(keep_rated(self._tools, plan, min_stars=min_stars, ratings=ratings))
             return
         tools, cache = self._tools, self._cache_dir
 
         def work(progress: Progress) -> object:
             progress("Rating the shots (with the image model)", 0.5)
-            return keep_rated(tools, plan, min_stars=min_stars, cache_dir=cache, taste=taste)
+            return keep_rated(tools, plan, min_stars=min_stars, cache_dir=cache, ratings=ratings)
 
         self._run(work, self._plan_ready, self.CLIPS, "STEP 2 OF 4", "Finding the best shots")
 
@@ -1246,28 +1245,6 @@ class MainWindow(QMainWindow):
         self._quick_rate.setVisible(on)
         self._rate_action.setEnabled(on)
         self._review.set_rating_enabled(on)
-
-    def _taste(self) -> Callable[[Path, Shot], float | None]:
-        """The pilot's stars for shots they rated, predicted stars for the rest."""
-        mine = self._review._mine
-        model = Taste.fit(mine.rated_shots())
-        log.info(
-            "taste from %d ratings: %s (leave-one-out error %.2f stars; app's own %.2f)",
-            model.ratings,
-            f"learned, strength {model.strength}" if model.learned else "app's own rating",
-            model.error,
-            model.base_error,
-        )
-
-        def stars(path: Path, shot: Shot) -> float | None:
-            given = mine.stars(path, shot)
-            if given is not None:
-                return float(given)
-            if shot.quality is None:
-                return None
-            return model.predict(shot.quality, [m.name for m in shot.moments], shot.duration)
-
-        return stars
 
     def _show_my_ratings(self) -> None:
         base = data_folder()

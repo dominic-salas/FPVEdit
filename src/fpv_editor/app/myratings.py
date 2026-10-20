@@ -106,10 +106,19 @@ class MyRatings:
                     float(parts["watchable"]),
                     tuple(str(r) for r in parts.get("reasons") or ()),
                     None if parts.get("indoorness") is None else float(parts["indoorness"]),
+                    picture=(
+                        tuple(float(v) for v in parts["picture"])
+                        if isinstance(parts.get("picture"), list)
+                        else None
+                    ),
                 )
-                duration = float(entry["end"]) - float(entry["start"])
+                start = float(entry["start"])
+                duration = float(entry["end"]) - start
                 tricks = tuple(str(t) for t in entry.get("tricks") or ())
-                rated.append(RatedShot(quality, tricks, duration, int(entry["stars"])))
+                recording = Path(str(entry["recording"])) if entry.get("recording") else None
+                rated.append(
+                    RatedShot(quality, tricks, duration, int(entry["stars"]), recording, start)
+                )
             except (KeyError, TypeError, ValueError):
                 continue
         return rated
