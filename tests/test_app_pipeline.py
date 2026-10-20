@@ -111,7 +111,13 @@ def test_reordered_shots_render_in_the_new_order(clips: tuple[Path, Path], tmp_p
         progress=lambda _, share: seen.append(share),
     )
     assert output.is_file()  # validated inside render_montage
-    assert length == pytest.approx(7 + sum(s.duration for s in plan.shots), abs=0.1)
+    # Measured from the file, not the renderer's own sum: every shot, every frame.
+    measured = probe(tools, output, count_frames=True)
+    rate = measured.video.nominal_rate
+    assert rate is not None and measured.video.frame_count is not None
+    shots = [later, earlier, *plan.shots]
+    assert measured.video.frame_count == sum(round(s.duration * rate) for s in shots)
+    assert length == pytest.approx(measured.video.frame_count / rate, abs=1e-6)
     assert seen[-1] == 1.0
     assert not list(tmp_path.glob("*.partial.mp4"))
 
@@ -183,6 +189,14 @@ def test_window_lists_and_edits_the_shots(clips: tuple[Path, Path], tmp_path: Pa
         window._show_rating_controls()
         review.rate_current(4)  # the pilot's own stars for the open shot
         assert review._mine.stars(plan.infos[0].path, window._current_shots()[0]) == 4
+        # The learned taste gives a rated shot its own stars; with fewer ratings than it
+        # needs to learn, every other shot keeps the app's own stars.
+        taste = window._taste()
+        rated, *others = window._current_shots()
+        assert taste(plan.infos[rated.clip].path, rated) == 4.0
+        for other in others:
+            assert other.quality is not None
+            assert taste(plan.infos[other.clip].path, other) == float(other.quality.stars)
         if len(plan.shots) > 1:
             review._moved(0, len(plan.shots))  # drag the first shot to the end
             assert window._current_shots()[-1] == plan.shots[0]
@@ -227,6 +241,7 @@ def test_window_analyses_clips_in_the_background(clips: tuple[Path, Path], tmp_p
     from PySide6.QtCore import QSettings
     from PySide6.QtWidgets import QApplication
 
+    from fpv_editor.app.myratings import MyRatings
     from fpv_editor.app.settings import AppSettings
     from fpv_editor.app.window import MainWindow
 
@@ -257,6 +272,33 @@ def test_window_analyses_clips_in_the_background(clips: tuple[Path, Path], tmp_p
         expected = plan_montage(tools, [probe(tools, p) for p in paths], workers=1)
         assert window._current_shots() == expected.shots
         assert window._pages.currentIndex() == window.REVIEW
+        # "My ratings" off (the default): every shot found is kept, whatever its stars.
+        assert window._plan is not None and window._plan.left_out == ()
+        shots = window._current_shots()
+        assert len(shots) >= 2
+        # On: a shot the pilot rated 1 star is left out; the others stay.
+        window._review._mine = MyRatings(tmp_path / "my-ratings.jsonl")
+        disliked = shots[0]
+        window._review._mine.rate(window._plan.infos[disliked.clip].path, disliked, 1)
+        settings.learn_taste = True
+        window._show_rating_controls()
+        window._find_shots()
+        wait(lambda: not window._busy(), 5)
+        # Too few ratings to learn from: the others keep the app's own stars, and those
+        # below the minimum (3 unless changed) go too, unless none would be left.
+        stars = [1] + [s.quality.stars for s in shots[1:] if s.quality is not None]
+        bar = min(settings.min_stars, max(stars))
+        expected_left = {
+            (s.clip, s.start, s.end) for s, n in zip(shots, stars, strict=True) if n < bar
+        }
+        judged = window._plan
+        assert judged is not None
+        left = {(s.clip, s.start, s.end) for s in judged.left_out}
+        assert (disliked.clip, disliked.start, disliked.end) in left
+        assert left == expected_left
+        assert len(window._current_shots()) == len(shots) - len(left)
+        settings.learn_taste = False
+        window._show_rating_controls()
         # Reordering the clips needs no new analysis either.
         window._clips.insertItem(0, window._clips.takeItem(1))
         window._clips_changed()

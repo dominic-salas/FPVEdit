@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import tempfile
 import zipfile
 import zlib
 from collections.abc import Callable, Iterator
@@ -230,10 +232,16 @@ def _write_cache(
         "overlay_fraction": overlay_fraction,
         "warnings": list(warnings),
     }
-    temporary = path.with_name(f"{path.name}.partial.npz")
     arrays = {name: getattr(measurements, name) for name in _ARRAYS}
-    np.savez_compressed(temporary, meta=np.array(json.dumps(meta)), **arrays)
-    temporary.replace(path)
+    # A name of its own: another process may be writing the same measurements right now.
+    handle, name = tempfile.mkstemp(prefix=f"{path.name}.", suffix=".partial.npz", dir=path.parent)
+    os.close(handle)
+    temporary = Path(name)
+    try:
+        np.savez_compressed(temporary, meta=np.array(json.dumps(meta)), **arrays)
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def _summary(values: NDArray[np.floating], step: int, how: str = "mean") -> list[float]:

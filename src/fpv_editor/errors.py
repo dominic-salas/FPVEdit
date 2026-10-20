@@ -35,6 +35,10 @@ class OutputExistsError(FPVEditError):
     """The requested output already exists and --force was not given."""
 
 
+class OutputLocationError(FPVEditError):
+    """The output cannot be written where it was asked for (missing or read-only folder)."""
+
+
 class ValidationError(FPVEditError):
     """The rendered file failed post-render validation."""
 

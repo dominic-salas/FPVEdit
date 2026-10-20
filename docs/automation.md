@@ -8,7 +8,7 @@ Everything here is deterministic and cheap. No hook or CI job runs model inferen
 | `.claude/hooks/guard_git_commit.py` | Claude Code `PreToolUse` on Bash | when Claude runs `git commit` | Runs the check above; blocks the commit if it fails |
 | `.claude/hooks/ruff_on_edit.py` | Claude Code `PostToolUse` on Edit/Write | after Claude edits a `.py` file | `ruff check` + `ruff format --check` on that file only; never rewrites it |
 | `permissions.ask` | `.claude/settings.proposed.json` | commit, push, reset, clean, release | Claude must ask before running them |
-| `.github/workflows/ci.yml` | GitHub Actions | push to `main`, pull requests | Ubuntu + Windows, Python 3.11/3.13/3.14: guard, ruff, mypy, pytest (no model tests) |
+| `.github/workflows/ci.yml` | GitHub Actions | push to `main`, pull requests | Ubuntu + Windows, Python 3.12/3.14: guard, ruff, mypy, pytest (no model tests) |
 
 ## Enabling
 

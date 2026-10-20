@@ -9,7 +9,7 @@ import fpv_editor
 from fpv_editor.analysis import MEASUREMENT_MODULES, MEASUREMENT_VERSION
 
 # The measuring code that MEASUREMENT_VERSION describes (line endings normalised).
-PINNED = {1: "46f27068e7f93588767667671c1ada79550c13f311c67990f488825e726be1d7"}
+PINNED = {1: "2454ee803af76288571fcd2373ee1a1318bf21b2e0271ea83bf769beb321f605"}
 
 
 def test_measuring_code_matches_its_measurement_version() -> None:

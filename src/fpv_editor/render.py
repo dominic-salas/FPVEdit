@@ -23,7 +23,6 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from fractions import Fraction
 from pathlib import Path
-from typing import TypeVar
 
 import numpy as np
 from numpy.typing import NDArray
@@ -32,6 +31,7 @@ from fpv_editor.errors import (
     InvalidInputError,
     MediaToolError,
     OutputExistsError,
+    OutputLocationError,
     ToolNotFoundError,
     ValidationError,
 )
@@ -92,10 +92,7 @@ def encoders(tools: Tools, device: str, cpu: EncodeConfig) -> list[EncodeConfig]
     return [cpu]
 
 
-Result = TypeVar("Result")
-
-
-def with_fallback(
+def with_fallback[Result](
     choices: Sequence[EncodeConfig], attempt: Callable[[EncodeConfig], Result]
 ) -> tuple[Result, EncodeConfig]:
     """``attempt(encode)`` with each encoder in turn until one works; only a failed encode
@@ -493,9 +490,14 @@ def add_music(
 
 def temporary_output(final: Path) -> Path:
     """Reserve a unique temporary file next to the final output (same filesystem)."""
-    handle, name = tempfile.mkstemp(
-        prefix=f".{final.stem}.", suffix=".partial.mp4", dir=final.parent
-    )
+    try:
+        handle, name = tempfile.mkstemp(
+            prefix=f".{final.stem}.", suffix=".partial.mp4", dir=final.parent
+        )
+    except OSError as exc:
+        raise OutputLocationError(
+            f"cannot write the output in {final.parent}: {exc.strerror or exc}"
+        ) from exc
     os.close(handle)
     return Path(name)
 

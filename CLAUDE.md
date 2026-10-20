@@ -1,7 +1,7 @@
 # FPVEdit — project rules for Claude
 
 One-command, offline CLI (`fpv-editor a.ts b.ts ...`) that turns FPV freestyle recordings into one
-H.264 montage of their best shots (`--trim`: one recording edited as a whole flight) (video only: the DVR's goggle audio is irrelevant). Plan and status: `PLAN.md`. Python ≥ 3.11, FFmpeg ≥ 6 on PATH.
+H.264 montage of their best shots (`--trim`: one recording edited as a whole flight) (video only: the DVR's goggle audio is irrelevant). Plan and status: `PLAN.md`. Python ≥ 3.12, FFmpeg ≥ 6 on PATH.
 
 ## Commands
 - Install dev env: `uv sync` (CI); on Dom's PC `uv sync --extra app --extra ml`, since a plain `uv sync` removes PyTorch and the image model's packages from the `.venv` his desktop shortcut runs

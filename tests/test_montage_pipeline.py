@@ -64,11 +64,15 @@ def test_montage_of_two_different_clips(copies: tuple[Path, Path]) -> None:
         assert 8.0 - 1e-6 <= shot.duration <= 15.0 + 1e-6
         assert any(m.kind.value == "flip" for m in shot.moments)
     # Fitted to the larger clip's size and the rate of the clip with the most screen time.
-    info = probe(find_tools(), result.output)
+    info = probe(find_tools(), result.output, count_frames=True)
     assert (info.video.width, info.video.height) == (480, 360)
-    assert info.video.nominal_rate in (Fraction(30), Fraction(60))
+    screen = {clip: sum(s.duration for s in result.shots if s.clip == clip) for clip in (0, 1)}
+    rate = Fraction(30) if screen[0] > screen[1] else Fraction(60)
+    assert info.video.nominal_rate == rate
     assert info.audio is None
-    assert result.edited_duration == pytest.approx(sum(s.duration for s in result.shots), abs=0.2)
+    # Measured in the file: exactly the frames of the shots at the montage's rate.
+    assert info.video.frame_count == sum(round(s.duration * rate) for s in result.shots)
+    assert result.edited_duration == pytest.approx(float(info.video.frame_count / rate), abs=1e-3)
 
     assert result.plan_file is not None
     plan = json.loads(result.plan_file.read_text())
