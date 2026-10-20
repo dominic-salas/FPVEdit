@@ -101,6 +101,16 @@ def test_a_flip_that_crashes_gives_no_shot() -> None:
     assert not any(s.start < 60 and s.end > 56 for s in shots)
 
 
+def test_a_short_flight_between_crashes_is_one_whole_shot() -> None:
+    timeline = flight()
+    timeline.tumble(28.5, 30).stats(30, 31).armed_message(31.5)  # crash, quick re-arm
+    timeline.flip(34).tumble(36.5, 38).stats(38, 39).armed_message(39.5)  # 6 s, crash
+    measurements, selection = analyse(timeline)
+    shots = [s for s in candidate_shots(0, measurements, selection) if 31 < s.start < 38]
+    assert len(shots) == 1
+    assert shots[0].start < 34 and shots[0].end < 37  # before the impact
+
+
 def test_a_quad_on_the_desk_gives_no_shots() -> None:
     timeline = Timeline(60, osd=False).still(0, 60)
     timeline.motion[:, DIVERGENCE] = np.linspace(0, 3, timeline.count)  # noise, not passes

@@ -160,6 +160,14 @@ Details and per-claim evidence: `docs/review-2026-10-11.md`.
 ## Validation log
 (newest first; exact commands and outcomes)
 
+### 2026-10-19 — Short flights between crashes are no longer thrown out (Dom's PC)
+- Dom: the montage misses where he flies between his legs (`D:\clips\hdz_0019.mp4`, 3:50, 15 disarms). Found on screen: a clean pass between his legs at 0:17, a second try at 0:21 that hits his leg (crash, disarm 0:22.4).
+- Causes: (1) a crash lasted until the *last* re-arm within 12 s, so a pilot who re-arms quickly lost the whole next flight (0:15.7-0:33 and 1:37-1:58 were all "crash"); (2) the failed move before a crash (3.5-8 s) was unusable for the montage, which took the clean pass with it; (3) a flight shorter than the 8 s minimum shot could never be a shot.
+- Changes: a crash ends at the first re-arm (plus lying still within 2 s of it), unless the re-armed stretch ends in another disarm within 4 s (turtle mode); the last 1.5 s before a crash's disarm is cut as `crash`, the earlier failed move as the new `move before a crash` (still cut by `--trim`, usable for montage shots, and "crash right after" in the rating now measures to the impact); a usable flight of 4-8 s with a moment in it is one shot, shown whole.
+- hdz_0019: usable footage 76.0 s -> 123.4 s; candidate shots include 0:15.7-0:20.9 (the pass) and 2:41-2:49 (back flip, flip, spins: score 11.5, the clip's best); the montage went from 2 shots (0:27) to 4 (0:44). The 0:15.7 shot is rated 2 stars (a weak "close pass" plus "crash right after"), so the app leaves it out unless added back: the motion signals do not recognise a pass between legs (the approach rate peaks only 1.3 there, threshold 2.9).
+- `--trim` on the 5 annotated testdata1 recordings: 4 unchanged, `20261009-180033` keeps 0.5 s more before a lift-off after a crash (2:59.6 instead of 3:00.1); the turtle-mode crash at 2:51-3:00 stays cut.
+- Checks: ruff, format, mypy clean; pytest 226 passed.
+
 ### 2026-10-18 — Saved measurements survive app updates (Dom's PC)
 - Dom: clips he analysed before are analysed again. Cause: the cache key held the source bytes of `analysis/measure/motion/picture/media.py` and the clip's full path, so every edit of those files (several on 2026-10-17/18; 182 cache files for ~120 clips, up to 4 per clip) and every clip opened from another folder (e.g. the SD card, then `D:\clips`) meant measuring again.
 - Change: the key holds `analysis.MEASUREMENT_VERSION` (bumped by hand only when measurements would differ), the file name, size and modification time, FFmpeg major and the measuring settings. `tests/test_cache_key.py` pins the measuring code's hash, so editing it fails the tests until the version is bumped or the hash re-pinned. Measurements made by the code of b865e7b are adopted (renamed to the new key) the first time a clip is seen, so nothing already measured is measured again; the standalone build now shares the same keys.
