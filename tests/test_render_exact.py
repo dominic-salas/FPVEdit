@@ -175,3 +175,31 @@ def test_an_unwritable_output_fails_clearly_and_leaves_nothing(tmp_path: Path) -
         )
     assert sorted(p.name for p in tmp_path.iterdir()) == before
     assert blocker.read_text() == "a file where the output folder should be"
+
+
+def test_vertical_export_fills_a_9_by_16_frame_with_the_middle(tmp_path: Path) -> None:
+    tools = find_tools()
+    source = numbered_clip(tmp_path / "numbered.mp4", 4, 30)  # 320x240
+    output = tmp_path / "vertical.mp4"
+    render_montage(
+        tools,
+        [clip(tools, 0, source)],
+        [shot(0, 1.0, 2.0)],
+        output,
+        force=False,
+        encode=FAST,
+        vertical=True,
+    )
+    info = probe(tools, output, count_frames=True)
+    assert (info.video.width, info.video.height) == (136, 240)  # 9:16, as tall as the clip
+    assert info.video.frame_count == 30
+    frames = gray_frames(output, 136, 240)
+    # Edge to edge: no black bars anywhere (the bottom half of the source is mid grey).
+    assert frames[:, 130:, :].min() > 100
+    # The middle 136 px of the source (x 92-228), not squeezed: bit columns 4-7 of each
+    # frame number sit at their source places, shifted by 92 px.
+    expected = list(range(30, 60))
+    for bit in range(4, 8):
+        x = 26 * bit + 13 - 92
+        shown = (frames[:, 60, x] > 128).tolist()
+        assert shown == [bool(n >> bit & 1) for n in expected], bit

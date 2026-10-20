@@ -211,6 +211,9 @@ class Fit:
     width: int
     height: int
     rate: Fraction
+    # Fill the frame (cut off what sticks out, e.g. the sides of a landscape clip in a
+    # vertical 9:16 frame) instead of fitting it whole on black.
+    fill: bool = False
 
 
 def build_filter_graph(
@@ -225,7 +228,8 @@ def build_filter_graph(
 
     Interval times are on the analysis timeline (seconds since the first video frame)
     and should already be snapped to frame times (`snap_to_frames`). With ``fit`` the
-    frames are converted to its rate and scaled to fit its size, centred on black.
+    frames are converted to its rate and scaled to fit its size, centred on black (with
+    ``fit.fill``: scaled to fill it, the middle kept).
     ``origin`` is the first frame's timestamp in seconds, for input that was seeked with
     ``-copyts`` (its first frame is then not the recording's).
     """
@@ -241,8 +245,13 @@ def build_filter_graph(
         crop = (
             "scale=trunc(iw*sar/2)*2:ih,setsar=1,"  # square pixels first
             f"fps={fit.rate.numerator}/{fit.rate.denominator},"
-            f"scale={fit.width}:{fit.height}:force_original_aspect_ratio=decrease,"
-            f"pad={fit.width}:{fit.height}:(ow-iw)/2:(oh-ih)/2,setsar=1"
+            + (
+                f"scale={fit.width}:{fit.height}:force_original_aspect_ratio=increase,"
+                f"crop={fit.width}:{fit.height},setsar=1"
+                if fit.fill
+                else f"scale={fit.width}:{fit.height}:force_original_aspect_ratio=decrease,"
+                f"pad={fit.width}:{fit.height}:(ow-iw)/2:(oh-ih)/2,setsar=1"
+            )
         )
     colour = (
         "scale=in_range=auto:out_range=tv:in_color_matrix=auto:out_color_matrix=bt709,"

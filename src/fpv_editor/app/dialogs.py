@@ -212,6 +212,7 @@ class ExportChoice:
     replace: bool  # the user agreed to replace an existing file
     encoder: str
     open_folder: bool
+    vertical: bool = False  # 9:16 for phones
 
 
 BAD_NAME_CHARACTERS = '<>:"/\\|?*'
@@ -249,6 +250,12 @@ class ExportDialog(QDialog):
         self._encoder.addItem("NVIDIA GPU when available, else CPU", "auto")
         self._encoder.addItem("CPU only", "cpu")
         self._encoder.setCurrentIndex(max(0, self._encoder.findData(settings.encoder)))
+        self._shape = QComboBox()
+        self._shape.addItem("As recorded (landscape)", False)
+        self._shape.addItem(
+            "Vertical 9:16 for phones (fills the screen; the sides are cut off)", True
+        )
+        self._shape.setCurrentIndex(1 if settings.vertical_export else 0)
         self._open = QCheckBox("Open the folder when it is done")
         self._open.setChecked(settings.open_folder_after_export)
         music_label = QLabel(music)
@@ -261,7 +268,8 @@ class ExportDialog(QDialog):
         form = QFormLayout(self)
         form.addRow("Save in", folder_row)
         form.addRow("File name", name_row)
-        form.addRow("Video", QLabel("H.264 MP4, the size and frame rate of your clips"))
+        form.addRow("Video", QLabel("H.264 MP4 at the frame rate of your clips"))
+        form.addRow("Shape", self._shape)
         form.addRow("Encoding", self._encoder)
         form.addRow("Music", music_label)
         form.addRow("", self._open)
@@ -295,5 +303,7 @@ class ExportDialog(QDialog):
             self._settings.output_folder = folder
         self._settings.encoder = encoder
         self._settings.open_folder_after_export = self._open.isChecked()
-        self.choice = ExportChoice(path, replace, encoder, self._open.isChecked())
+        vertical = bool(self._shape.currentData())
+        self._settings.vertical_export = vertical
+        self.choice = ExportChoice(path, replace, encoder, self._open.isChecked(), vertical)
         self.accept()

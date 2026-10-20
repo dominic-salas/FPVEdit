@@ -173,6 +173,12 @@ def build_parser() -> argparse.ArgumentParser:
         "instead of making a montage",
     )
     parser.add_argument(
+        "--vertical",
+        action="store_true",
+        help="make a 9:16 video for phones: as tall as the clips, filled edge to edge with the "
+        "middle of the picture (the sides are cut off)",
+    )
+    parser.add_argument(
         "--music",
         type=Path,
         action="append",
@@ -337,6 +343,7 @@ def run_montage(
     music: Sequence[Path] = (),
     scenery: bool = True,
     min_stars: int = DEFAULT_MIN_STARS,
+    vertical: bool = False,
 ) -> MontageResult:
     config = config or PipelineConfig()
     started = time.monotonic()
@@ -363,7 +370,7 @@ def run_montage(
             "none of the recordings has a moment worth a shot (flip, spin or close pass "
             "in clean flying)"
         )
-    fit = montage_fit(plan.clips, plan.shots)
+    fit = montage_fit(plan.clips, plan.shots, vertical=vertical)
     encoder = None
     if analyze_only:
         parts = montage_parts(plan.clips, plan.shots)
@@ -372,7 +379,14 @@ def run_montage(
         edited_duration, used = with_fallback(
             encoders(tools, device, config.encode),
             lambda encode: render_montage(
-                tools, plan.clips, plan.shots, final, force=force, encode=encode, music=tracks
+                tools,
+                plan.clips,
+                plan.shots,
+                final,
+                force=force,
+                encode=encode,
+                music=tracks,
+                vertical=vertical,
             ),
         )
         encoder = used.video_codec
@@ -695,14 +709,15 @@ def render_montage(
     encode: EncodeConfig,
     progress: Progress | None = None,
     music: Sequence[AudioFile] = (),
+    vertical: bool = False,
 ) -> float:
     """Render ``shots`` in the order given to ``final`` and validate it; returns its duration.
 
     ``music`` tracks play one after another as the soundtrack (the recordings' own audio
-    is never used)."""
+    is never used). ``vertical`` makes a 9:16 video for phones (`montage_fit`)."""
     if not shots:
         raise InvalidInputError("no shots to render")
-    fit = montage_fit(clips, shots)
+    fit = montage_fit(clips, shots, vertical=vertical)
     parts = montage_parts(clips, shots)
     sizes = [_fitted_frames(clip, segments, fit) for clip, segments in parts]
     frames = sum(sizes)
@@ -767,9 +782,12 @@ def _frame_progress(
     return lambda frames: report(text, min(1.0, (done + frames) / max(1, total)))
 
 
-def montage_fit(clips: Sequence[Clip], shots: Sequence[Shot]) -> Fit:
+def montage_fit(clips: Sequence[Clip], shots: Sequence[Shot], *, vertical: bool = False) -> Fit:
     """The largest frame size of the clips the shots use (even, square pixels), so no clip
-    loses detail, at the frame rate of the clip that fills most of the montage."""
+    loses detail, at the frame rate of the clip that fills most of the montage.
+
+    ``vertical``: a 9:16 frame as tall as the tallest clip, filled edge to edge with the
+    middle of each picture (for phones), instead of the clips' own shape."""
     used = {shot.clip for shot in shots}
     clips = [clip for clip in clips if clip.index in used]
     share: dict[int, float] = {}
@@ -777,6 +795,10 @@ def montage_fit(clips: Sequence[Clip], shots: Sequence[Shot]) -> Fit:
         share[shot.clip] = share.get(shot.clip, 0.0) + shot.duration
     main = max(clips, key=lambda clip: (share.get(clip.index, 0.0), -clip.index))
     width, height = max((_display_size(clip.info) for clip in clips), key=lambda s: s[0] * s[1])
+    if vertical:
+        height = max(_display_size(clip.info)[1] for clip in clips)
+        height -= height % 2
+        return Fit(round(height * 9 / 32) * 2, height, output_rate(main.info), fill=True)
     return Fit(width - width % 2, height - height % 2, output_rate(main.info))
 
 
@@ -905,6 +927,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.trim and len(args.inputs) != 1:
         parser.error("--trim edits exactly one recording")
+    if args.trim and args.vertical:
+        parser.error("--vertical is for montages")
     if args.trim and args.music:
         parser.error("--music is for montages")
     if args.trim and args.length is not None:
@@ -924,6 +948,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     music=args.music,
                     scenery=not args.no_scenery,
                     min_stars=args.min_stars,
+                    vertical=args.vertical,
                 )
             )
         result = run(

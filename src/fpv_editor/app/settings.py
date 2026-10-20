@@ -83,6 +83,15 @@ class AppSettings:
         self._set_path("folders/music", folder)
 
     @property
+    def vertical_export(self) -> bool:
+        """Export 9:16 for phones (the middle of the picture) instead of as recorded."""
+        return str(self._store.value("export/vertical", "false")).lower() == "true"
+
+    @vertical_export.setter
+    def vertical_export(self, value: bool) -> None:
+        self._store.setValue("export/vertical", "true" if value else "false")
+
+    @property
     def open_folder_after_export(self) -> bool:
         return str(self._store.value("export/open_folder", "true")).lower() == "true"
 

@@ -1060,7 +1060,7 @@ class MainWindow(QMainWindow):
         self._open_after = choice.open_folder
         self._refresh_output()
         plan, shots = self._plan, self._shots.shots
-        tools, force, device = self._tools, self._force, choice.encoder
+        tools, force, device, vertical = self._tools, self._force, choice.encoder, choice.vertical
         try:
             final = resolve_output_path(
                 [info.path for info in plan.infos],
@@ -1088,6 +1088,7 @@ class MainWindow(QMainWindow):
                     encode=encode,
                     progress=progress,
                     music=music,
+                    vertical=vertical,
                 ),
             )
             where = "the GPU (NVENC)" if used == NVENC else "the CPU"
