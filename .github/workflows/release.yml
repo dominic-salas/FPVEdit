@@ -75,4 +75,9 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/FPVEdit-*-setup.exe --draft --generate-notes
+        run: |
+          # Release notes: this version's section of CHANGELOG.md.
+          version="${GITHUB_REF_NAME#v}"
+          awk -v v="## $version " 'index($0, v) == 1 {on = 1; next} /^## / {on = 0} on' CHANGELOG.md > notes.md
+          test -s notes.md || { echo "no CHANGELOG.md section for $version"; exit 1; }
+          gh release create "$GITHUB_REF_NAME" dist/FPVEdit-*-setup.exe --draft             --title "FPVEdit $version" --notes-file notes.md

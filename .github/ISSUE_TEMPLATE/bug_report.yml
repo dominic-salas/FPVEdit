@@ -1,0 +1,43 @@
+name: Bug report
+description: Something does not work as it should
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Please do not attach recordings unless you are happy for them to be public.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: FPVEdit version
+      description: Menu > About, or `fpvedit --version`.
+      placeholder: "1.0.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: how
+    attributes:
+      label: How you run it
+      options:
+        - Windows installer
+        - From source (uv)
+    validations:
+      required: true
+  - type: textarea
+    id: footage
+    attributes:
+      label: Footage
+      description: Goggles/DVR, resolution and frame rate, .ts or .mp4, with or without OSD.
+  - type: textarea
+    id: log
+    attributes:
+      label: Log
+      description: Menu > Show the log file; paste the end of fpvedit.log.
+      render: text

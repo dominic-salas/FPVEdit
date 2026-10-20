@@ -1,6 +1,6 @@
 [project]
 name = "fpvedit"
-version = "0.1.0.dev0"
+version = "1.0.0"
 description = "One-command offline highlight editor for FPV freestyle recordings"
 readme = "README.md"
 license = "MIT"

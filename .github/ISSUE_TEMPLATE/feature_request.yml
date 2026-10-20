@@ -1,0 +1,16 @@
+name: Feature request
+description: An idea that would make FPVEdit better for you
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: need
+    attributes:
+      label: What you want to do
+      description: The montage or editing task you are trying to get done, and what gets in the way today.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: How it could work
+      description: Optional. Any idea of how FPVEdit could help.
