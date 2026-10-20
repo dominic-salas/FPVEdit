@@ -2,7 +2,8 @@
 long, showing its thumbnail and the recording it comes from (colour and name).
 
 Click a block to jump there (and pick the shot for editing), click the ruler to jump
-without picking, and drag a block left or right to move the shot.
+without picking, drag the playhead (or along the ruler) to scan through the montage, and
+drag a block left or right to move the shot.
 """
 
 from __future__ import annotations
@@ -39,6 +40,7 @@ RULER = 18  # px above the blocks for the time scale
 BLOCKS = 58  # block height
 GAP = 3  # px between blocks
 DRAG_START = 5  # px the mouse moves before a press becomes a drag
+PLAYHEAD_GRAB = 6  # px either side of the playhead that grab it
 
 
 # 1 to 5 stars: red, orange, yellow, light green, green.
@@ -77,7 +79,8 @@ def _tick_step(total: float, width: int) -> float:
 
 class Timeline(QWidget):
     picked = Signal(int, float)  # shot, share of it where it was clicked
-    seeked = Signal(float)  # seconds into the montage (a click on the ruler)
+    seeked = Signal(float)  # seconds into the montage (a click on the ruler, a scrub let go)
+    scrubbed = Signal(float)  # seconds into the montage, while the playhead is dragged
     moved = Signal(int, int)  # shot, gap it was dropped into (0..count)
 
     def __init__(self) -> None:
@@ -90,6 +93,7 @@ class Timeline(QWidget):
         self._press: tuple[int, float] | None = None  # block under the press, x
         self._drag_x: float | None = None
         self._hover: int | None = None
+        self._scrubbing = False
         self.setMouseTracking(True)
         self.setMinimumHeight(RULER + BLOCKS + 4)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
@@ -108,6 +112,8 @@ class Timeline(QWidget):
         self.update()
 
     def set_position(self, seconds: float) -> None:
+        if self._scrubbing:
+            return  # the needle follows the mouse, not frames of the last seek
         self._position = seconds
         self.update()
 
@@ -172,20 +178,35 @@ class Timeline(QWidget):
                 return index
         return len(self._blocks)
 
+    def _on_playhead(self, x: float, y: float) -> bool:
+        return y < RULER or abs(x - self._x_of(self._position)) <= PLAYHEAD_GRAB
+
     # ----- mouse -----
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
         if event.button() != Qt.MouseButton.LeftButton or not self._blocks:
             return
         x, y = event.position().x(), event.position().y()
+        if self._on_playhead(x, y):
+            self._scrubbing = True
+            self._scrub(x)
+            return
         block = self._block_at(x, y)
         if block is None:
             self.seeked.emit(self._seconds_at(x))
         else:
             self._press = (block, x)
 
+    def _scrub(self, x: float) -> None:
+        self._position = self._seconds_at(min(max(x, 0.0), float(self.width())))
+        self.scrubbed.emit(self._position)
+        self.update()
+
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
         x, y = event.position().x(), event.position().y()
+        if self._scrubbing:
+            self._scrub(x)
+            return
         if self._press is not None:
             if self._drag_x is not None or abs(x - self._press[1]) >= DRAG_START:
                 self._drag_x = x
@@ -193,13 +214,14 @@ class Timeline(QWidget):
                 self.update()
             return
         hover = self._block_at(x, y)
+        if self._blocks and self._on_playhead(x, y):
+            self.setCursor(Qt.CursorShape.SizeHorCursor)
+        elif hover is not None:
+            self.setCursor(Qt.CursorShape.PointingHandCursor)
+        else:
+            self.setCursor(Qt.CursorShape.ArrowCursor)
         if hover != self._hover:
             self._hover = hover
-            self.setCursor(
-                Qt.CursorShape.PointingHandCursor
-                if hover is not None
-                else Qt.CursorShape.ArrowCursor
-            )
             if hover is not None:
                 QToolTip.showText(
                     event.globalPosition().toPoint(), self._blocks[hover].tooltip, self
@@ -209,6 +231,10 @@ class Timeline(QWidget):
             self.update()
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        if self._scrubbing:
+            self._scrubbing = False
+            self.seeked.emit(self._position)  # play on from where it was let go
+            return
         if self._press is None:
             return
         block, _ = self._press

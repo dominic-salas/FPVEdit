@@ -4,7 +4,9 @@ frames decoded by FFmpeg and shown in a label.
 Qt's own media player needs the large PySide6-Addons package and its own decoder; FFmpeg
 is already required and reads every recording the render reads. While a shot plays, the
 FFmpeg process for the next one is already started (it seeks and waits on its pipe), so
-one shot follows the next without a pause.
+one shot follows the next without a pause. While the playhead is dragged, single frames
+are shown instead (one FFmpeg call each; requests made while one decodes collapse into
+the newest).
 """
 
 from __future__ import annotations
@@ -19,7 +21,7 @@ from PySide6.QtCore import QObject, Qt, QThread, Signal
 from PySide6.QtGui import QImage, QMouseEvent, QPixmap, QResizeEvent
 from PySide6.QtWidgets import QLabel, QSizePolicy, QWidget
 
-from fpv_editor.app.frames import preview_args, preview_size
+from fpv_editor.app.frames import grab_frame, preview_args, preview_size
 from fpv_editor.media import NO_WINDOW, MediaInfo, Tools
 
 PREVIEW_HEIGHT = 360
@@ -155,6 +157,36 @@ class _Playback(QThread):
         return shown
 
 
+class _Stills(QThread):
+    """Decodes the newest requested frame, then the next newest, until none is waiting."""
+
+    frame = Signal(QImage, int)  # picture, request number
+
+    def __init__(self, tools: Tools, parent: QObject) -> None:
+        super().__init__(parent)
+        self._tools = tools
+        self._lock = threading.Lock()
+        self._wanted: tuple[int, MediaInfo, float, int] | None = None
+
+    def want(self, number: int, info: MediaInfo, seconds: float, height: int) -> None:
+        with self._lock:
+            self._wanted = (number, info, seconds, height)
+        if not self.isRunning():
+            self.start()
+
+    def run(self) -> None:
+        while True:
+            with self._lock:
+                wanted, self._wanted = self._wanted, None
+            if wanted is None:
+                return
+            number, info, seconds, height = wanted
+            data = grab_frame(self._tools, info, seconds, height)
+            image = QImage.fromData(data) if data else QImage()
+            if not image.isNull():
+                self.frame.emit(image, number)
+
+
 class PreviewView(QLabel):
     """Shows the playing picture, scaled to fit.
 
@@ -172,6 +204,9 @@ class PreviewView(QLabel):
         self._playback: _Playback | None = None
         self._image: QImage | None = None
         self._generation = 0  # frames of an older playback can still be queued
+        self._stills = _Stills(tools, self)
+        self._stills.frame.connect(self._show_still)
+        self._still_number = 0
         self.height_px = PREVIEW_HEIGHT  # decoded picture height (more in full screen)
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setMinimumSize(320, 180)
@@ -212,6 +247,17 @@ class PreviewView(QLabel):
             self._playback.stop()
             self._playback.deleteLater()
             self._playback = None
+
+    def show_frame(self, info: MediaInfo, seconds: float) -> None:
+        """Stop playing and show the frame at ``seconds`` (analysis timeline) of ``info``."""
+        self.stop()
+        self._still_number += 1
+        self._stills.want(self._still_number, info, seconds, self.height_px)
+
+    def _show_still(self, image: QImage, number: int) -> None:
+        if number == self._still_number and self._playback is None:
+            self._image = image
+            self._paint()
 
     def clear_picture(self) -> None:
         self.stop()

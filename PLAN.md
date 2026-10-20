@@ -160,6 +160,12 @@ Details and per-claim evidence: `docs/review-2026-10-11.md`.
 ## Validation log
 (newest first; exact commands and outcomes)
 
+### 2026-10-20 — Drag the playhead to scan through the montage (Dom's PC, offscreen)
+- Dom: he wants to drag the play needle to scan through parts of a clip. The review timeline only jumped on a click before.
+- Change: grabbing the playhead (6 px either side) or pressing on the time ruler and dragging scans: the needle follows the mouse and the player shows the frame under it (one FFmpeg frame grab at a time, newest request wins; restarting playback per move showed almost nothing, as each new decoder was killed before its first frame); letting go plays on from there. Dragging a shot block still moves the shot.
+- Measured in the app (hdz_0019 montage, 60 s, 1344 px timeline, a 3.7 s drag across it): 25 frames shown while dragging (~7 per second), playback resumed after release, no FFmpeg left running.
+- Checks: ruff, format, mypy clean; pytest 227 passed.
+
 ### 2026-10-19 — The app keeps every shot found (Dom's PC)
 - Dom: pass all the shots, he will rate them all himself; no leaving out by rating in the app for now. The app's "Keep shots rated" setting now defaults to "every shot found" (1 star); no stored value existed on his PC, so the default applies. The CLI keeps `--min-stars 3`.
 - Checks: ruff, format, mypy clean; app and scenery tests 25 passed.
