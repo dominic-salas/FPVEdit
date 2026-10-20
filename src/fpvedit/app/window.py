@@ -44,10 +44,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from fpv_editor import __version__, scenery
-from fpv_editor.app import theme
-from fpv_editor.app.analyser import BackgroundAnalysis
-from fpv_editor.app.cliplist import (
+from fpvedit import __version__, scenery
+from fpvedit.app import theme
+from fpvedit.app.analyser import BackgroundAnalysis
+from fpvedit.app.cliplist import (
     DETAILS,
     PATH,
     PROBLEM,
@@ -58,16 +58,16 @@ from fpv_editor.app.cliplist import (
     ClipReader,
     thumbnail_pixmap,
 )
-from fpv_editor.app.clips import clock as clock_short
-from fpv_editor.app.clips import default_output_folder, describe_clip, is_removable
-from fpv_editor.app.dialogs import ExportDialog, SettingsDialog, about_text, ask_for_ffmpeg
-from fpv_editor.app.logs import start_logging
-from fpv_editor.app.look import DotTitle, StatusDot, app_icon
-from fpv_editor.app.model import ShotList
-from fpv_editor.app.ratepage import RatePage
-from fpv_editor.app.review import ReviewPage, describe_music
-from fpv_editor.app.settings import AppSettings
-from fpv_editor.cli import (
+from fpvedit.app.clips import clock as clock_short
+from fpvedit.app.clips import default_output_folder, describe_clip, is_removable
+from fpvedit.app.dialogs import ExportDialog, SettingsDialog, about_text, ask_for_ffmpeg
+from fpvedit.app.logs import start_logging
+from fpvedit.app.look import DotTitle, StatusDot, app_icon
+from fpvedit.app.model import ShotList
+from fpvedit.app.ratepage import RatePage
+from fpvedit.app.review import ReviewPage, describe_music
+from fpvedit.app.settings import AppSettings
+from fpvedit.cli import (
     MONTAGE_SUFFIX,
     MontagePlan,
     PipelineConfig,
@@ -76,10 +76,10 @@ from fpv_editor.cli import (
     keep_rated,
     render_montage,
 )
-from fpv_editor.errors import CancelledError, FPVEditError
-from fpv_editor.media import MediaInfo, Tools, find_tools, run_tool
-from fpv_editor.montage import Shot, pick_shots
-from fpv_editor.render import (
+from fpvedit.errors import CancelledError, FPVEditError
+from fpvedit.media import MediaInfo, Tools, find_tools, run_tool
+from fpvedit.montage import Shot, pick_shots
+from fpvedit.render import (
     NVENC,
     EncodeConfig,
     default_output_path,
@@ -90,7 +90,7 @@ from fpv_editor.render import (
 
 VIDEO_SUFFIXES = (".ts", ".mp4")
 OUTPUT_MARKERS = (MONTAGE_SUFFIX, "_highlight")  # our own renders, skipped in dropped folders
-log = logging.getLogger("fpv_editor.app")
+log = logging.getLogger("fpvedit.app")
 
 
 def video_files(paths: Sequence[Path]) -> list[Path]:
@@ -258,7 +258,7 @@ class MainWindow(QMainWindow):
         log_file: Path | None = None,
     ) -> None:
         super().__init__()
-        self.setWindowTitle(f"FPV Editor {__version__}")
+        self.setWindowTitle(f"FPVEdit {__version__}")
         self.setWindowIcon(app_icon())
         self.resize(1280, 820)
         self.setAcceptDrops(True)
@@ -343,10 +343,10 @@ class MainWindow(QMainWindow):
     def _build_clips_page(self) -> QWidget:
         # Empty: one big drop target that says what to do.
         self._drop_zone = DotGrid()
-        self._title = DotTitle("fpv editor", cell=10)
+        self._title = DotTitle("fpvedit", cell=10)
         intro = QLabel(
             "Drop your FPV recordings (.ts or .mp4) or a whole folder anywhere on this "
-            "window. FPV Editor finds the best flips, spins and close passes and cuts them "
+            "window. FPVEdit finds the best flips, spins and close passes and cuts them "
             "into one montage. You check it before anything is saved."
         )
         intro.setProperty("role", "hero")
@@ -567,7 +567,7 @@ class MainWindow(QMainWindow):
         menu.addAction(self._rate_action)
         menu.addAction(action("Show my shot ratings", self._show_my_ratings))
         self._show_rating_controls()
-        menu.addAction(action("About FPV Editor", self._about))
+        menu.addAction(action("About FPVEdit", self._about))
         menu.addSeparator()
         menu.addAction(action("Quit", self.close, QKeySequence.StandardKey.Quit))
 
@@ -1048,7 +1048,7 @@ class MainWindow(QMainWindow):
         music = self._review.music
         total = sum(shot.duration for shot in self._shots.shots)
         fit = describe_music(music, total).capitalize()
-        default.parent.mkdir(parents=True, exist_ok=True)  # the Videos\FPV Editor folder
+        default.parent.mkdir(parents=True, exist_ok=True)  # the Videos\FPVEdit folder
         dialog = ExportDialog(
             default, self._settings, fit, self, remember=lambda f: not is_removable(f)
         )
@@ -1215,7 +1215,7 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event: QCloseEvent) -> None:
         if self._task is not None:
             answer = QMessageBox.question(
-                self, "Stop and quit?", "FPV Editor is still working. Stop and quit?"
+                self, "Stop and quit?", "FPVEdit is still working. Stop and quit?"
             )
             if answer != QMessageBox.StandardButton.Yes:
                 event.ignore()
@@ -1264,18 +1264,20 @@ class MainWindow(QMainWindow):
             first = version.stdout.splitlines()[0] if version.stdout else ""
         except FPVEditError:
             first = ""
-        QMessageBox.about(self, "About FPV Editor", about_text(first))
+        QMessageBox.about(self, "About FPVEdit", about_text(first))
 
 
 def videos_folder() -> Path:
-    """``FPV Editor`` in the user's Videos folder (made when it is first needed)."""
+    """``FPVEdit`` in the user's Videos folder (made when it is first needed)."""
     base = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.MoviesLocation)
-    return (Path(base) if base else Path.home() / "Videos") / "FPV Editor"
+    return (Path(base) if base else Path.home() / "Videos") / "FPVEdit"
 
 
-def data_folder() -> Path | None:
-    base = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppLocalDataLocation)
-    return Path(base) if base else None
+def data_folder(name: str = "FPVEdit") -> Path | None:
+    r"""Where ratings, saved measurements and logs live: %LOCALAPPDATA%\FPVEdit on Windows,
+    ~/.local/share/FPVEdit on Linux."""
+    base = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.GenericDataLocation)
+    return Path(base) / name if base else None
 
 
 def cache_folder() -> Path | None:
@@ -1312,15 +1314,51 @@ def locate_tools(settings: AppSettings) -> Tools | None:
             use_folders_first([folder])
 
 
+APP_NAME = "FPVEdit"
+OLD_APP_NAME = "fpv-editor"  # the name until 2026-10-20
+
+
+def move_from_old_name(old: str = OLD_APP_NAME, new: str = APP_NAME) -> str | None:
+    """Once, after the rename to FPVEdit: move the old data folder (ratings, saved
+    measurements, logs) to the new name, so nothing is lost. Returns what happened, for
+    the log, or None if there was nothing to move. If it cannot be moved yet (the old
+    version still open), the old folder is used this time and the move is tried again."""
+    old_folder, new_folder = data_folder(old), data_folder(new)
+    if old_folder is None or new_folder is None or not old_folder.is_dir():
+        return None
+    if new_folder.exists():
+        return None
+    try:
+        old_folder.rename(new_folder)
+    except OSError as exc:
+        return f"kept using {old_folder} for now: {exc}"
+    return f"moved {old_folder} to {new_folder}"
+
+
 def run(argv: Sequence[str]) -> int:
     app = QApplication(list(argv))
-    app.setApplicationName("fpv-editor")
-    app.setApplicationDisplayName("FPV Editor")
+    # Settings need an organisation name to be stored at all (without one, Qt keeps them
+    # only until the app closes): HKEY_CURRENT_USER\Software\FPVEdit on Windows.
+    app.setOrganizationName(APP_NAME)
+    app.setApplicationName(APP_NAME)
+    app.setApplicationDisplayName(APP_NAME)
     app.setApplicationVersion(__version__)
     app.setWindowIcon(app_icon())
+    moved = move_from_old_name()
+    if moved is not None and not moved.startswith("moved"):
+        QMessageBox.warning(
+            None,
+            APP_NAME,
+            "FPV Editor is now called FPVEdit, and your ratings and saved measurements move "
+            f"to its folder. They could not be moved yet ({moved}). Close the old FPV Editor "
+            "window and start FPVEdit again.",
+        )
+        return 1
     base = data_folder()
     log_file = start_logging(base / "logs") if base else None
-    log.info("FPV Editor %s starting", __version__)
+    log.info("FPVEdit %s starting", __version__)
+    if moved:
+        log.info("renamed from fpv-editor: %s", moved)
     settings = AppSettings()
     theme.apply(app, theme.THEMES.get(settings.theme, theme.DARK), theme.load_fonts())
     tools = locate_tools(settings)

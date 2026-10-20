@@ -20,7 +20,7 @@ import cv2
 import numpy as np
 from numpy.typing import NDArray
 
-from fpv_editor.media import NO_WINDOW, MediaInfo, Tools
+from fpvedit.media import NO_WINDOW, MediaInfo, Tools
 
 GrayFrame = NDArray[np.uint8]
 BoolMask = NDArray[np.bool_]

@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from flight_fixtures import LOGO_BANDS, Timeline
-from fpv_editor.flight import Screen, armed_intervals, detect_flight, runs
+from fpvedit.flight import Screen, armed_intervals, detect_flight, runs
 
 
 # The flicker filter widens the layout by a frame, so screen edges move by one frame.

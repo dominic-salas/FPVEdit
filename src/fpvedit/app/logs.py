@@ -10,12 +10,12 @@ import threading
 from pathlib import Path
 from types import TracebackType
 
-LOG_NAME = "fpv-editor.log"
-log = logging.getLogger("fpv_editor.app")
+LOG_NAME = "fpvedit.log"
+log = logging.getLogger("fpvedit.app")
 
 
 def start_logging(folder: Path) -> Path | None:
-    """Log to ``folder``/fpv-editor.log (rotated at 1 MB, 3 kept), including uncaught
+    """Log to ``folder``/fpvedit.log (rotated at 1 MB, 3 kept), including uncaught
     errors in any thread. Returns the log file, or None if it cannot be written."""
     try:
         folder.mkdir(parents=True, exist_ok=True)
@@ -25,7 +25,7 @@ def start_logging(folder: Path) -> Path | None:
     except OSError:
         return None
     handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
-    root = logging.getLogger("fpv_editor")
+    root = logging.getLogger("fpvedit")
     root.setLevel(logging.INFO)
     root.addHandler(handler)
 

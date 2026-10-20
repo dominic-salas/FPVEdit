@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 from pathlib import Path
 
 import pytest
@@ -13,9 +14,9 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import QSettings
 from PySide6.QtWidgets import QApplication
 
-from fpv_editor.app.dialogs import cache_size, clear_cache
-from fpv_editor.app.settings import AppSettings
-from fpv_editor.app.window import time_left, use_folders_first
+from fpvedit.app.dialogs import cache_size, clear_cache
+from fpvedit.app.settings import AppSettings
+from fpvedit.app.window import time_left, use_folders_first
 
 
 def settings_in(folder: Path) -> AppSettings:
@@ -60,7 +61,7 @@ def test_ffmpeg_folders_go_first_on_path(tmp_path: Path, monkeypatch: pytest.Mon
 
 
 def test_icon_draws_at_every_size() -> None:
-    from fpv_editor.app.look import SIZES, app_icon, icon_pixmap
+    from fpvedit.app.look import SIZES, app_icon, icon_pixmap
 
     _ = QApplication.instance() or QApplication([])  # widgets need QApplication later
     for size in SIZES:
@@ -74,7 +75,7 @@ def test_icon_draws_at_every_size() -> None:
 def test_recording_time_comes_from_the_name_or_the_file(tmp_path: Path) -> None:
     from datetime import datetime
 
-    from fpv_editor.app.clips import clock, recorded_at
+    from fpvedit.app.clips import clock, recorded_at
 
     named = recorded_at(Path("D:/clips/20261010-203859.ts"))
     assert named is not None and named.from_name
@@ -96,7 +97,7 @@ def test_timeline_click_picks_and_drag_moves_a_shot() -> None:
     from PySide6.QtCore import QPoint, Qt
     from PySide6.QtTest import QTest
 
-    from fpv_editor.app.timeline import RULER, Block, Timeline
+    from fpvedit.app.timeline import RULER, Block, Timeline
 
     QApplication.instance() or QApplication([])
     timeline = Timeline()
@@ -124,7 +125,7 @@ def test_dragging_the_playhead_scans_through_the_montage() -> None:
     from PySide6.QtCore import QPoint, Qt
     from PySide6.QtTest import QTest
 
-    from fpv_editor.app.timeline import RULER, Block, Timeline
+    from fpvedit.app.timeline import RULER, Block, Timeline
 
     QApplication.instance() or QApplication([])
     timeline = Timeline()
@@ -148,7 +149,7 @@ def test_dragging_the_playhead_scans_through_the_montage() -> None:
 
 
 def test_dot_letters_share_the_x_height_and_baseline() -> None:
-    from fpv_editor.app.look import BASELINE, GLYPHS, ROWS, X_TOP
+    from fpvedit.app.look import BASELINE, GLYPHS, ROWS, X_TOP
 
     ascenders, descenders = set("bdfhiklt"), set("gjpqy")
     for letter, rows in GLYPHS.items():
@@ -160,11 +161,11 @@ def test_dot_letters_share_the_x_height_and_baseline() -> None:
 
 
 def test_montages_default_to_the_videos_folder_not_the_clips_card(tmp_path: Path) -> None:
-    from fpv_editor.app.clips import default_output_folder
+    from fpvedit.app.clips import default_output_folder
 
     card = tmp_path / "DCIM"
     card.mkdir()
-    videos = tmp_path / "Videos" / "FPV Editor"
+    videos = tmp_path / "Videos" / "FPVEdit"
     other = tmp_path / "montages"
     other.mkdir()
     clips = [card / "a.ts", card / "b.ts"]
@@ -177,9 +178,9 @@ def test_montages_default_to_the_videos_folder_not_the_clips_card(tmp_path: Path
 def test_my_ratings_are_saved_and_read_back(tmp_path: Path) -> None:
     import json
 
-    from fpv_editor.app.myratings import MyRatings
-    from fpv_editor.montage import Moment, MomentKind, Shot
-    from fpv_editor.rating import Quality
+    from fpvedit.app.myratings import MyRatings
+    from fpvedit.montage import Moment, MomentKind, Shot
+    from fpvedit.rating import Quality
 
     quality = Quality(0.8, 0.7, 0.5, 1.0, ("back flip", "smooth recovery"))
     shot = Shot(0, 10.0, 19.0, 3.0, (Moment(13.0, MomentKind.FLIP, 3.0, "back flip"),), quality)
@@ -198,9 +199,9 @@ def test_my_ratings_are_saved_and_read_back(tmp_path: Path) -> None:
 
 
 def test_rating_screen_mixes_clips_and_skips_rated_shots(tmp_path: Path) -> None:
-    from fpv_editor.app.myratings import MyRatings
-    from fpv_editor.app.ratepage import interleave
-    from fpv_editor.montage import Shot
+    from fpvedit.app.myratings import MyRatings
+    from fpvedit.app.ratepage import interleave
+    from fpvedit.montage import Shot
 
     a = [Shot(0, 10.0 * i, 10.0 * i + 9, 1.0, ()) for i in range(3)]
     b = [Shot(1, 10.0 * i, 10.0 * i + 9, 1.0, ()) for i in range(2)]
@@ -215,8 +216,8 @@ def test_rating_screen_mixes_clips_and_skips_rated_shots(tmp_path: Path) -> None
 
 
 def test_an_undone_rating_is_forgotten(tmp_path: Path) -> None:
-    from fpv_editor.app.myratings import MyRatings
-    from fpv_editor.montage import Shot
+    from fpvedit.app.myratings import MyRatings
+    from fpvedit.montage import Shot
 
     shot = Shot(0, 1.0, 10.0, 1.0, ())
     file = tmp_path / "r.jsonl"
@@ -224,3 +225,53 @@ def test_an_undone_rating_is_forgotten(tmp_path: Path) -> None:
     mine.rate(tmp_path / "a.ts", shot, 3)
     mine.unrate(tmp_path / "a.ts", shot)
     assert MyRatings(file).count == 0 and len(file.read_text(encoding="utf-8").splitlines()) == 2
+
+
+def test_the_old_name_s_data_moves_to_fpvedit_once() -> None:
+    import uuid
+
+    from PySide6.QtCore import QStandardPaths
+
+    from fpvedit.app.window import data_folder, move_from_old_name
+
+    QApplication.instance() or QApplication([])
+    QStandardPaths.setTestModeEnabled(True)  # never the user's real folders
+    old, new = f"fpvedit-test-old-{uuid.uuid4().hex}", f"fpvedit-test-new-{uuid.uuid4().hex}"
+    try:
+        old_folder, new_folder = data_folder(old), data_folder(new)
+        assert old_folder is not None and new_folder is not None
+        assert move_from_old_name(old, new) is None  # nothing to move
+        (old_folder / "measurements").mkdir(parents=True)
+        (old_folder / "my-ratings.jsonl").write_text('{"stars": 4}\n')
+        assert (move_from_old_name(old, new) or "").startswith("moved")
+        assert not old_folder.exists()
+        assert (new_folder / "my-ratings.jsonl").read_text() == '{"stars": 4}\n'
+        assert (new_folder / "measurements").is_dir()
+        assert move_from_old_name(old, new) is None  # only once
+    finally:
+        for folder in (data_folder(old), data_folder(new)):
+            if folder is not None and folder.exists():
+                shutil.rmtree(folder)
+        QStandardPaths.setTestModeEnabled(False)
+
+
+def test_settings_are_stored_between_runs() -> None:
+    # Without an organisation name Qt refuses to store settings (an AccessError), so every
+    # setting was lost when the app closed; run() sets one.
+    import uuid
+
+    from PySide6.QtCore import QSettings
+
+    app = QApplication.instance() or QApplication([])
+    names = app.organizationName(), app.applicationName()
+    app.setOrganizationName(f"fpvedit-test-{uuid.uuid4().hex}")
+    app.setApplicationName("FPVEdit")
+    try:
+        settings = AppSettings()
+        settings.learn_taste = True
+        assert QSettings().status() == QSettings.Status.NoError
+        assert AppSettings().learn_taste  # a fresh object reads it back
+    finally:
+        QSettings().clear()
+        app.setOrganizationName(names[0])
+        app.setApplicationName(names[1])

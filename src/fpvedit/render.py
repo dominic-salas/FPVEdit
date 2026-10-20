@@ -27,7 +27,7 @@ from pathlib import Path
 import numpy as np
 from numpy.typing import NDArray
 
-from fpv_editor.errors import (
+from fpvedit.errors import (
     InvalidInputError,
     MediaToolError,
     OutputExistsError,
@@ -35,8 +35,8 @@ from fpv_editor.errors import (
     ToolNotFoundError,
     ValidationError,
 )
-from fpv_editor.highlights import Interval
-from fpv_editor.media import AudioFile, MediaInfo, Tools, probe, run_tool, run_tool_with_progress
+from fpvedit.highlights import Interval
+from fpvedit.media import AudioFile, MediaInfo, Tools, probe, run_tool, run_tool_with_progress
 
 OUTPUT_SUFFIX = "_highlight"
 DEFAULT_RATE = Fraction(30)  # only for sources that report no usable frame rate

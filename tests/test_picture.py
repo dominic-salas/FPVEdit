@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from fpv_editor.picture import Area, detect_active_area, detect_overlay, fit_frames
+from fpvedit.picture import Area, detect_active_area, detect_overlay, fit_frames
 
 WIDTH, HEIGHT = 320, 180
 BAR = 40  # 4:3 picture (240 px) between two 40 px bars

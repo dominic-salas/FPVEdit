@@ -6,15 +6,15 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from fpv_editor.errors import (
+from fpvedit.errors import (
     InvalidInputError,
     MediaToolError,
     OutputExistsError,
     ToolNotFoundError,
 )
-from fpv_editor.highlights import Interval
-from fpv_editor.media import Tools
-from fpv_editor.render import (
+from fpvedit.highlights import Interval
+from fpvedit.media import Tools
+from fpvedit.render import (
     NVENC,
     RENDER_ACTION,
     EncodeConfig,

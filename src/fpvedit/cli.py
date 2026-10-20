@@ -25,19 +25,19 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
-from fpv_editor import __version__
-from fpv_editor.analysis import Analysis, AnalysisConfig, analysis_document, analyze
-from fpv_editor.errors import (
+from fpvedit import __version__
+from fpvedit.analysis import Analysis, AnalysisConfig, analysis_document, analyze
+from fpvedit.errors import (
     CancelledError,
     FPVEditError,
     InvalidInputError,
     NoFlightContentError,
     OutputExistsError,
 )
-from fpv_editor.flight import FlightConfig
-from fpv_editor.highlights import Interval, Selection, SelectionConfig
-from fpv_editor.measure import MeasureConfig
-from fpv_editor.media import (
+from fpvedit.flight import FlightConfig
+from fpvedit.highlights import Interval, Selection, SelectionConfig
+from fpvedit.measure import MeasureConfig
+from fpvedit.media import (
     AudioFile,
     MediaInfo,
     Tools,
@@ -48,9 +48,9 @@ from fpv_editor.media import (
     probe,
     probe_audio,
 )
-from fpv_editor.montage import MontageConfig, Shot, candidate_shots, pick_shots
-from fpv_editor.picture import PictureConfig, decoded_size
-from fpv_editor.render import (
+from fpvedit.montage import MontageConfig, Shot, candidate_shots, pick_shots
+from fpvedit.picture import PictureConfig, decoded_size
+from fpvedit.render import (
     DEVICES,
     NVENC,
     EncodeConfig,
@@ -68,7 +68,7 @@ from fpv_editor.render import (
     validate_output,
     with_fallback,
 )
-from fpv_editor.taste import RatedShot, Ratings, Taste
+from fpvedit.taste import RatedShot, Ratings, Taste
 
 DEFAULT_MIN_STARS = 3  # shots rated below this are left out of a montage (can be added)
 
@@ -138,7 +138,7 @@ class MontageResult:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="fpv-editor",
+        prog="fpvedit",
         description=(
             "Turn raw FPV freestyle recordings into one montage of their best shots, or "
             "(with --trim) edit one recording down to its flying."
@@ -484,7 +484,7 @@ def combine_clips(
 
 def is_cached(tools: Tools, info: MediaInfo, cache_dir: Path, config: PipelineConfig) -> bool:
     """Whether ``info`` has measurements in ``cache_dir`` for the current settings."""
-    from fpv_editor.analysis import cache_path
+    from fpvedit.analysis import cache_path
 
     try:
         return cache_path(cache_dir, tools, info, config.analysis).is_file()
@@ -547,7 +547,7 @@ def keep_rated(
     keep their own stars, the others get the stars it predicts. Their rated shots' pictures
     are seen in the same pass (once; the frames are cached).
     """
-    from fpv_editor import scenery as scenery_model
+    from fpvedit import scenery as scenery_model
 
     if not plan.shots:
         return plan
@@ -777,7 +777,7 @@ def render_montage(
     frames = sum(sizes)
     temporary = temporary_output(final)
     try:
-        with tempfile.TemporaryDirectory(prefix="fpv-editor-", ignore_cleanup_errors=True) as work:
+        with tempfile.TemporaryDirectory(prefix="fpvedit-", ignore_cleanup_errors=True) as work:
             work_dir = Path(work)
             files = []
             for number, (clip, segments) in enumerate(parts):
@@ -884,7 +884,7 @@ def montage_document(
     """JSON-ready description of a montage: the clips, and the shots in playing order."""
     usable = {clip.index for clip in clips}
     return {
-        "fpv_editor_version": __version__,
+        "fpvedit_version": __version__,
         "config": dataclasses.asdict(config),
         "output": {"width": fit.width, "height": fit.height, "fps": str(fit.rate)},
         "clips": [
@@ -924,7 +924,7 @@ def _render_and_validate(
     frames = expected_frame_count(segments, rate, times)
     temporary = temporary_output(final)
     try:
-        with tempfile.TemporaryDirectory(prefix="fpv-editor-", ignore_cleanup_errors=True) as work:
+        with tempfile.TemporaryDirectory(prefix="fpvedit-", ignore_cleanup_errors=True) as work:
             render(
                 tools,
                 info,
@@ -1015,14 +1015,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             device=args.device,
         )
     except FPVEditError as exc:
-        print(f"fpv-editor: error: {exc}", file=sys.stderr)
+        print(f"fpvedit: error: {exc}", file=sys.stderr)
         return 1
     except OSError as exc:
         # Disk full, permission denied, output open in a player on Windows, ...
-        print(f"fpv-editor: error: {exc}", file=sys.stderr)
+        print(f"fpvedit: error: {exc}", file=sys.stderr)
         return 1
     except KeyboardInterrupt:
-        print("fpv-editor: interrupted; no output written", file=sys.stderr)
+        print("fpvedit: interrupted; no output written", file=sys.stderr)
         return 130
 
     retained = result.edited_duration / result.original_duration if result.original_duration else 0

@@ -21,7 +21,7 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
-from fpv_editor.errors import InvalidInputError, MediaToolError, ToolNotFoundError
+from fpvedit.errors import InvalidInputError, MediaToolError, ToolNotFoundError
 
 # Without this, every ffmpeg/ffprobe run from the desktop app (a GUI program on Windows)
 # flashes a console window. 0 elsewhere.

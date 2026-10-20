@@ -17,10 +17,10 @@ def main() -> int:
     if importlib.util.find_spec("PySide6") is None:
         message = (
             "The desktop app needs PySide6. Install it with "
-            "`uv sync --extra app` or `pip install fpv-editor[app]`."
+            "`uv sync --extra app` or `pip install fpvedit[app]`."
         )
         print(message, file=sys.stderr)
         return 1
-    from fpv_editor.app.window import run
+    from fpvedit.app.window import run
 
     return run(sys.argv)

@@ -14,7 +14,7 @@ import threading
 from collections.abc import Sequence
 from pathlib import Path
 
-from fpv_editor.media import NO_WINDOW, AudioFile, Tools
+from fpvedit.media import NO_WINDOW, AudioFile, Tools
 
 
 def find_ffplay(tools: Tools) -> str | None:

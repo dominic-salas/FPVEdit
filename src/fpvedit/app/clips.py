@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from fpv_editor.media import MediaInfo
+from fpvedit.media import MediaInfo
 
 _STAMP = re.compile(r"(?<!\d)(20\d{2})(\d{2})(\d{2})[-_ ]?(\d{2})(\d{2})(\d{2})(?!\d)")
 

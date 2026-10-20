@@ -25,10 +25,10 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
-from fpv_editor import __version__
-from fpv_editor.flight import FlightConfig, FlightState, detect_flight
-from fpv_editor.highlights import Selection, SelectionConfig, select_highlights
-from fpv_editor.measure import (
+from fpvedit import __version__
+from fpvedit.flight import FlightConfig, FlightState, detect_flight
+from fpvedit.highlights import Selection, SelectionConfig, select_highlights
+from fpvedit.measure import (
     DecodeReport,
     GrayFrame,
     MeasureConfig,
@@ -38,10 +38,10 @@ from fpv_editor.measure import (
     measure_frames,
     plan_layout,
 )
-from fpv_editor.media import MediaInfo, Tools
-from fpv_editor.motion import SPEED
-from fpv_editor.picture import Area, PictureConfig, decoded_size, detect_active_area, sample_frames
-from fpv_editor.render import output_rate
+from fpvedit.media import MediaInfo, Tools
+from fpvedit.motion import SPEED
+from fpvedit.picture import Area, PictureConfig, decoded_size, detect_active_area, sample_frames
+from fpvedit.render import output_rate
 
 CACHE_FORMAT = 3
 # Bump when a change to the measuring code (MEASUREMENT_MODULES) changes what it measures:
@@ -262,7 +262,7 @@ def analysis_document(analysis: Analysis, tools: Tools, config: AnalysisConfig) 
     step = max(1, round(m.fps / DOCUMENT_RATE))
     rotation_rate = np.linalg.norm(np.nan_to_num(m.motion[:, :3]), axis=1)
     return {
-        "fpv_editor_version": __version__,
+        "fpvedit_version": __version__,
         "ffmpeg_major": tools.ffmpeg_major,
         "source": str(analysis.info.path),
         "config": asdict(config),

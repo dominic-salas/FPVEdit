@@ -27,9 +27,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from fpv_editor.app import theme
-from fpv_editor.app.frames import grab_frame
-from fpv_editor.app.model import (
+from fpvedit.app import theme
+from fpvedit.app.frames import grab_frame
+from fpvedit.app.model import (
     ShotList,
     drop_position,
     locate,
@@ -37,14 +37,14 @@ from fpv_editor.app.model import (
     rating,
     shot_starts,
 )
-from fpv_editor.app.music import MusicPreview
-from fpv_editor.app.myratings import MyRatings
-from fpv_editor.app.preview import PREVIEW_HEIGHT, PreviewView, Segment
-from fpv_editor.app.settings import AppSettings
-from fpv_editor.app.timeline import Block, Timeline, clip_colour, rating_colour, stars_text
-from fpv_editor.errors import FPVEditError
-from fpv_editor.media import MUSIC_SUFFIXES, AudioFile, MediaInfo, Tools, probe_audio
-from fpv_editor.montage import Shot
+from fpvedit.app.music import MusicPreview
+from fpvedit.app.myratings import MyRatings
+from fpvedit.app.preview import PREVIEW_HEIGHT, PreviewView, Segment
+from fpvedit.app.settings import AppSettings
+from fpvedit.app.timeline import Block, Timeline, clip_colour, rating_colour, stars_text
+from fpvedit.errors import FPVEditError
+from fpvedit.media import MUSIC_SUFFIXES, AudioFile, MediaInfo, Tools, probe_audio
+from fpvedit.montage import Shot
 
 THUMB_HEIGHT = 144  # grabbed once, drawn at timeline, list and panel sizes
 TRIM_STEPS = (-0.5, 0.5)
@@ -162,7 +162,7 @@ class FullScreen(QWidget):
 
     def __init__(self) -> None:
         super().__init__(None, Qt.WindowType.Window)
-        self.setWindowTitle("FPV Editor")
+        self.setWindowTitle("FPVEdit")
         self.layout_ = QVBoxLayout(self)
         self.layout_.setContentsMargins(32, 24, 32, 20)
 

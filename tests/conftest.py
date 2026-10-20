@@ -15,7 +15,7 @@ def _no_image_model(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPa
     """Tests never load the image model unless marked ``model`` (it downloads ~1.5 GB
     and uses the GPU); the scenery step then behaves as if the ml extra were missing."""
     if request.node.get_closest_marker("model") is None:
-        from fpv_editor import scenery
+        from fpvedit import scenery
 
         monkeypatch.setattr(scenery, "available", lambda: False)
 

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fpv_editor.media import MediaInfo
+from fpvedit.media import MediaInfo
 
 
 def file_seconds(info: MediaInfo, seconds: float) -> float:

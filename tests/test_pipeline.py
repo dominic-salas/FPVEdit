@@ -14,17 +14,17 @@ from pathlib import Path
 
 import pytest
 
-from fpv_editor.cli import PipelineConfig, _render_and_validate, main, run
-from fpv_editor.errors import (
+from fpvedit.cli import PipelineConfig, _render_and_validate, main, run
+from fpvedit.errors import (
     InvalidInputError,
     NoFlightContentError,
     OutputExistsError,
     ValidationError,
 )
-from fpv_editor.highlights import Interval
-from fpv_editor.measure import MeasureConfig
-from fpv_editor.media import find_tools, frame_times, is_variable_rate, probe
-from fpv_editor.render import EncodeConfig, validate_output
+from fpvedit.highlights import Interval
+from fpvedit.measure import MeasureConfig
+from fpvedit.media import find_tools, frame_times, is_variable_rate, probe
+from fpvedit.render import EncodeConfig, validate_output
 from media_fixtures import Span, ffmpeg_available, ground_truth, make_flight
 
 pytestmark = [
@@ -395,7 +395,7 @@ def test_variable_frame_rate_input_is_refused_end_to_end(tmp_path: Path) -> None
 
 
 def _analyse_into(args: tuple[str, str]) -> bool:
-    from fpv_editor.analysis import analyze
+    from fpvedit.analysis import analyze
 
     source, cache = args
     tools = find_tools()

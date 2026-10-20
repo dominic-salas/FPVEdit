@@ -4,9 +4,9 @@ import numpy as np
 import pytest
 
 from flight_fixtures import Timeline
-from fpv_editor.errors import NoFlightContentError
-from fpv_editor.flight import detect_flight
-from fpv_editor.highlights import (
+from fpvedit.errors import NoFlightContentError
+from fpvedit.flight import detect_flight
+from fpvedit.highlights import (
     CutReason,
     Selection,
     SelectionMode,
@@ -14,7 +14,7 @@ from fpv_editor.highlights import (
     select_highlights,
     window_sum,
 )
-from fpv_editor.motion import PITCH, ROLL, SPEED
+from fpvedit.motion import PITCH, ROLL, SPEED
 
 
 def select(timeline: Timeline) -> Selection:

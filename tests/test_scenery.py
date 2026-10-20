@@ -10,11 +10,11 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from fpv_editor import scenery
-from fpv_editor.cli import MontagePlan, keep_rated
-from fpv_editor.media import Tools
-from fpv_editor.montage import Moment, MomentKind, MontageConfig, Shot
-from fpv_editor.rating import Quality
+from fpvedit import scenery
+from fpvedit.cli import MontagePlan, keep_rated
+from fpvedit.media import Tools
+from fpvedit.montage import Moment, MomentKind, MontageConfig, Shot
+from fpvedit.rating import Quality
 
 TOOLS = Tools(ffmpeg="ffmpeg", ffprobe="ffprobe", ffmpeg_major=7)
 

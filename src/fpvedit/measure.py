@@ -28,10 +28,10 @@ import cv2
 import numpy as np
 from numpy.typing import NDArray
 
-from fpv_editor.errors import MediaToolError
-from fpv_editor.media import NO_WINDOW, MediaInfo, Tools
-from fpv_editor.motion import FIELDS, MotionConfig, MotionEstimator
-from fpv_editor.picture import Area, PictureConfig, decoded_size, detect_overlay, fit_frames
+from fpvedit.errors import MediaToolError
+from fpvedit.media import NO_WINDOW, MediaInfo, Tools
+from fpvedit.motion import FIELDS, MotionConfig, MotionEstimator
+from fpvedit.picture import Area, PictureConfig, decoded_size, detect_overlay, fit_frames
 
 FloatArray = NDArray[np.float64]
 GrayFrame = NDArray[np.uint8]

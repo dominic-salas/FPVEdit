@@ -29,7 +29,7 @@ from enum import Enum
 import numpy as np
 from numpy.typing import NDArray
 
-from fpv_editor.measure import Measurements
+from fpvedit.measure import Measurements
 
 FloatArray = NDArray[np.float64]
 BoolArray = NDArray[np.bool_]

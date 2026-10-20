@@ -38,10 +38,10 @@ from itertools import pairwise
 import numpy as np
 from numpy.typing import NDArray
 
-from fpv_editor.errors import NoFlightContentError
-from fpv_editor.flight import FlightState, Screen, ScreenEvent, rolling_median, runs
-from fpv_editor.measure import Measurements
-from fpv_editor.motion import DIVERGENCE, PITCH, ROLL, SPEED
+from fpvedit.errors import NoFlightContentError
+from fpvedit.flight import FlightState, Screen, ScreenEvent, rolling_median, runs
+from fpvedit.measure import Measurements
+from fpvedit.motion import DIVERGENCE, PITCH, ROLL, SPEED
 
 FloatArray = NDArray[np.float64]
 BoolArray = NDArray[np.bool_]

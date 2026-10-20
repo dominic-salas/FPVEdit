@@ -22,10 +22,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from fpv_editor import __version__
-from fpv_editor.app.myratings import MyRatings
-from fpv_editor.app.settings import AppSettings
-from fpv_editor.media import INSTALL_HINT
+from fpvedit import __version__
+from fpvedit.app.myratings import MyRatings
+from fpvedit.app.settings import AppSettings
+from fpvedit.media import INSTALL_HINT
 
 CACHE_PATTERN = "*.measurements.npz"
 
@@ -175,7 +175,7 @@ class SettingsDialog(QDialog):
 
 def about_text(ffmpeg_version: str) -> str:
     return (
-        f"<h3>FPV Editor {__version__}</h3>"
+        f"<h3>FPVEdit {__version__}</h3>"
         "<p>Turns FPV recordings into a montage of their best shots. Everything runs on "
         "this computer; footage is never uploaded.</p>"
         "<p>MIT License. Uses Qt for Python (PySide6, LGPL-3.0), NumPy (BSD), OpenCV "
@@ -192,7 +192,7 @@ def ask_for_ffmpeg(parent: QWidget | None) -> Path | None:
     box.setIcon(QMessageBox.Icon.Warning)
     box.setWindowTitle("FFmpeg not found")
     box.setTextFormat(Qt.TextFormat.PlainText)
-    box.setText("FPV Editor needs FFmpeg to read and write video, and could not find it.")
+    box.setText("FPVEdit needs FFmpeg to read and write video, and could not find it.")
     box.setInformativeText(
         f"{INSTALL_HINT}\n\nIf FFmpeg is already installed somewhere else, choose the folder "
         "that contains ffmpeg and ffprobe."

@@ -23,7 +23,7 @@ from typing import Any
 
 from PySide6.QtCore import QObject, QTimer, Signal
 
-from fpv_editor.cli import (
+from fpvedit.cli import (
     ClipJob,
     ClipResult,
     PipelineConfig,
@@ -31,10 +31,10 @@ from fpv_editor.cli import (
     is_cached,
     plan_in_worker,
 )
-from fpv_editor.errors import CancelledError, FPVEditError
-from fpv_editor.media import MediaInfo, Tools
+from fpvedit.errors import CancelledError, FPVEditError
+from fpvedit.media import MediaInfo, Tools
 
-log = logging.getLogger("fpv_editor.app")
+log = logging.getLogger("fpvedit.app")
 POLL_MS = 200
 
 

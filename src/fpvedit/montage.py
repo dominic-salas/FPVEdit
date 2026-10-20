@@ -39,8 +39,8 @@ from enum import Enum
 import numpy as np
 from numpy.typing import NDArray
 
-from fpv_editor.flight import rolling_median, runs
-from fpv_editor.highlights import (
+from fpvedit.flight import rolling_median, runs
+from fpvedit.highlights import (
     CutReason,
     Interval,
     Selection,
@@ -49,10 +49,10 @@ from fpv_editor.highlights import (
     _Motion,
     window_sum,
 )
-from fpv_editor.measure import Measurements
-from fpv_editor.motion import CONFIDENCE
-from fpv_editor.rating import ClipSignals, Quality, rate_shot
-from fpv_editor.tricks import TrickConfig, name_fast_turn, power_loop_frames
+from fpvedit.measure import Measurements
+from fpvedit.motion import CONFIDENCE
+from fpvedit.rating import ClipSignals, Quality, rate_shot
+from fpvedit.tricks import TrickConfig, name_fast_turn, power_loop_frames
 
 FloatArray = NDArray[np.float64]
 BoolArray = NDArray[np.bool_]

@@ -1,4 +1,4 @@
-; Inno Setup 6 script: turns the standalone build (dist\FPV Editor, from
+; Inno Setup 6 script: turns the standalone build (dist\FPVEdit, from
 ; scripts/build_windows.py) into one installer. The release workflow runs it as
 ;   iscc /DAppVersion=1.0.0 packaging\installer.iss
 ; Installs per user by default (no admin rights needed), or for all users.
@@ -9,17 +9,17 @@
 
 [Setup]
 AppId={{6F0B5C2E-4D7A-4E7B-9A51-2C3E8F1D7A40}
-AppName=FPV Editor
+AppName=FPVEdit
 AppVersion={#AppVersion}
 AppPublisher=Dominic Salas
-DefaultDirName={autopf}\FPV Editor
-DefaultGroupName=FPV Editor
+DefaultDirName={autopf}\FPVEdit
+DefaultGroupName=FPVEdit
 DisableProgramGroupPage=yes
 LicenseFile=..\LICENSE
 OutputDir=..\dist
-OutputBaseFilename=FPV-Editor-{#AppVersion}-setup
-SetupIconFile=..\build\windows\fpv-editor.ico
-UninstallDisplayIcon={app}\FPV Editor.exe
+OutputBaseFilename=FPVEdit-{#AppVersion}-setup
+SetupIconFile=..\build\windows\fpvedit.ico
+UninstallDisplayIcon={app}\FPVEdit.exe
 Compression=lzma2/max
 SolidCompression=yes
 ArchitecturesAllowed=x64compatible
@@ -33,14 +33,14 @@ WizardStyle=modern
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Shortcuts:"
 
 [Files]
-Source: "..\dist\FPV Editor\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\dist\FPVEdit\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{group}\FPV Editor"; Filename: "{app}\FPV Editor.exe"
-Name: "{autodesktop}\FPV Editor"; Filename: "{app}\FPV Editor.exe"; Tasks: desktopicon
+Name: "{group}\FPVEdit"; Filename: "{app}\FPVEdit.exe"
+Name: "{autodesktop}\FPVEdit"; Filename: "{app}\FPVEdit.exe"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\FPV Editor.exe"; Description: "Start FPV Editor"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\FPVEdit.exe"; Description: "Start FPVEdit"; Flags: nowait postinstall skipifsilent
 
 [Code]
 // The app keeps measurements (to find shots again quickly), settings and a log in the
@@ -51,9 +51,9 @@ var
 begin
   if CurUninstallStep = usPostUninstall then
   begin
-    Data := ExpandConstant('{localappdata}\fpv-editor');
+    Data := ExpandConstant('{localappdata}\FPVEdit');
     if DirExists(Data) and (not UninstallSilent) then
-      if MsgBox('Also remove FPV Editor''s saved measurements and log (' + Data + ')? ' +
+      if MsgBox('Also remove FPVEdit''s saved measurements and log (' + Data + ')? ' +
                 'Your videos are not affected.', mbConfirmation, MB_YESNO) = IDYES then
         DelTree(Data, True, True, True);
   end;

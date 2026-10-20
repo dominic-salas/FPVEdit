@@ -6,11 +6,11 @@ import numpy as np
 import pytest
 
 from flight_fixtures import FPS, Timeline
-from fpv_editor.errors import NoFlightContentError
-from fpv_editor.flight import detect_flight
-from fpv_editor.highlights import Selection, select_highlights
-from fpv_editor.measure import Measurements
-from fpv_editor.montage import (
+from fpvedit.errors import NoFlightContentError
+from fpvedit.flight import detect_flight
+from fpvedit.highlights import Selection, select_highlights
+from fpvedit.measure import Measurements
+from fpvedit.montage import (
     MomentKind,
     MontageConfig,
     Shot,
@@ -19,7 +19,7 @@ from fpv_editor.montage import (
     pick_shots,
     usable_footage,
 )
-from fpv_editor.motion import CONFIDENCE, DIVERGENCE, PITCH
+from fpvedit.motion import CONFIDENCE, DIVERGENCE, PITCH
 
 CONFIG = MontageConfig()
 

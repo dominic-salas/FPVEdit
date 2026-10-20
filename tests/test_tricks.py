@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from fpv_editor.tricks import name_fast_turn, name_turn, power_loop_frames
+from fpvedit.tricks import name_fast_turn, name_turn, power_loop_frames
 
 
 def test_turns_are_named_by_their_axis() -> None:

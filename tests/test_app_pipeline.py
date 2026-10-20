@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from fpv_editor.cli import (
+from fpvedit.cli import (
     ClipJob,
     PipelineConfig,
     combine_clips,
@@ -17,10 +17,10 @@ from fpv_editor.cli import (
     plan_montage,
     render_montage,
 )
-from fpv_editor.errors import CancelledError
-from fpv_editor.media import find_tools, probe, run_tool_with_progress
-from fpv_editor.montage import Shot
-from fpv_editor.render import EncodeConfig
+from fpvedit.errors import CancelledError
+from fpvedit.media import find_tools, probe, run_tool_with_progress
+from fpvedit.montage import Shot
+from fpvedit.render import EncodeConfig
 from media_fixtures import Span, ffmpeg_available, make_flight
 
 pytestmark = [
@@ -155,11 +155,11 @@ def test_window_lists_and_edits_the_shots(clips: tuple[Path, Path], tmp_path: Pa
     from PySide6.QtCore import QSettings
     from PySide6.QtWidgets import QApplication
 
-    from fpv_editor.app.myratings import MyRatings
-    from fpv_editor.app.settings import AppSettings
-    from fpv_editor.app.window import MainWindow, video_files
-    from fpv_editor.cli import _taste_for
-    from fpv_editor.taste import Taste
+    from fpvedit.app.myratings import MyRatings
+    from fpvedit.app.settings import AppSettings
+    from fpvedit.app.window import MainWindow, video_files
+    from fpvedit.cli import _taste_for
+    from fpvedit.taste import Taste
 
     app = QApplication.instance() or QApplication([])
     tools = find_tools()
@@ -243,9 +243,9 @@ def test_window_analyses_clips_in_the_background(clips: tuple[Path, Path], tmp_p
     from PySide6.QtCore import QSettings
     from PySide6.QtWidgets import QApplication
 
-    from fpv_editor.app.myratings import MyRatings
-    from fpv_editor.app.settings import AppSettings
-    from fpv_editor.app.window import MainWindow
+    from fpvedit.app.myratings import MyRatings
+    from fpvedit.app.settings import AppSettings
+    from fpvedit.app.window import MainWindow
 
     app = QApplication.instance() or QApplication([])
     tools = find_tools()

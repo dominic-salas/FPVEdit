@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from fpv_editor import __version__
-from fpv_editor.cli import main
+from fpvedit import __version__
+from fpvedit.cli import main
 
 
 def test_version_flag(capsys: pytest.CaptureFixture[str]) -> None:

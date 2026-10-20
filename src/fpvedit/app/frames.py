@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import subprocess
 
-from fpv_editor.media import NO_WINDOW, MediaInfo, Tools
-from fpv_editor.seeking import file_seconds
+from fpvedit.media import NO_WINDOW, MediaInfo, Tools
+from fpvedit.seeking import file_seconds
 
 
 def preview_size(info: MediaInfo, height: int) -> tuple[int, int]:

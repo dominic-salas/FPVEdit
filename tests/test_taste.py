@@ -4,10 +4,10 @@ from pathlib import Path
 
 import numpy as np
 
-from fpv_editor.app.myratings import MyRatings
-from fpv_editor.montage import Moment, MomentKind, Shot
-from fpv_editor.rating import Quality
-from fpv_editor.taste import MIN_RATINGS, RatedShot, Taste
+from fpvedit.app.myratings import MyRatings
+from fpvedit.montage import Moment, MomentKind, Shot
+from fpvedit.rating import Quality
+from fpvedit.taste import MIN_RATINGS, RatedShot, Taste
 
 
 def quality(trick: float, close: bool, crash: bool) -> Quality:
@@ -120,9 +120,9 @@ def test_a_taste_for_what_is_in_view_is_learned_from_the_picture() -> None:
 
 
 def test_keep_rated_uses_own_stars_and_the_learned_taste(tmp_path: Path) -> None:
-    from fpv_editor.cli import MontagePlan, keep_rated
-    from fpv_editor.media import Tools
-    from fpv_editor.montage import MontageConfig
+    from fpvedit.cli import MontagePlan, keep_rated
+    from fpvedit.media import Tools
+    from fpvedit.montage import MontageConfig
 
     class Fixed:
         """Ratings that like close passes and dislike everything else, plus one own rating."""

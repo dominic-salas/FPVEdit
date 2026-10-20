@@ -58,7 +58,7 @@ def test_prohibited_paths_are_refused(path: str) -> None:
 @pytest.mark.parametrize(
     "path",
     [
-        "src/fpv_editor/cli.py",
+        "src/fpvedit/cli.py",
         "README.md",
         "tests/fixtures/annotations.json",
         "docs/env.md",

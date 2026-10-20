@@ -14,7 +14,7 @@ from types import ModuleType
 import numpy as np
 import pytest
 
-from fpv_editor.media import MediaInfo, VideoStream
+from fpvedit.media import MediaInfo, VideoStream
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 

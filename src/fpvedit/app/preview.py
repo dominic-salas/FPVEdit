@@ -21,8 +21,8 @@ from PySide6.QtCore import QObject, Qt, QThread, Signal
 from PySide6.QtGui import QImage, QMouseEvent, QPixmap, QResizeEvent
 from PySide6.QtWidgets import QLabel, QSizePolicy, QWidget
 
-from fpv_editor.app.frames import grab_frame, preview_args, preview_size
-from fpv_editor.media import NO_WINDOW, MediaInfo, Tools
+from fpvedit.app.frames import grab_frame, preview_args, preview_size
+from fpvedit.media import NO_WINDOW, MediaInfo, Tools
 
 PREVIEW_HEIGHT = 360
 PREVIEW_FPS = 30

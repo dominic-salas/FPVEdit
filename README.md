@@ -4,7 +4,7 @@ Offline command-line tool that turns raw FPV freestyle recordings (`.ts` or `.mp
 montage of their best shots.
 
 ```
-fpv-editor flight1.ts flight2.ts flight3.mp4
+fpvedit flight1.ts flight2.ts flight3.mp4
 ```
 
 **Status: early development (montage engine).** Each recording is first cleaned using the
@@ -23,7 +23,7 @@ Requires FFmpeg 6+ on PATH and [uv](https://docs.astral.sh/uv/).
 
 ```
 uv sync
-uv run fpv-editor path/to/flight1.ts path/to/flight2.ts -o montage.mp4
+uv run fpvedit path/to/flight1.ts path/to/flight2.ts -o montage.mp4
 ```
 
 Options:
@@ -63,10 +63,10 @@ only compared between shots; they are not probabilities, and it does not recogni
 
 ```
 uv sync --extra app
-uv run fpv-editor-app
+uv run fpvedit-app
 ```
 
-After `uv sync`, the app is also a program of its own: `.venv\Scripts\fpv-editor-app.exe`.
+After `uv sync`, the app is also a program of its own: `.venv\Scripts\fpvedit-app.exe`.
 Pin it or make a desktop shortcut to it (right-click > Send to > Desktop) to open the app
 with a double-click; dropping clips onto the shortcut opens the app with them. It keeps
 working after updates, as long as the project folder and its `.venv` stay where they are.
@@ -80,7 +80,7 @@ undoes. **Render montage** writes the video, using the NVIDIA GPU (NVENC) when F
 otherwise the CPU, then checks the result.
 
 Everything runs on your computer. Measurements are cached in your local app-data folder
-(`%LOCALAPPDATA%\fpv-editor\measurements` on Windows), so a second analysis of the same
+(`%LOCALAPPDATA%\fpvedit\measurements` on Windows), so a second analysis of the same
 clips takes seconds. You can delete that folder at any time. The app needs PySide6 (Qt for
 Python, LGPL-3.0), installed by the `app` extra.
 

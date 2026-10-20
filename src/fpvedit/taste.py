@@ -28,8 +28,8 @@ from typing import Protocol
 import numpy as np
 from numpy.typing import NDArray
 
-from fpv_editor.montage import Shot
-from fpv_editor.rating import Quality
+from fpvedit.montage import Shot
+from fpvedit.rating import Quality
 
 FloatArray = NDArray[np.float64]
 

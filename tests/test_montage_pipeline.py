@@ -10,10 +10,10 @@ from pathlib import Path
 
 import pytest
 
-from fpv_editor.cli import PipelineConfig, main, run_montage
-from fpv_editor.errors import InvalidInputError, NoFlightContentError, OutputExistsError
-from fpv_editor.media import find_tools, probe
-from fpv_editor.render import EncodeConfig
+from fpvedit.cli import PipelineConfig, main, run_montage
+from fpvedit.errors import InvalidInputError, NoFlightContentError, OutputExistsError
+from fpvedit.media import find_tools, probe
+from fpvedit.render import EncodeConfig
 from media_fixtures import Span, ffmpeg_available, make_flight
 
 pytestmark = [
@@ -146,8 +146,8 @@ def make_tone(path: Path, seconds: float, frequency: int) -> Path:
 
 
 def test_music_tracks_become_the_soundtrack(copies: tuple[Path, Path], tmp_path: Path) -> None:
-    from fpv_editor.media import probe_audio
-    from fpv_editor.render import soundtrack_filter
+    from fpvedit.media import probe_audio
+    from fpvedit.render import soundtrack_filter
 
     first = make_tone(tmp_path / "first.mp3", 2.0, 440)
     second = make_tone(tmp_path / "second song.mp3", 60.0, 660)

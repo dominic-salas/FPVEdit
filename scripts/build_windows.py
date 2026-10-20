@@ -1,4 +1,4 @@
-"""Build the standalone Windows app: one folder with FPV Editor.exe, FFmpeg and licences.
+"""Build the standalone Windows app: one folder with FPVEdit.exe, FFmpeg and licences.
 
     uv sync --group build
     uv run python scripts/build_windows.py --ffmpeg C:/path/to/ffmpeg/bin
@@ -21,8 +21,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-APP_NAME = "FPV Editor"
-CLI_NAME = "fpv-editor"
+APP_NAME = "FPVEdit"
+CLI_NAME = "fpvedit"
 LICENSED_PACKAGES = ("PySide6-Essentials", "shiboken6", "numpy", "opencv-python-headless")
 
 
@@ -32,7 +32,7 @@ def write_icon(path: Path) -> None:
     from PySide6.QtCore import QBuffer, QIODevice
     from PySide6.QtWidgets import QApplication
 
-    from fpv_editor.app.look import SIZES, icon_pixmap
+    from fpvedit.app.look import SIZES, icon_pixmap
 
     _ = QApplication.instance() or QApplication([])
     images = []
@@ -77,7 +77,7 @@ def copy_ffmpeg(source: Path, target: Path) -> str:
 
 def copy_licences(target: Path, ffmpeg_licence: str | None) -> None:
     target.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(ROOT / "LICENSE", target / "FPV-Editor-LICENSE.txt")
+    shutil.copy2(ROOT / "LICENSE", target / "FPVEdit-LICENSE.txt")
     for package in LICENSED_PACKAGES:
         distribution = importlib.metadata.distribution(package)
         for file in distribution.files or []:
@@ -94,7 +94,7 @@ def copy_licences(target: Path, ffmpeg_licence: str | None) -> None:
         else "FFmpeg is not included; the FFmpeg installed on this computer is used."
     )
     (target / "THIRD-PARTY-NOTICES.txt").write_text(
-        "FPV Editor is MIT licensed (FPV-Editor-LICENSE.txt). It includes:\n"
+        "FPVEdit is MIT licensed (FPVEdit-LICENSE.txt). It includes:\n"
         "- Python (PSF License) and the PyInstaller bootloader (GPL-2.0 with an exception "
         "that allows distribution with any program)\n"
         "- Qt for Python: PySide6 and shiboken6 (LGPL-3.0), used unmodified as shared "
@@ -137,11 +137,11 @@ def main() -> int:
     build = ROOT / "build" / "windows"
     shutil.rmtree(build, ignore_errors=True)
     build.mkdir(parents=True)
-    icon = build / "fpv-editor.ico"
+    icon = build / "fpvedit.ico"
     write_icon(icon)
-    app = pyinstaller(build, args.out, APP_NAME, "fpv_editor.app", icon, windowed=True)
+    app = pyinstaller(build, args.out, APP_NAME, "fpvedit.app", icon, windowed=True)
     # The command-line tool, in the same folder: its own small exe, the app's libraries.
-    cli = pyinstaller(build, build / "cli", CLI_NAME, "fpv_editor.cli", icon, windowed=False)
+    cli = pyinstaller(build, build / "cli", CLI_NAME, "fpvedit.cli", icon, windowed=False)
     shutil.copy2(cli / f"{CLI_NAME}.exe", app / f"{CLI_NAME}.exe")
     shutil.copytree(cli / "_internal", app / "_internal", dirs_exist_ok=True)
     # OpenCV's own video I/O (an FFmpeg build of ~30 MB) is never used: FFmpeg does that.

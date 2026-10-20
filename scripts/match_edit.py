@@ -33,8 +33,8 @@ from pathlib import Path
 import numpy as np
 from numpy.typing import NDArray
 
-from fpv_editor.media import MediaInfo, Tools, find_tools, probe
-from fpv_editor.picture import decoded_size, detect_active_area, sample_frames
+from fpvedit.media import MediaInfo, Tools, find_tools, probe
+from fpvedit.picture import decoded_size, detect_active_area, sample_frames
 
 FingerprintArray = NDArray[np.float32]
 

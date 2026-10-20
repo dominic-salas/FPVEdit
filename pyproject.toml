@@ -1,5 +1,5 @@
 [project]
-name = "fpv-editor"
+name = "fpvedit"
 version = "0.1.0.dev0"
 description = "One-command offline highlight editor for FPV freestyle recordings"
 readme = "README.md"
@@ -21,7 +21,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# The desktop app (fpv-editor-app). Qt for Python, LGPL-3.0, used as an unmodified library.
+# The desktop app (fpvedit-app). Qt for Python, LGPL-3.0, used as an unmodified library.
 app = ["PySide6-Essentials>=6.10"]
 # The image model (SigLIP 2, Apache-2.0) that compares the scenery of shots. PyTorch
 # (BSD-3) runs it on an NVIDIA GPU or the CPU; transformers (Apache-2.0) loads it;
@@ -29,10 +29,12 @@ app = ["PySide6-Essentials>=6.10"]
 ml = ["torch>=2.9", "transformers>=4.56", "pillow>=11"]
 
 [project.scripts]
-fpv-editor = "fpv_editor.cli:main"
+fpvedit = "fpvedit.cli:main"
+fpv-editor = "fpvedit.cli:main"  # the name until 2026-10-20, kept so old shortcuts work
 
 [project.gui-scripts]
-fpv-editor-app = "fpv_editor.app:main"
+fpvedit-app = "fpvedit.app:main"
+fpv-editor-app = "fpvedit.app:main"  # the old name, for existing desktop shortcuts
 
 [dependency-groups]
 build = [
@@ -59,7 +61,7 @@ requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/fpv_editor"]
+packages = ["src/fpvedit"]
 
 [tool.ruff]
 line-length = 100

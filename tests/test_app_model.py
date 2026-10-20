@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from fpv_editor.app.model import MIN_SHOT_S, ShotList
-from fpv_editor.montage import Moment, MomentKind, Shot
+from fpvedit.app.model import MIN_SHOT_S, ShotList
+from fpvedit.montage import Moment, MomentKind, Shot
 
 
 def shot(clip: int, start: float, end: float, score: float = 5.0) -> Shot:
@@ -107,7 +107,7 @@ def test_extending_a_trimmed_shot_shows_its_moment_again() -> None:
 
 
 def test_montage_timeline_maps_both_ways() -> None:
-    from fpv_editor.app.model import drop_position, locate, montage_time, shot_starts
+    from fpvedit.app.model import drop_position, locate, montage_time, shot_starts
 
     shots = [shot(0, 10, 18), shot(1, 4, 9), shot(0, 30, 40)]
     assert shot_starts(shots) == [0.0, 8.0, 13.0]
@@ -128,7 +128,7 @@ def test_montage_timeline_maps_both_ways() -> None:
 
 
 def test_ratings_are_relative_to_the_montage() -> None:
-    from fpv_editor.app.model import rating
+    from fpvedit.app.model import rating
 
     shots = [shot(0, 20 * i, 20 * i + 9, score=float(i + 1)) for i in range(10)]
     stars = [rating(s, shots) for s in shots]

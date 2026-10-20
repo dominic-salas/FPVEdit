@@ -15,9 +15,9 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from fpv_editor.montage import Shot
-from fpv_editor.rating import Quality
-from fpv_editor.taste import RatedShot
+from fpvedit.montage import Shot
+from fpvedit.rating import Quality
+from fpvedit.taste import RatedShot
 
 
 def shot_key(path: Path, shot: Shot) -> str:

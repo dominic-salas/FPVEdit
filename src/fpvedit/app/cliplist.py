@@ -39,10 +39,10 @@ from PySide6.QtWidgets import (
     QStyleOptionViewItem,
 )
 
-from fpv_editor.app import theme
-from fpv_editor.app.frames import grab_frame
-from fpv_editor.errors import FPVEditError
-from fpv_editor.media import MediaInfo, Tools, probe
+from fpvedit.app import theme
+from fpvedit.app.frames import grab_frame
+from fpvedit.errors import FPVEditError
+from fpvedit.media import MediaInfo, Tools, probe
 
 PATH = Qt.ItemDataRole.UserRole  # str: the clip's file
 DETAILS = Qt.ItemDataRole.UserRole + 1  # str: length, rate, recording time

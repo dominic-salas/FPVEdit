@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import numpy as np
 
-from fpv_editor.measure import Measurements
-from fpv_editor.motion import CONFIDENCE, DIVERGENCE, FIELDS, PITCH, ROLL, SPEED, YAW
+from fpvedit.measure import Measurements
+from fpvedit.motion import CONFIDENCE, DIVERGENCE, FIELDS, PITCH, ROLL, SPEED, YAW
 
 FPS = 20.0
 BANDS = 16

@@ -7,9 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from fpv_editor.highlights import Interval
-from fpv_editor.media import find_tools, frame_times, probe
-from fpv_editor.render import (
+from fpvedit.highlights import Interval
+from fpvedit.media import find_tools, frame_times, probe
+from fpvedit.render import (
     EncodeConfig,
     expected_frame_count,
     first_frame_time,

@@ -35,7 +35,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         shell: bash
         run: |
-          version=$(uv run python -c "import fpv_editor; print(fpv_editor.__version__)")
+          version=$(uv run python -c "import fpvedit; print(fpvedit.__version__)")
           test "v$version" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME != version $version"; exit 1; }
 
       - name: Download FFmpeg
@@ -51,8 +51,8 @@ jobs:
       - name: Smoke test the build
         shell: bash
         run: |
-          "dist/FPV Editor/fpv-editor.exe" --version
-          "dist/FPV Editor/ffmpeg/ffmpeg.exe" -hide_banner -version | head -1
+          "dist/FPVEdit/fpvedit.exe" --version
+          "dist/FPVEdit/ffmpeg/ffmpeg.exe" -hide_banner -version | head -1
 
       - name: Build the installer
         shell: bash
@@ -61,13 +61,13 @@ jobs:
         run: |
           iscc="/c/Program Files (x86)/Inno Setup 6/ISCC.exe"
           test -x "$iscc" || choco install innosetup -y --no-progress
-          version=$(uv run python -c "import fpv_editor; print(fpv_editor.__version__)")
+          version=$(uv run python -c "import fpvedit; print(fpvedit.__version__)")
           "$iscc" "/DAppVersion=$version" packaging/installer.iss
 
       - uses: actions/upload-artifact@v4
         with:
-          name: FPV-Editor-installer
-          path: dist/FPV-Editor-*-setup.exe
+          name: FPVEdit-installer
+          path: dist/FPVEdit-*-setup.exe
           retention-days: 14
 
       - name: Draft a release
@@ -75,4 +75,4 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/FPV-Editor-*-setup.exe --draft --generate-notes
+        run: gh release create "$GITHUB_REF_NAME" dist/FPVEdit-*-setup.exe --draft --generate-notes

@@ -15,11 +15,11 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from fpv_editor.cli import Clip, render_montage
-from fpv_editor.errors import FPVEditError
-from fpv_editor.media import Tools, find_tools, frame_times, probe
-from fpv_editor.montage import Shot
-from fpv_editor.render import EncodeConfig
+from fpvedit.cli import Clip, render_montage
+from fpvedit.errors import FPVEditError
+from fpvedit.media import Tools, find_tools, frame_times, probe
+from fpvedit.montage import Shot
+from fpvedit.render import EncodeConfig
 from media_fixtures import ffmpeg_available
 
 pytestmark = [

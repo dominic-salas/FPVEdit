@@ -34,10 +34,10 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
-from fpv_editor.errors import FPVEditError
-from fpv_editor.media import NO_WINDOW, MediaInfo, Tools
-from fpv_editor.montage import Shot
-from fpv_editor.seeking import file_seconds
+from fpvedit.errors import FPVEditError
+from fpvedit.media import NO_WINDOW, MediaInfo, Tools
+from fpvedit.montage import Shot
+from fpvedit.seeking import file_seconds
 
 MODEL_ID = "google/siglip2-base-patch16-224"
 MODEL_REVISION = "75de2d55ec2d0b4efc50b3e9ad70dba96a7b2fa2"

@@ -10,7 +10,7 @@ from __future__ import annotations
 import dataclasses
 from collections.abc import Iterable, Sequence
 
-from fpv_editor.montage import Shot
+from fpvedit.montage import Shot
 
 MIN_SHOT_S = 1.0  # a trim never makes a shot shorter than this
 

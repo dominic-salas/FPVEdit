@@ -23,7 +23,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import QSizePolicy, QToolTip, QWidget
 
-from fpv_editor.app import theme
+from fpvedit.app import theme
 
 # One colour per source recording; muted so the thumbnails stay the focus.
 CLIP_COLOURS = (

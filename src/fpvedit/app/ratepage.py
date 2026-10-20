@@ -17,11 +17,11 @@ from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
-from fpv_editor.app.myratings import MyRatings
-from fpv_editor.app.preview import PreviewView, Segment
-from fpv_editor.app.timeline import rating_colour
-from fpv_editor.media import MediaInfo, Tools
-from fpv_editor.montage import Shot
+from fpvedit.app.myratings import MyRatings
+from fpvedit.app.preview import PreviewView, Segment
+from fpvedit.app.timeline import rating_colour
+from fpvedit.media import MediaInfo, Tools
+from fpvedit.montage import Shot
 
 GOAL = 150  # ratings for learning Dom's taste from what the shots show
 MIN_WATCH_S = 1.0  # a rating within this long of a shot appearing is ignored

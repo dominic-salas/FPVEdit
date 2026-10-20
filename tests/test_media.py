@@ -6,8 +6,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from fpv_editor import media
-from fpv_editor.errors import InvalidInputError, MediaToolError, ToolNotFoundError
+from fpvedit import media
+from fpvedit.errors import InvalidInputError, MediaToolError, ToolNotFoundError
 
 PROBE = {
     "format": {"format_name": "mpegts", "duration": "36.021333", "start_time": "1.400000"},
@@ -123,7 +123,7 @@ def test_filter_script_option_depends_on_version() -> None:
 
 
 def test_find_tools_reports_missing_ffmpeg(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("fpv_editor.media.shutil.which", lambda name: None)
+    monkeypatch.setattr("fpvedit.media.shutil.which", lambda name: None)
     with pytest.raises(ToolNotFoundError, match="ffmpeg and ffprobe not found"):
         media.find_tools()
 
