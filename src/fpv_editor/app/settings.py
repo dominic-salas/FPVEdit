@@ -100,13 +100,22 @@ class AppSettings:
         self._store.setValue("review/colour_by_rating", "true" if value else "false")
 
     @property
+    def learn_taste(self) -> bool:
+        """Rate shots, learn from the ratings and leave out shots predicted below
+        `min_stars`. Off: every shot found is kept and the rating controls are hidden."""
+        return str(self._store.value("review/learn_taste", "false")).lower() == "true"
+
+    @learn_taste.setter
+    def learn_taste(self, value: bool) -> None:
+        self._store.setValue("review/learn_taste", "true" if value else "false")
+
+    @property
     def min_stars(self) -> int:
-        """Shots rated below this many stars are left out of a new montage (1: none are;
-        Dom rates every shot himself for now)."""
+        """With `learn_taste`, shots predicted below this many stars are left out."""
         try:
-            value = int(str(self._store.value("review/min_stars", 1)))
+            value = int(str(self._store.value("review/min_stars", 3)))
         except ValueError:
-            return 1
+            return 3
         return min(5, max(1, value))
 
     @min_stars.setter

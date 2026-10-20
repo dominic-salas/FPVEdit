@@ -160,6 +160,14 @@ Details and per-claim evidence: `docs/review-2026-10-11.md`.
 ## Validation log
 (newest first; exact commands and outcomes)
 
+### 2026-10-20 — Rating as a setting that learns the pilot's taste (Dom's PC)
+- Dom: rating should be a setting the user turns on or off; with it on they rate shots, the ratings stay on their computer, an algorithm predicts what they would like or not from them and the app leaves out the rest, it adapts by itself, and the ratings can be cleared.
+- Settings: "My ratings" (off by default): rate shots, learn my taste and leave out shots predicted below N stars (2-5, default 3). Off: every shot found is kept and the Rate shots buttons, menu item, review stars and 1-5 keys are hidden. "Saved ratings: N shots rated" with "Clear my ratings…" (asks first; deletes `my-ratings.jsonl`).
+- `taste.py` (numpy only): a ridge regression of (pilot's stars - app's stars) on what the app measured per shot (four rating parts, trick kinds, notes such as crash right after / very close / fast, length). Its strength is picked by leave-one-out over the pilot's ratings, including "no correction" (the app's own stars), so it only departs from the app's rating as far as the ratings show it predicts better. It is refitted each time shots are found; shots the pilot rated keep their own stars. `Quality.taste` replaces the app's stars wherever stars are shown or filtered.
+- With Dom's 53 ratings: leave-one-out error 0.94 stars for the app's rating, 0.91 for always 3; no correction strength beat the app's rating (Spearman of the measured features with his stars 0.1-0.24), so for now the predictions are the app's own stars plus his own ratings. The measured features do not capture his taste; learning from the picture (image-model features of each shot) is the likely next step.
+- App check (offscreen, temporary settings, Dom's ratings read only): off hides the rating controls and keeps all 6 hdz_0019 shots; on shows them, the dialog shows 53 rated, and 3 of 6 shots are left out (below 3 stars). His ratings file was not changed.
+- Checks: ruff, format, mypy clean; pytest 232 passed (the app test now turns rating on before rating a shot).
+
 ### 2026-10-20 — Drag the playhead to scan through the montage (Dom's PC, offscreen)
 - Dom: he wants to drag the play needle to scan through parts of a clip. The review timeline only jumped on a click before.
 - Change: grabbing the playhead (6 px either side) or pressing on the time ruler and dragging scans: the needle follows the mouse and the player shows the frame under it (one FFmpeg frame grab at a time, newest request wins; restarting playback per move showed almost nothing, as each new decoder was killed before its first frame); letting go plays on from there. Dragging a shot block still moves the shot.

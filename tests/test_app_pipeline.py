@@ -177,7 +177,11 @@ def test_window_lists_and_edits_the_shots(clips: tuple[Path, Path], tmp_path: Pa
         window._undo()
         assert window._current_shots() == plan.shots
         review._mine = MyRatings(tmp_path / "my-ratings.jsonl")  # not the user's file
-        review.rate_current(4)  # Dom's own stars for the open shot
+        review.rate_current(4)  # rating is off by default: ignored
+        assert review._mine.stars(plan.infos[0].path, window._current_shots()[0]) is None
+        settings.learn_taste = True
+        window._show_rating_controls()
+        review.rate_current(4)  # the pilot's own stars for the open shot
         assert review._mine.stars(plan.infos[0].path, window._current_shots()[0]) == 4
         if len(plan.shots) > 1:
             review._moved(0, len(plan.shots))  # drag the first shot to the end

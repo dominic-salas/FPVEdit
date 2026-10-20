@@ -485,10 +485,13 @@ def keep_rated(
     scenery: bool = True,
     cache_dir: Path | None = None,
     device: str = "auto",
+    taste: Callable[[Path, Shot], float | None] | None = None,
 ) -> MontagePlan:
     """Keep the shots rated ``min_stars`` or more (`rating.py`); the rest are left out and
-    can be added back. With ``scenery`` and the ``ml`` extra, the image model first adds
-    its small indoor/outdoor nudge to each rating (in its own process). If no shot reaches
+    can be added back. ``taste`` gives the stars the pilot gave or would give a shot of the
+    recording at a path (`taste.py`); they replace the app's own stars. With ``scenery``
+    and the ``ml`` extra, the image model first adds its small indoor/outdoor nudge to each
+    rating (in its own process). If no shot reaches
     ``min_stars``, the best-rated ones are kept.
     """
     from fpv_editor import scenery as scenery_model
@@ -514,6 +517,15 @@ def keep_rated(
         notes.append(
             "the image model is not installed (uv sync --extra ml), so the ratings do not "
             "include scenery"
+        )
+    if taste is not None:
+        shots = tuple(
+            dataclasses.replace(
+                s, quality=dataclasses.replace(s.quality, taste=taste(plan.infos[s.clip].path, s))
+            )
+            if s.quality is not None
+            else s
+            for s in shots
         )
     stars = [s.quality.stars if s.quality is not None else 3 for s in shots]
     bar = min(min_stars, max(stars))
