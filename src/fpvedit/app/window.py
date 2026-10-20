@@ -566,7 +566,6 @@ class MainWindow(QMainWindow):
         self._rate_action = action("Rate shots…", self._open_rating, "Ctrl+R")
         menu.addAction(self._rate_action)
         menu.addAction(action("Show my shot ratings", self._show_my_ratings))
-        self._show_rating_controls()
         menu.addAction(action("About FPVEdit", self._about))
         menu.addSeparator()
         menu.addAction(action("Quit", self.close, QKeySequence.StandardKey.Quit))
@@ -830,7 +829,7 @@ class MainWindow(QMainWindow):
 
     def _open_rating(self) -> None:
         """The rating screen: shots of the clips on step 1, one at a time, no montage."""
-        if self._busy() or not self._settings.learn_taste:
+        if self._busy():
             return
         if not self._clips.count():
             QMessageBox.information(
@@ -933,8 +932,15 @@ class MainWindow(QMainWindow):
         tools, cache = self._tools, self._cache_dir
 
         def work(progress: Progress) -> object:
-            progress("Rating the shots (with the image model)", 0.5)
-            return keep_rated(tools, plan, min_stars=min_stars, cache_dir=cache, ratings=ratings)
+            progress("Rating the shots (with the image model)", 0.0)
+            return keep_rated(
+                tools,
+                plan,
+                min_stars=min_stars,
+                cache_dir=cache,
+                ratings=ratings,
+                progress=progress,
+            )
 
         self._run(work, self._plan_ready, self.CLIPS, "STEP 2 OF 4", "Finding the best shots")
 
@@ -1235,16 +1241,7 @@ class MainWindow(QMainWindow):
         dialog = SettingsDialog(self._settings, self._cache_dir, self, self._review._mine)
         dialog.exec()  # ratings may have been cleared even if it was cancelled
         self._refresh_output()
-        self._show_rating_controls()
         self._review.refresh()  # the timeline colours may have changed
-
-    def _show_rating_controls(self) -> None:
-        """Rating shots is part of the app only with the "My ratings" setting on."""
-        on = self._settings.learn_taste
-        self._rate_button.setVisible(on)
-        self._quick_rate.setVisible(on)
-        self._rate_action.setEnabled(on)
-        self._review.set_rating_enabled(on)
 
     def _show_my_ratings(self) -> None:
         base = data_folder()

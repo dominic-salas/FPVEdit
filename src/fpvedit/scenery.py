@@ -22,11 +22,16 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import math
 import multiprocessing
 import os
+import queue
 import subprocess
+import threading
+import time
 from collections.abc import Callable, Sequence
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+from concurrent.futures import TimeoutError as FuturesTimeout
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -149,9 +154,12 @@ class SceneryModel:
         tensor = output.pooler_output if hasattr(output, "pooler_output") else output
         return self._torch.nn.functional.normalize(tensor.float(), dim=-1)
 
-    def describe(self, frames: Sequence[Frame]) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    def describe(
+        self, frames: Sequence[Frame], done: Callable[[int], None] | None = None
+    ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
         """Per frame: indoorness (best indoor minus best outdoor similarity), and the
-        similarity to each `PICTURE` description (frames x descriptions)."""
+        similarity to each `PICTURE` description (frames x descriptions). ``done`` is told
+        how many frames are compared after each batch."""
         scores: list[NDArray[np.float64]] = []
         pictures: list[NDArray[np.float64]] = []
         split = len(INSIDE) + len(OUTSIDE)
@@ -167,6 +175,8 @@ class SceneryModel:
                 outside = similarity[:, len(INSIDE) : split].max(axis=1)
                 scores.append(inside - outside)
                 pictures.append(similarity[:, split:])
+                if done is not None:
+                    done(min(len(frames), first + BATCH))
         if not scores:
             return np.zeros(0), np.zeros((0, len(PICTURE)))
         return np.concatenate(scores), np.concatenate(pictures)
@@ -262,19 +272,54 @@ def score_shots(
     missing = sorted(
         {item for item in wanted if keys[item] not in cache or picture_keys[item] not in seen}
     )
-    if missing:
+
+    def report(text: str, share: float) -> None:
         if progress is not None:
-            progress("Reading frames of the shots", 0.0)
+            progress(text, share)
+
+    if missing:
+        # Shares of the whole: reading frames 0-30 %, loading the model 30-60 % (it gives
+        # no progress of its own, so the bar creeps on while it loads: 6-25 s on Dom's PC),
+        # comparing the frames 60-100 %.
+        report(f"Reading {len(missing)} frames of the shots", 0.0)
         with ThreadPoolExecutor(4) as pool:
-            frames = list(pool.map(lambda item: grab_rgb(tools, infos[item[0]], item[1]), missing))
-        readable = [
-            (item, frame) for item, frame in zip(missing, frames, strict=True) if frame is not None
-        ]
+            futures = {
+                pool.submit(grab_rgb, tools, infos[item[0]], item[1]): item for item in missing
+            }
+            grabbed: dict[tuple[int, float], Frame | None] = {}
+            for done, future in enumerate(as_completed(futures), start=1):
+                grabbed[futures[future]] = future.result()
+                if done % 4 == 0 or done == len(missing):
+                    report(
+                        f"Reading frames of the shots ({done} of {len(missing)})",
+                        0.3 * done / len(missing),
+                    )
+        readable = [(item, frame) for item in missing if (frame := grabbed[item]) is not None]
         if readable:
-            if progress is not None:
-                progress("Comparing the scenery of the shots", 0.5)
-            model = SceneryModel(device)
-            values, pictures = model.describe([frame for _, frame in readable])
+            loaded = threading.Event()
+
+            def creep() -> None:
+                started = time.monotonic()
+                while not loaded.wait(0.5):
+                    waited = time.monotonic() - started
+                    report("Loading the image model", 0.3 + 0.29 * (1 - math.exp(-waited / 10)))
+
+            report("Loading the image model", 0.3)
+            ticker = threading.Thread(target=creep, daemon=True)
+            ticker.start()
+            try:
+                model = SceneryModel(device)
+            finally:
+                loaded.set()
+                ticker.join()
+            report(f"Comparing {len(readable)} frames", 0.6)
+            values, pictures = model.describe(
+                [frame for _, frame in readable],
+                lambda done: report(
+                    f"Comparing frames ({done} of {len(readable)})",
+                    0.6 + 0.4 * done / len(readable),
+                ),
+            )
             for (item, _), value, picture in zip(readable, values, pictures, strict=True):
                 cache[keys[item]] = round(float(value), 5)
                 seen[picture_keys[item]] = [round(float(x), 5) for x in picture]
@@ -300,8 +345,10 @@ def _score_in_child(
     shots: Sequence[Shot],
     cache_dir: Path | None,
     device: str,
+    reports: Any = None,
 ) -> list[ShotScene]:
-    return score_shots(tools, infos, shots, cache_dir=cache_dir, device=device)
+    progress = None if reports is None else lambda text, share: reports.put((text, share))
+    return score_shots(tools, infos, shots, cache_dir=cache_dir, device=device, progress=progress)
 
 
 def score_shots_in_process(
@@ -311,9 +358,26 @@ def score_shots_in_process(
     *,
     cache_dir: Path | None = None,
     device: str = "auto",
+    progress: Progress | None = None,
 ) -> list[ShotScene]:
-    """`score_shots` in a child process: its GPU memory is released when it ends."""
+    """`score_shots` in a child process: its GPU memory is released when it ends. Its
+    progress reports come back through a queue and are passed to ``progress`` here."""
     context = multiprocessing.get_context("spawn")
-    with ProcessPoolExecutor(1, mp_context=context) as pool:
-        future = pool.submit(_score_in_child, tools, list(infos), list(shots), cache_dir, device)
-        return future.result()
+    with context.Manager() as manager, ProcessPoolExecutor(1, mp_context=context) as pool:
+        reports = manager.Queue() if progress is not None else None
+        future = pool.submit(
+            _score_in_child, tools, list(infos), list(shots), cache_dir, device, reports
+        )
+        while True:
+            try:
+                result = future.result(timeout=0.1)
+            except FuturesTimeout:
+                result = None
+            while reports is not None and progress is not None:
+                try:
+                    text, share = reports.get_nowait()
+                except (queue.Empty, EOFError, OSError):
+                    break
+                progress(str(text), float(share))
+            if result is not None:
+                return result

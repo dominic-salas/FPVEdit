@@ -537,6 +537,7 @@ def keep_rated(
     cache_dir: Path | None = None,
     device: str = "auto",
     ratings: Ratings | None = None,
+    progress: Progress | None = None,
 ) -> MontagePlan:
     """Keep the shots rated ``min_stars`` or more (`rating.py`); the rest are left out and
     can be added back. If no shot reaches ``min_stars``, the best-rated ones are kept.
@@ -558,7 +559,12 @@ def keep_rated(
         try:
             infos, extra = _rated_without_picture(tools, plan.infos, rated)
             scenes = scenery_model.score_shots_in_process(
-                tools, infos, [*shots, *extra.values()], cache_dir=cache_dir, device=device
+                tools,
+                infos,
+                [*shots, *extra.values()],
+                cache_dir=cache_dir,
+                device=device,
+                progress=progress,
             )
             shots = tuple(
                 dataclasses.replace(

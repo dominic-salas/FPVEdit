@@ -197,7 +197,6 @@ class ReviewPage(QWidget):
         self._tools = tools
         self._settings = settings or AppSettings()
         self._mine = MyRatings(ratings_file)
-        self._rating_enabled = True
         self._music: list[AudioFile] = []
         self._music_preview = MusicPreview(tools)
         self._full_screen: FullScreen | None = None
@@ -403,8 +402,7 @@ class ReviewPage(QWidget):
         column.addWidget(self._shot_reasons)
         mine = QHBoxLayout()
         mine.setSpacing(4)
-        self._my_stars_label = label("YOUR RATING")
-        mine.addWidget(self._my_stars_label)
+        mine.addWidget(label("YOUR RATING"))
         self._my_star_buttons: list[QPushButton] = []
         for stars in range(1, 6):
             star = button("☆", functools.partial(self.rate_current, stars))
@@ -735,16 +733,10 @@ class ReviewPage(QWidget):
         looping = self._mode == "shot" and self._video.playing
         self._loop_button.setText("▶  PLAY THE MONTAGE" if looping else "↻  LOOP THIS SHOT")
 
-    def set_rating_enabled(self, on: bool) -> None:
-        """Show the YOUR RATING stars (and take the 1-5 keys) only with rating on."""
-        self._rating_enabled = on
-        for widget in (self._my_stars_label, *self._my_star_buttons):
-            widget.setVisible(on)
-
     def rate_current(self, stars: int) -> None:
         """The pilot's own stars for the shot open in the panel, else the one playing."""
         shots = self._current()
-        if not shots or self._choosing is not None or not self._rating_enabled:
+        if not shots or self._choosing is not None:
             return
         index = self._selected if self._selected is not None else locate(shots, self._position)[0]
         shot = shots[index]

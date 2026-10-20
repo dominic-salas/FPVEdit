@@ -185,12 +185,12 @@ def test_window_lists_and_edits_the_shots(clips: tuple[Path, Path], tmp_path: Pa
         window._undo()
         assert window._current_shots() == plan.shots
         review._mine = MyRatings(tmp_path / "my-ratings.jsonl")  # not the user's file
-        review.rate_current(4)  # rating is off by default: ignored
-        assert review._mine.stars(plan.infos[0].path, window._current_shots()[0]) is None
-        settings.learn_taste = True
-        window._show_rating_controls()
+        assert not settings.learn_taste  # rating works whether or not it filters shots
+        assert not any(star.isHidden() for star in review._my_star_buttons)
+        montage_before = window._current_shots()
         review.rate_current(4)  # the pilot's own stars for the open shot
         assert review._mine.stars(plan.infos[0].path, window._current_shots()[0]) == 4
+        assert window._current_shots() == montage_before  # nothing changes until the next montage
         # The learned taste gives a rated shot its own stars; with fewer ratings than it
         # needs to learn, every other shot keeps the app's own stars.
         taste = _taste_for(plan.infos, review._mine, Taste.fit(review._mine.rated_shots()))
@@ -283,7 +283,6 @@ def test_window_analyses_clips_in_the_background(clips: tuple[Path, Path], tmp_p
         disliked = shots[0]
         window._review._mine.rate(window._plan.infos[disliked.clip].path, disliked, 1)
         settings.learn_taste = True
-        window._show_rating_controls()
         window._find_shots()
         wait(lambda: not window._busy(), 5)
         # Too few ratings to learn from: the others keep the app's own stars, and those
@@ -300,7 +299,6 @@ def test_window_analyses_clips_in_the_background(clips: tuple[Path, Path], tmp_p
         assert left == expected_left
         assert len(window._current_shots()) == len(shots) - len(left)
         settings.learn_taste = False
-        window._show_rating_controls()
         # Reordering the clips needs no new analysis either.
         window._clips.insertItem(0, window._clips.takeItem(1))
         window._clips_changed()

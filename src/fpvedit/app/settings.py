@@ -110,8 +110,9 @@ class AppSettings:
 
     @property
     def learn_taste(self) -> bool:
-        """Rate shots, learn from the ratings and leave out shots predicted below
-        `min_stars`. Off: every shot found is kept and the rating controls are hidden."""
+        """Learn from the pilot's ratings and leave out shots predicted below `min_stars`
+        (when shots are next found). Off: every shot found is kept. Rating shots is always
+        possible either way."""
         return str(self._store.value("review/learn_taste", "false")).lower() == "true"
 
     @learn_taste.setter

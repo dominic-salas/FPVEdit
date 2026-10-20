@@ -90,3 +90,45 @@ def test_the_model_tells_a_room_from_a_forest(tmp_path: Path) -> None:
     values = model.indoorness([room, forest])
     assert values[0] > values[1]
     assert dataclasses.is_dataclass(MontageConfig())
+
+
+def test_progress_follows_the_real_work(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Reading frames, loading the model and each batch move the bar; it never sits still
+    at one value until the end, and never goes back."""
+    from fpvedit.media import MediaInfo
+
+    class Model:
+        def __init__(self, device: str) -> None:
+            pass
+
+        def describe(self, frames: list[object], done: object = None) -> tuple[object, object]:
+            for end in range(scenery.BATCH, len(frames) + scenery.BATCH, scenery.BATCH):
+                done(min(end, len(frames)))  # type: ignore[operator]
+            n = len(frames)
+            return np.zeros(n), np.zeros((n, len(scenery.PICTURE)))
+
+    recording = tmp_path / "flight.mp4"
+    recording.write_bytes(b"x")
+    info: MediaInfo = type("Info", (), {"path": recording})()  # only its path is read
+    monkeypatch.setattr(scenery, "SceneryModel", Model)
+    monkeypatch.setattr(scenery, "grab_rgb", lambda *a: np.zeros((2, 2, 3), np.uint8))
+    shots = [shot(0, 10 * i, 0.5) for i in range(20)]  # 60 frames
+    reports: list[tuple[str, float]] = []
+    scenes = scenery.score_shots(
+        TOOLS,
+        [info],
+        shots,
+        cache_dir=tmp_path,
+        progress=lambda t, s: reports.append((t, s)),
+    )
+    shares = [s for _, s in reports]
+    assert len(scenes) == 20 and all(s.picture is not None for s in scenes)
+    assert shares == sorted(shares) and shares[-1] == 1.0
+    assert len(set(shares)) >= 10  # many steps, not one jump from 50 % to done
+    assert any("Loading the image model" in t for t, _ in reports)
+    # Seen once: the next time everything comes from the cache, with no work to report.
+    reports.clear()
+    scenery.score_shots(
+        TOOLS, [info], shots, cache_dir=tmp_path, progress=lambda t, s: reports.append((t, s))
+    )
+    assert reports == []

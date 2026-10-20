@@ -98,7 +98,8 @@ class SettingsDialog(QDialog):
         self._rating.setChecked(settings.colour_by_rating)
         form.addRow("Review", self._rating)
         self._learn = QCheckBox(
-            "Rate shots, learn my taste from my ratings and leave out shots I'd likely dislike"
+            "Learn my taste from my ratings and leave out shots I'd likely dislike "
+            "(from the next montage on)"
         )
         self._learn.setChecked(settings.learn_taste)
         self._min_stars = QComboBox()
