@@ -6,6 +6,7 @@ import hashlib
 import itertools
 import json
 import os
+import re
 import shutil
 import subprocess
 from fractions import Fraction
@@ -85,8 +86,23 @@ def test_cli_prints_summary_and_writes_analysis(
 ) -> None:
     assert main([str(flight), "--trim", "--keep-intermediates"]) == 0
     out = capsys.readouterr().out
-    for label in ("Output:", "Original:", "Edited:", "retained", "Time:"):
-        assert label in out
+    lines = {
+        line.split(":", 1)[0].strip(): line.split(":", 1)[1]
+        for line in out.splitlines()
+        if ":" in line
+    }
+    for label in ("Output", "Original", "Edited", "Time"):
+        assert label in lines, out
+    assert "flight_highlight.mp4" in lines["Output"]
+    info = probe(find_tools(), flight.with_name("flight_highlight.mp4"))
+    original = probe(find_tools(), flight).duration
+    assert original is not None and info.duration is not None
+    numbers = re.findall(r"(\d+):(\d+(?:\.\d+)?)", lines["Original"] + " " + lines["Edited"])
+    shown = [int(m) * 60 + float(s) for m, s in numbers]
+    assert shown[0] == pytest.approx(original, abs=1.0)
+    assert shown[1] == pytest.approx(info.duration, abs=1.0)
+    percent = float(re.findall(r"(\d+(?:\.\d+)?)\s*%", lines["Edited"])[0])
+    assert percent == pytest.approx(100 * info.duration / original, abs=1.5)
     analysis = json.loads(flight.with_name("flight_highlight.analysis.json").read_text())
     assert analysis["selection"]["intervals"]
     assert len(analysis["signals"]["image_speed"]) == pytest.approx(36 * 10, abs=2)
@@ -359,3 +375,45 @@ def test_validation_rejects_a_wrong_frame_count(tmp_path: Path) -> None:
     validate_output(tools, clip, expected_duration=2.0, rate=Fraction(60), expected_frames=120)
     with pytest.raises(ValidationError, match="frames"):
         validate_output(tools, clip, expected_duration=2.0, rate=Fraction(60), expected_frames=200)
+
+
+def test_variable_frame_rate_input_is_refused_end_to_end(tmp_path: Path) -> None:
+    source = tmp_path / "phone.mp4"
+    subprocess.run(
+        [
+            *("ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc2=s=320x240:r=60:d=12"),
+            # Every frame lands up to 12 ms off the 60 fps grid, like a phone recording.
+            *("-vf", "setpts='(N/60+0.012*sin(N*1.7))/TB'", "-fps_mode", "passthrough"),
+            *("-c:v", "libx264", "-preset", "ultrafast", str(source)),
+        ],
+        check=True,
+    )
+    before = sorted(p.name for p in tmp_path.iterdir())
+    with pytest.raises(InvalidInputError, match="fps_mode cfr"):
+        run(source, config=FAST)
+    assert sorted(p.name for p in tmp_path.iterdir()) == before  # nothing written
+
+
+def _analyse_into(args: tuple[str, str]) -> bool:
+    from fpv_editor.analysis import analyze
+
+    source, cache = args
+    tools = find_tools()
+    return analyze(
+        tools, probe(tools, Path(source)), FAST.analysis, cache_dir=Path(cache)
+    ).from_cache
+
+
+def test_two_processes_measuring_one_clip_share_the_cache_safely(
+    flight: Path, tmp_path: Path
+) -> None:
+    import multiprocessing
+    from concurrent.futures import ProcessPoolExecutor
+
+    cache = tmp_path / "cache"
+    context = multiprocessing.get_context("spawn")
+    with ProcessPoolExecutor(2, mp_context=context) as pool:
+        results = list(pool.map(_analyse_into, [(str(flight), str(cache))] * 2))
+    assert results == [False, False]  # both measured, neither failed
+    assert [p.name.endswith(".measurements.npz") for p in cache.iterdir()] == [True]
+    assert _analyse_into((str(flight), str(cache)))  # the one file left is whole

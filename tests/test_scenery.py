@@ -48,10 +48,16 @@ def test_when_nothing_reaches_the_minimum_the_best_shots_stay() -> None:
 
 def test_the_image_model_nudges_ratings(monkeypatch: pytest.MonkeyPatch) -> None:
     edge = shot(0, 0, 0.64)  # 3 stars by itself
+    other = shot(1, 0, 0.9)
+    assert keep_rated(TOOLS, plan([edge, other]), min_stars=3).left_out == ()  # no model
     monkeypatch.setattr(scenery, "available", lambda: True)
-    monkeypatch.setattr(scenery, "score_shots_in_process", lambda *a, **k: [0.06, -0.05])
-    judged = keep_rated(TOOLS, plan([edge, shot(1, 0, 0.9)]), min_stars=3)
-    assert judged.left_out and judged.left_out[0].quality.indoorness == 0.06  # type: ignore[union-attr]
+    for indoorness, kept in ((0.06, False), (-0.05, True)):  # cramped: down; open: up
+        monkeypatch.setattr(
+            scenery, "score_shots_in_process", lambda *a, v=indoorness, **k: [v, -0.05]
+        )
+        judged = keep_rated(TOOLS, plan([edge, other]), min_stars=3)
+        assert (len(judged.shots) == 2) is kept, indoorness
+        assert judged.shots[0].quality.indoorness == indoorness or not kept  # type: ignore[union-attr]
 
 
 def test_a_failing_model_keeps_the_plain_ratings(monkeypatch: pytest.MonkeyPatch) -> None:

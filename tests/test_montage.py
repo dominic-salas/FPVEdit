@@ -3,6 +3,7 @@ from __future__ import annotations
 import dataclasses
 
 import numpy as np
+import pytest
 
 from flight_fixtures import FPS, Timeline
 from fpv_editor.errors import NoFlightContentError
@@ -18,7 +19,7 @@ from fpv_editor.montage import (
     pick_shots,
     usable_footage,
 )
-from fpv_editor.motion import DIVERGENCE
+from fpv_editor.motion import CONFIDENCE, DIVERGENCE, PITCH
 
 CONFIG = MontageConfig()
 
@@ -70,8 +71,10 @@ def test_nothing_is_usable_outside_clean_flying() -> None:
 
 
 def test_short_input_has_no_shots() -> None:
-    measurements, selection = analyse(Timeline(5))
+    # Armed and flipping, but only 5 s long: too short for any shot.
+    measurements, selection = analyse(Timeline(5).armed_message(0.5).flip(2.5))
     assert not usable_footage(measurements, selection).any()
+    assert candidate_shots(0, measurements, selection) == []
 
 
 def test_shots_are_long_enough_and_show_the_flip_whole() -> None:
@@ -94,11 +97,12 @@ def test_shots_are_long_enough_and_show_the_flip_whole() -> None:
 
 
 def test_a_flip_that_crashes_gives_no_shot() -> None:
-    timeline = flight().flip(58)
+    timeline = flight().flip(20).flip(58)
     timeline.tumble(59, 60).stats(60, 62).armed_message(70)
     measurements, selection = analyse(timeline)
     shots = candidate_shots(0, measurements, selection)
-    assert not any(s.start < 60 and s.end > 56 for s in shots)
+    assert any(s.start <= 19 and s.end >= 21 for s in shots)  # the clean flip is a shot
+    assert not any(s.start < 60 and s.end > 56 for s in shots)  # the crashing one is not
 
 
 def test_a_short_flight_between_crashes_is_one_whole_shot() -> None:
@@ -108,18 +112,16 @@ def test_a_short_flight_between_crashes_is_one_whole_shot() -> None:
     measurements, selection = analyse(timeline)
     shots = [s for s in candidate_shots(0, measurements, selection) if 31 < s.start < 38]
     assert len(shots) == 1
-    assert shots[0].start < 34 and shots[0].end < 37  # before the impact
+    assert shots[0].start <= 33 and shots[0].end >= 34.5  # the whole flip is in it ...
+    assert shots[0].end < 37  # ... and the impact is not
 
 
 def test_a_quad_on_the_desk_gives_no_shots() -> None:
     timeline = Timeline(60, osd=False).still(0, 60)
     timeline.motion[:, DIVERGENCE] = np.linspace(0, 3, timeline.count)  # noise, not passes
     measurements = timeline.measurements()
-    try:
-        selection = select_highlights(measurements, detect_flight(measurements))
-    except NoFlightContentError:
-        return  # refusing the clip outright is fine too
-    assert candidate_shots(0, measurements, selection) == []
+    with pytest.raises(NoFlightContentError):
+        select_highlights(measurements, detect_flight(measurements))
 
 
 def test_pick_stops_at_the_target_length_best_first() -> None:
@@ -183,3 +185,27 @@ def test_no_shot_starts_or_ends_in_a_flip() -> None:
         for edge in (candidate.start, candidate.end):
             near = flipping[max(0, round((edge - 0.4) * FPS)) : round((edge + 0.4) * FPS)]
             assert not near.any(), f"a cut at {edge:.2f} s is in or next to a flip"
+
+
+def test_no_shot_starts_or_ends_in_a_blurred_flip() -> None:
+    # Real flips blur: the motion fit stays on but with low confidence and noisy rates
+    # (measured on Dom's clips: under 0.1 % of frames are lost outright, 2-12 % are low
+    # confidence). Flips must still be found and cuts must still avoid them.
+    timeline = flight()
+    flips = (30, 38, 46, 55, 63.5, 72)
+    rng = np.random.default_rng(1)
+    for at in flips:
+        timeline.flip(at)
+        span = slice(round(at * FPS), round((at + 0.5) * FPS))
+        timeline.motion[span, PITCH] += rng.normal(0, 150, span.stop - span.start)
+        timeline.motion[span, CONFIDENCE] = 0.15
+    measurements, selection = analyse(timeline)
+    shots = candidate_shots(0, measurements, selection)
+    found = {round(m.time) for s in shots for m in s.moments if m.kind is MomentKind.FLIP}
+    assert found == {round(at) for at in flips}
+    for candidate in shots:
+        for edge in (candidate.start, candidate.end):
+            for at in flips:
+                assert not (at - 0.4 < edge < at + 0.9), (
+                    f"a cut at {edge:.2f} s cuts the flip at {at}"
+                )
