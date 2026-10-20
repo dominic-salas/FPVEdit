@@ -160,6 +160,10 @@ Details and per-claim evidence: `docs/review-2026-10-11.md`.
 ## Validation log
 (newest first; exact commands and outcomes)
 
+### 2026-10-19 — The app keeps every shot found (Dom's PC)
+- Dom: pass all the shots, he will rate them all himself; no leaving out by rating in the app for now. The app's "Keep shots rated" setting now defaults to "every shot found" (1 star); no stored value existed on his PC, so the default applies. The CLI keeps `--min-stars 3`.
+- Checks: ruff, format, mypy clean; app and scenery tests 25 passed.
+
 ### 2026-10-19 — Short flights between crashes are no longer thrown out (Dom's PC)
 - Dom: the montage misses where he flies between his legs (`D:\clips\hdz_0019.mp4`, 3:50, 15 disarms). Found on screen: a clean pass between his legs at 0:17, a second try at 0:21 that hits his leg (crash, disarm 0:22.4).
 - Causes: (1) a crash lasted until the *last* re-arm within 12 s, so a pilot who re-arms quickly lost the whole next flight (0:15.7-0:33 and 1:37-1:58 were all "crash"); (2) the failed move before a crash (3.5-8 s) was unusable for the montage, which took the clean pass with it; (3) a flight shorter than the 8 s minimum shot could never be a shot.
