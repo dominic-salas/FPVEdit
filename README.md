@@ -79,10 +79,21 @@ for another shot the engine found in the same clip, or add any shot from any cli
 undoes. **Render montage** writes the video, using the NVIDIA GPU (NVENC) when FFmpeg can,
 otherwise the CPU, then checks the result.
 
-Everything runs on your computer. Measurements are cached in your local app-data folder
-(`%LOCALAPPDATA%\fpvedit\measurements` on Windows), so a second analysis of the same
-clips takes seconds. You can delete that folder at any time. The app needs PySide6 (Qt for
-Python, LGPL-3.0), installed by the `app` extra.
+Everything runs on your computer. Your shot ratings, saved measurements and the log are kept
+in `%LOCALAPPDATA%\FPVEdit` (Linux: `~/.local/share/FPVEdit`), so a second analysis of the
+same clips takes seconds; settings are in the registry under `HKEY_CURRENT_USER\Software\FPVEdit`.
+Settings > Saved measurements > Clear and Settings > Clear my ratings empty them. The app
+needs PySide6 (Qt for Python, LGPL-3.0), installed by the `app` extra.
+
+## Windows installer and uninstalling
+
+The release build (`.github/workflows/release.yml`, `packaging/installer.iss`) is one
+installer, `FPVEdit-<version>-setup.exe`, with FFmpeg included and no Python needed. To
+uninstall: Windows Settings > Apps > Installed apps > FPVEdit > Uninstall, or **Uninstall
+FPVEdit** in the Start menu. It removes the program and its shortcuts, then asks whether to
+remove your ratings, saved measurements, settings and log too (No unless you choose Yes).
+Your videos and montages are never touched. Installing over a version called "FPV Editor"
+upgrades it in place and removes its old files and shortcuts.
 
 ## Evaluation
 
