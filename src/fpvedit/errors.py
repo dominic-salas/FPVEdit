@@ -23,6 +23,10 @@ class MediaToolError(FPVEditError):
         self.stderr = stderr
 
 
+class EncodeError(MediaToolError):
+    """Encoding the video failed; another encoder (e.g. the CPU instead of NVENC) may work."""
+
+
 class InvalidInputError(FPVEditError):
     """The input is missing, not a file, or has no usable video stream."""
 

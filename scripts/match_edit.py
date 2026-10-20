@@ -10,7 +10,7 @@ gets a ``"kind": "reference_edit"`` annotation, ``<raw name>.reference.json``, l
 what the editor kept (include) and left out (editor_cut), which ``scripts/evaluate.py``
 scores against.
 
-The match assumes hard cuts at normal speed, which is how Dom edits. Transitions,
+The match assumes hard cuts at normal speed. Transitions,
 speed ramps, crops or colour grades show up as weak or short matches: they are
 reported, and the raw time they point to is marked ``ignore`` (unknown) instead of
 being guessed at. Edit footage with no counterpart at all (title cards, black frames,

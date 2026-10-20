@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import shutil
 from pathlib import Path
 
 import pytest
@@ -225,34 +224,6 @@ def test_an_undone_rating_is_forgotten(tmp_path: Path) -> None:
     mine.rate(tmp_path / "a.ts", shot, 3)
     mine.unrate(tmp_path / "a.ts", shot)
     assert MyRatings(file).count == 0 and len(file.read_text(encoding="utf-8").splitlines()) == 2
-
-
-def test_the_old_name_s_data_moves_to_fpvedit_once() -> None:
-    import uuid
-
-    from PySide6.QtCore import QStandardPaths
-
-    from fpvedit.app.window import data_folder, move_from_old_name
-
-    QApplication.instance() or QApplication([])
-    QStandardPaths.setTestModeEnabled(True)  # never the user's real folders
-    old, new = f"fpvedit-test-old-{uuid.uuid4().hex}", f"fpvedit-test-new-{uuid.uuid4().hex}"
-    try:
-        old_folder, new_folder = data_folder(old), data_folder(new)
-        assert old_folder is not None and new_folder is not None
-        assert move_from_old_name(old, new) is None  # nothing to move
-        (old_folder / "measurements").mkdir(parents=True)
-        (old_folder / "my-ratings.jsonl").write_text('{"stars": 4}\n')
-        assert (move_from_old_name(old, new) or "").startswith("moved")
-        assert not old_folder.exists()
-        assert (new_folder / "my-ratings.jsonl").read_text() == '{"stars": 4}\n'
-        assert (new_folder / "measurements").is_dir()
-        assert move_from_old_name(old, new) is None  # only once
-    finally:
-        for folder in (data_folder(old), data_folder(new)):
-            if folder is not None and folder.exists():
-                shutil.rmtree(folder)
-        QStandardPaths.setTestModeEnabled(False)
 
 
 def test_settings_are_stored_between_runs() -> None:

@@ -2,18 +2,18 @@
  "flight": "clip1",
  "source_file": "clip 1.mp4",
  "duration_s": 189.93,
- "annotator": "Dom (derived from his own edit)",
+ "annotator": "the pilot (derived from his own edit)",
  "annotated_on": "2026-10-11",
  "kind": "reference_edit",
  "complete": true,
- "notes": "Derived by matching every frame of Dom's 'finished edit.mp4' (DaVinci Resolve, 141.6 s, hard cuts, music replaces source audio, no speed changes) to clip 1 / clip 2 with normalized 64x48 grayscale fingerprints at 60 fps (median correlation 0.998). Times in seconds. 'include' = used in the edit, 'editor_cut' = left out (boring, repetitive or failed: reason unknown).",
+ "notes": "Derived by matching every frame of the pilot's 'finished edit.mp4' (DaVinci Resolve, 141.6 s, hard cuts, music replaces source audio, no speed changes) to clip 1 / clip 2 with normalized 64x48 grayscale fingerprints at 60 fps (median correlation 0.998). Times in seconds. 'include' = used in the edit, 'editor_cut' = left out (boring, repetitive or failed: reason unknown).",
  "events": [
   {
    "start": 0.0,
    "end": 59.42,
    "label": "editor_cut",
    "keep": "editor_cut",
-   "note": "not used in Dom's finished edit"
+   "note": "not used in the pilot's finished edit"
   },
   {
    "start": 59.42,
@@ -28,7 +28,7 @@
    "end": 76.3,
    "label": "editor_cut",
    "keep": "editor_cut",
-   "note": "not used in Dom's finished edit"
+   "note": "not used in the pilot's finished edit"
   },
   {
    "start": 76.3,
@@ -43,7 +43,7 @@
    "end": 91.82,
    "label": "editor_cut",
    "keep": "editor_cut",
-   "note": "not used in Dom's finished edit"
+   "note": "not used in the pilot's finished edit"
   },
   {
    "start": 91.82,
@@ -58,7 +58,7 @@
    "end": 114.33,
    "label": "editor_cut",
    "keep": "editor_cut",
-   "note": "not used in Dom's finished edit"
+   "note": "not used in the pilot's finished edit"
   },
   {
    "start": 114.33,
@@ -73,7 +73,7 @@
    "end": 159.37,
    "label": "editor_cut",
    "keep": "editor_cut",
-   "note": "not used in Dom's finished edit"
+   "note": "not used in the pilot's finished edit"
   },
   {
    "start": 159.37,
@@ -88,7 +88,7 @@
    "end": 189.93,
    "label": "editor_cut",
    "keep": "editor_cut",
-   "note": "not used in Dom's finished edit"
+   "note": "not used in the pilot's finished edit"
   }
  ]
 }

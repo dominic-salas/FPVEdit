@@ -22,6 +22,6 @@ First public release: a Windows installer with everything included (FFmpeg too).
 - **Command line**: `fpvedit a.ts b.ts` (also `--trim`, `--vertical`, `--music`, `--length`).
 - **Uninstaller**: removes the program and asks before removing your ratings and settings.
 
-Known limitations: [PLAN.md, Known gaps](PLAN.md#known-gaps-tracked). The optional image
+Known limitations: [docs/limitations.md](docs/limitations.md). The optional image
 model (people, gaps, scenery in the learned ratings) needs a source install with the `ml`
 extra; it is not in the installer.

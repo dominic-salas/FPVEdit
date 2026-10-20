@@ -10,7 +10,7 @@ from __future__ import annotations
 import dataclasses
 from collections.abc import Iterable, Sequence
 
-from fpvedit.montage import Shot
+from fpvedit.montage import Shot, strength
 
 MIN_SHOT_S = 1.0  # a trim never makes a shot shorter than this
 
@@ -62,12 +62,6 @@ class ShotList:
         shot = shots.pop(index)
         shots.insert(max(0, min(to, len(shots))), shot)
         self._set(shots)
-
-    def reorder(self, order: Sequence[int]) -> None:
-        """Put the shots in this order (a permutation of their positions)."""
-        if sorted(order) != list(range(len(self._shots))):
-            raise ValueError("the new order must list every shot once")
-        self._set(self._shots[i] for i in order)
 
     def trim(self, index: int, *, start: float = 0.0, end: float = 0.0) -> None:
         """Move the shot's start and end by these many seconds (negative is earlier).
@@ -127,7 +121,7 @@ class ShotList:
             and (current is None or not _mostly_same(c, current))
         ]
         chosen: list[Shot] = []
-        for candidate in sorted(pool, key=lambda c: (-c.score / c.duration**0.5, c.clip, c.start)):
+        for candidate in sorted(pool, key=lambda c: (-strength(c), c.clip, c.start)):
             if any(overlaps(candidate, c) for c in chosen):
                 continue  # candidates overlap each other a lot; show each moment once
             chosen.append(candidate)
@@ -177,11 +171,6 @@ def drop_position(dragged: int, gap: int) -> int:
     """`ShotList.move` target for a shot at ``dragged`` dropped into ``gap`` (0 = before
     the first shot, n = after the last)."""
     return gap if gap <= dragged else gap - 1
-
-
-def strength(shot: Shot) -> float:
-    """What the montage ranks shots by: moments and speed per square root of length."""
-    return float(shot.score / shot.duration**0.5)
 
 
 def rating(shot: Shot, montage: Sequence[Shot]) -> int:

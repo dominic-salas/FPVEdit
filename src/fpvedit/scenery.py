@@ -1,7 +1,7 @@
 """What a shot shows: indoors or outdoors, from an image model (SigLIP 2).
 
-Motion alone cannot tell a lame indoor trick from weaving through trees outside: on the
-test recordings both have the same speed, rotation and close-pass rate. SigLIP 2
+Motion alone cannot tell a lame indoor trick from weaving through trees outside: both
+can have the same speed, rotation and close-pass rate. SigLIP 2
 (Apache-2.0, `MODEL_ID` at `MODEL_REVISION`) compares three frames of each shot with two
 sets of short descriptions, rooms and halls against trees, streets and parks. The
 *indoorness* of a frame is its best indoor similarity minus its best outdoor one; a
@@ -60,8 +60,7 @@ OUTSIDE = (
     "a parking lot outside",
     "a park with grass and trees",
 )
-# What a shot shows, for learning a pilot's taste. Chosen before testing them against
-# Dom's ratings; changing them renews the picture cache and needs re-checking (PLAN.md).
+# What a shot shows, for learning a pilot's taste. Changing them renews the picture cache.
 PICTURE = (
     "a person standing",
     "a person's legs close up",
@@ -236,7 +235,7 @@ def _save(path: Path | None, data: dict[str, Any]) -> None:
         pass  # only a cache
 
 
-def frame_times(shot: Shot) -> list[float]:
+def sample_times(shot: Shot) -> list[float]:
     return [round(shot.start + share * shot.duration, 2) for share in FRAME_SHARES]
 
 
@@ -266,7 +265,7 @@ def score_shots(
     for k, v in _load(picture_file).items():
         if isinstance(v, list) and len(v) == len(PICTURE):
             seen[str(k)] = [float(x) for x in v]
-    wanted = [(shot.clip, t) for shot in shots for t in frame_times(shot)]
+    wanted = [(shot.clip, t) for shot in shots for t in sample_times(shot)]
     keys = {(clip, t): _frame_key(infos[clip], t) for clip, t in wanted}
     picture_keys = {(clip, t): _picture_frame_key(infos[clip], t) for clip, t in wanted}
     missing = sorted(
@@ -279,7 +278,7 @@ def score_shots(
 
     if missing:
         # Shares of the whole: reading frames 0-30 %, loading the model 30-60 % (it gives
-        # no progress of its own, so the bar creeps on while it loads: 6-25 s on Dom's PC),
+        # no progress of its own, so the bar creeps on while it loads, often 5-25 s),
         # comparing the frames 60-100 %.
         report(f"Reading {len(missing)} frames of the shots", 0.0)
         with ThreadPoolExecutor(4) as pool:
@@ -327,7 +326,7 @@ def score_shots(
             _save(picture_file, seen)
     result: list[ShotScene] = []
     for shot in shots:
-        times = frame_times(shot)
+        times = sample_times(shot)
         scores = [cache[keys[(shot.clip, t)]] for t in times if keys[(shot.clip, t)] in cache]
         views = [seen[k] for t in times if (k := picture_keys[(shot.clip, t)]) in seen]
         result.append(

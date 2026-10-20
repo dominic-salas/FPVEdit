@@ -11,7 +11,7 @@ for *moments*:
   is a power loop;
 - spins and orbits: turning sustained over four seconds, well above the clip's usual
   level and at least ``spin_floor`` on average (a flip in calm flying also counts as
-  one: on Dom's labelled flights, scoring it both ways picked his tricks more often);
+  one);
 - close passes: the fastest approach (flow expansion) moments of the clip, above
   ``pass_floor``, that also stand out from how close the flying around them is. Flying
   indoors keeps everything close, so a door or a hallway looks like a pass by the first
@@ -43,10 +43,10 @@ from fpvedit.flight import rolling_median, runs
 from fpvedit.highlights import (
     CutReason,
     Interval,
+    MotionSummary,
     Selection,
     SelectionConfig,
     SelectionMode,
-    _Motion,
     window_sum,
 )
 from fpvedit.measure import Measurements
@@ -166,7 +166,7 @@ def usable_footage(
             usable[max(0, round(cut.start * fps)) : min(count, round(cut.end * fps))] = False
     # The whole-flight edit checks for a quad on a desk or in a hand only in what it keeps;
     # stretches it cut as dull are checked here.
-    rate = _Motion(measurements).rate
+    rate = MotionSummary(measurements).rate
     for start, end in runs(usable):
         calm = float(np.median(rate[start:end])) < config.flying_rate
         if calm and (end - start) / fps < config.flying_check_s:
@@ -182,7 +182,7 @@ def find_moments(
     if not usable.any():
         return []
     fps = measurements.fps
-    motion = _Motion(measurements)
+    motion = MotionSummary(measurements)
     second = max(1, round(fps))
     turned_1s = np.linalg.norm(window_sum(motion.rotation, second), axis=1) / fps
     half = max(1, round(0.5 * fps))
@@ -247,7 +247,7 @@ def candidate_shots(
     moments = find_moments(measurements, usable, config)
     if not moments:
         return []
-    motion = _Motion(measurements)
+    motion = MotionSummary(measurements)
     # Frames whose motion could not be measured (blur in a fast flip) are not calm.
     rate = np.where(np.isnan(measurements.motion).any(axis=1), np.inf, motion.rate)
     calm = rolling_median(rate, max(1, round(0.3 * fps)))
@@ -351,7 +351,7 @@ def _score(
     start: float,
     end: float,
     moments: Sequence[Moment],
-    motion: _Motion,
+    motion: MotionSummary,
     config: MontageConfig,
 ) -> Shot | None:
     shown = tuple(m for m in moments if start + config.edge_s <= m.time < end - config.tail_s)
@@ -363,6 +363,12 @@ def _score(
     return Shot(clip, start, end, score, shown)
 
 
+def strength(shot: Shot) -> float:
+    """What shots are ranked by: their moments and speed per square root of length, so a
+    long shot needs more in it than a short one to rank as high."""
+    return float(shot.score / shot.duration**0.5)
+
+
 def pick_shots(
     candidates: Sequence[Shot], clip_count: int, config: MontageConfig | None = None
 ) -> tuple[Shot, ...]:
@@ -370,10 +376,9 @@ def pick_shots(
     they compete for the same footage.
 
     Without a target length every distinct shot is kept: each one is built around a
-    flip, spin or close pass, and on Dom's hand-labelled recordings any score threshold
-    also dropped shots he had marked as worth keeping (weaves of close passes score
-    low). With ``length_s`` the montage stops near that length and no clip fills more
-    than its share.
+    flip, spin or close pass, and a score threshold would also drop good shots that score
+    low (weaves of close passes). With ``length_s`` the montage stops near that length
+    and no clip fills more than its share.
     """
     config = config or MontageConfig()
     target = config.length_s
@@ -381,7 +386,7 @@ def pick_shots(
     chosen: list[Shot] = []
     used = 0.0
     per_clip = [0.0] * max(1, clip_count)
-    ranked = sorted(candidates, key=lambda s: (-s.score / s.duration**0.5, s.clip, s.start))
+    ranked = sorted(candidates, key=lambda s: (-strength(s), s.clip, s.start))
     for shot in ranked:
         if target is not None:
             cap = target * max(config.clip_share, 1.0 / max(1, contributing))

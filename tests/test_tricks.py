@@ -8,7 +8,7 @@ from fpvedit.tricks import name_fast_turn, name_turn, power_loop_frames
 
 
 def test_turns_are_named_by_their_axis() -> None:
-    # Measured values of Dom's labelled tricks (the backflip, side flip and trippy spin).
+    # Measured values of labelled tricks (the backflip, side flip and trippy spin).
     assert name_turn(232, 13, 3) == "back flip"
     assert name_turn(-226, 0, -23) == "front flip"
     assert name_turn(0, -28, -194) == "roll"

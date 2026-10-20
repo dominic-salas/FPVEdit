@@ -20,8 +20,12 @@ uv run fpvedit-app             # the desktop app
 uv run fpvedit a.ts b.ts       # the command line
 ```
 
-The architecture, decisions, known
-gaps and every validation result.
+How it fits together: `src/fpvedit/pipeline.py` runs the steps (`cli.py` is the command line). `media` probes and decodes
+with FFmpeg; `analysis` measures every frame (`picture`, `measure`, `motion`), reads the
+flight state from the OSD (`flight`) and cleans the flight (`highlights`); `montage` finds
+the moments and builds and picks the shots; `rating` and `taste` rate them; `render`
+writes and validates the video. The desktop app is in `src/fpvedit/app` (PySide6), with its
+editing rules in `app/model.py`. Known limitations are in `docs/limitations.md`.
 
 ## Making a change
 
@@ -40,7 +44,8 @@ gaps and every validation result.
 - Code style: type hints everywhere (mypy strict), `pathlib`, frozen dataclasses for
   configuration and results, explicit error types, subprocess calls with argument lists
   (never `shell=True`).
-- A new dependency needs a reason (licence, size, why it is needed) in `PLAN.md`.
+- A new dependency needs a reason (licence, size, why it is needed) in the pull request
+  and a comment next to it in `pyproject.toml`.
 - Do not claim more than the measurements support: the motion signals and the image model
   do not recognise named tricks, and image-text similarity is not a probability.
 

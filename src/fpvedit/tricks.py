@@ -3,17 +3,15 @@
 The camera is fixed to the quad, tilted up, so a turn of the quad shows up in the
 camera's own rotation rates (`motion.py`: pitch, yaw, roll): a flip is pitch, a roll is
 roll, and because of the up-tilt a roll also shows some yaw *in the same direction*,
-while a yaw spin shows some roll *in the opposite direction*. On Dom's labelled flights
-this told his backflips (positive pitch), front flips, side flips (rolls) and his
-"trippy spin" (yaw) apart. Angles come from optical flow through a fisheye model with
+while a yaw spin shows some roll *in the opposite direction*. Angles come from optical
+flow through a fisheye model with
 an assumed field of view and lose some of the fastest frames to motion blur, so a full
 360-degree flip measures about 200-280 degrees; the thresholds below allow for that.
 
 These are descriptions of the rotation, not a trained recogniser: the names are what
 the turn looks like. A turn whose axes mix, or that the motion fit could not follow
-through the blur, stays a plain "flip" (a split-S namer was tried and named five of
-Dom's labelled flips as split-S, so it was dropped). Power loops are found by their
-shape (a slow full pitch turn away from any flip) and had no labelled example to check.
+through the blur, stays a plain "flip". Power loops are found by their shape (a slow
+full pitch turn away from any flip).
 """
 
 from __future__ import annotations

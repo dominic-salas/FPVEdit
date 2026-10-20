@@ -15,10 +15,10 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from fpvedit.cli import Clip, render_montage
 from fpvedit.errors import FPVEditError
 from fpvedit.media import Tools, find_tools, frame_times, probe
 from fpvedit.montage import Shot
+from fpvedit.pipeline import Clip, render_montage
 from fpvedit.render import EncodeConfig
 from media_fixtures import ffmpeg_available
 

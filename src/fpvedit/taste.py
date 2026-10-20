@@ -12,14 +12,13 @@ A ridge regression predicts the pilot's stars from what the app knows about a sh
 How strongly it is regularised is chosen by leave-one-out over the ratings (each rating
 predicted from all the others), against the app's own stars as the alternative: with few
 or inconsistent ratings the app's own rating stays, and the learned taste takes over only
-when it predicted the ratings better. Measured on Dom's 53 ratings (2026-10-20): the app's
-own stars were off by 0.94 stars on average (rank agreement 0.24); the measurements alone
-did no better; with the picture it was 0.73 (agreement 0.53-0.60). Fitting takes well under
-a second, so it is redone whenever shots are found.
+when it predicts the ratings better. Fitting takes well under a second, so it is redone
+whenever shots are found.
 """
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -95,16 +94,7 @@ def features(
 
 def _base(quality: Quality) -> float:
     """The app's own stars, without any learned taste."""
-    return float(
-        Quality(
-            quality.trick,
-            quality.clean,
-            quality.impressive,
-            quality.watchable,
-            quality.reasons,
-            quality.indoorness,
-        ).stars
-    )
+    return float(dataclasses.replace(quality, taste=None, picture=None).stars)
 
 
 @dataclass(frozen=True)

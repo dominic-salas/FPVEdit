@@ -435,3 +435,11 @@ def probe_audio(tools: Tools, path: Path) -> AudioFile:
     if duration is None:
         raise InvalidInputError(f"{path.name}: the length of its audio is unknown")
     return AudioFile(path, duration)
+
+
+DEFAULT_RATE = Fraction(30)  # only for sources that report no usable frame rate
+
+
+def output_rate(info: MediaInfo) -> Fraction:
+    """The frame rate an edit of ``info`` is made at: its nominal rate."""
+    return info.video.nominal_rate or DEFAULT_RATE

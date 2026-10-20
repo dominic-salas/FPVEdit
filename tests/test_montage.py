@@ -189,7 +189,7 @@ def test_no_shot_starts_or_ends_in_a_flip() -> None:
 
 def test_no_shot_starts_or_ends_in_a_blurred_flip() -> None:
     # Real flips blur: the motion fit stays on but with low confidence and noisy rates
-    # (measured on Dom's clips: under 0.1 % of frames are lost outright, 2-12 % are low
+    # (measured on real recordings: under 0.1 % of frames are lost outright, 2-12 % are low
     # confidence). Flips must still be found and cuts must still avoid them.
     timeline = flight()
     flips = (30, 38, 46, 55, 63.5, 72)

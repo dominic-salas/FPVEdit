@@ -2,7 +2,7 @@
   "flight": "20261009-182156",
   "source_file": "20261009-182156.mp4",
   "duration_s": 282.77,
-  "annotator": "Dom",
+  "annotator": "the pilot",
   "annotated_on": "2026-10-11",
   "complete": false,
   "notes": "Times are m:ss from the start of the recording, at 1 s resolution. 'complete: false' means unlabelled footage is not necessarily boring.",

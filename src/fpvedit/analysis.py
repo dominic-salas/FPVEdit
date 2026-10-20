@@ -38,10 +38,9 @@ from fpvedit.measure import (
     measure_frames,
     plan_layout,
 )
-from fpvedit.media import MediaInfo, Tools
+from fpvedit.media import MediaInfo, Tools, output_rate
 from fpvedit.motion import SPEED
 from fpvedit.picture import Area, PictureConfig, decoded_size, detect_active_area, sample_frames
-from fpvedit.render import output_rate
 
 CACHE_FORMAT = 3
 # Bump when a change to the measuring code (MEASUREMENT_MODULES) changes what it measures:
@@ -50,10 +49,6 @@ CACHE_FORMAT = 3
 # measuring code, so editing it forces that decision.
 MEASUREMENT_VERSION = 1
 MEASUREMENT_MODULES = ("analysis.py", "measure.py", "motion.py", "picture.py", "media.py")
-# Until 2026-10-18 the key held the source bytes of MEASUREMENT_MODULES and the full path;
-# measurements made by that last code (commit b865e7b) are adopted, not measured again.
-_LEGACY_CODE = "16019138cad10ed76358b12f3d754d92537c58653934389f6b4b442187b56f97"
-_LEGACY_VERSION = "0.1.0.dev0"
 # Per-frame signals in the analysis JSON are summarised to this rate to keep it readable.
 DOCUMENT_RATE = 10
 _ARRAYS = ("brightness", "contrast", "noise", "change", "motion", "layout", "text", "thumbnails")
@@ -170,26 +165,9 @@ def cache_path(cache_dir: Path, tools: Tools, info: MediaInfo, config: AnalysisC
         "picture": asdict(config.picture),
         "measure": asdict(config.measure),
     }
-    path = _keyed(
+    return _keyed(
         cache_dir, info, {**settings, "measurement": MEASUREMENT_VERSION, "name": info.path.name}
     )
-    if MEASUREMENT_VERSION == 1 and not path.is_file():
-        legacy = _keyed(
-            cache_dir,
-            info,
-            {
-                **settings,
-                "code": _LEGACY_CODE,
-                "version": _LEGACY_VERSION,
-                "source": str(info.path),
-            },
-        )
-        try:
-            if legacy.is_file():
-                legacy.replace(path)
-        except OSError:
-            pass  # measured again instead
-    return path
 
 
 def _keyed(cache_dir: Path, info: MediaInfo, key: dict[str, Any]) -> Path:

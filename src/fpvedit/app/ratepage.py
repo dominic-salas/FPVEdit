@@ -23,7 +23,7 @@ from fpvedit.app.timeline import rating_colour
 from fpvedit.media import MediaInfo, Tools
 from fpvedit.montage import Shot
 
-GOAL = 150  # ratings for learning Dom's taste from what the shots show
+GOAL = 150  # ratings for learning a pilot's taste from what the shots show
 MIN_WATCH_S = 1.0  # a rating within this long of a shot appearing is ignored
 WORDS = {1: "BORING", 2: "MEH", 3: "OK", 4: "GOOD", 5: "SICK"}
 
@@ -63,7 +63,6 @@ class RatePage(QWidget):
         self._queue: list[tuple[MediaInfo, Shot]] = []
         self._seen: set[str] = set()  # shots queued or skipped this session
         self._current: tuple[MediaInfo, Shot] | None = None
-        self._rated_now = 0
         self._last: tuple[MediaInfo, Shot] | None = None  # the shot rated last (for undo)
         self._shown_at = 0.0  # when the shot on screen started (time.monotonic)
         self._waiting = False  # clips are still being analysed
@@ -164,7 +163,6 @@ class RatePage(QWidget):
         except OSError as exc:
             self._about.setText(f"COULD NOT SAVE YOUR RATING: {exc}")
             return
-        self._rated_now += 1
         self._last = self._current
         self._next()
         self._toast(f"SAVED {stars}★ FOR THE LAST SHOT   BACKSPACE UNDOES IT")

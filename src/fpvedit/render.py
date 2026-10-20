@@ -28,6 +28,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from fpvedit.errors import (
+    EncodeError,
     InvalidInputError,
     MediaToolError,
     OutputExistsError,
@@ -36,15 +37,22 @@ from fpvedit.errors import (
     ValidationError,
 )
 from fpvedit.highlights import Interval
-from fpvedit.media import AudioFile, MediaInfo, Tools, probe, run_tool, run_tool_with_progress
+from fpvedit.media import (
+    AudioFile,
+    MediaInfo,
+    Tools,
+    output_rate,
+    probe,
+    run_tool,
+    run_tool_with_progress,
+)
 
 OUTPUT_SUFFIX = "_highlight"
-DEFAULT_RATE = Fraction(30)  # only for sources that report no usable frame rate
 # A boundary belongs to the frame nearest to it: frames are selected from half a frame
 # before each boundary, which absorbs timestamp rounding (1 ms timebases in MKV/MP4).
 BOUNDARY_FRAMES = 0.5
 READ_MARGIN_S = 2.0  # decoding stops this long after the last kept frame
-RENDER_ACTION = "rendering the highlight video"  # MediaToolError.action of a failed encode
+RENDER_ACTION = "encoding the video"
 # A part whose first kept frame is this far into its clip seeks instead of decoding the
 # clip from the start; decoding then begins at the keyframe before SEEK_LEAD_S earlier.
 SEEK_AFTER_S = 10.0
@@ -100,8 +108,8 @@ def with_fallback[Result](
     for number, encode in enumerate(choices):
         try:
             return attempt(encode), encode
-        except MediaToolError as exc:
-            if exc.action != RENDER_ACTION or number == len(choices) - 1:
+        except EncodeError:
+            if number == len(choices) - 1:
                 raise
     raise ValueError("no encoder to try")
 
@@ -159,10 +167,6 @@ def _same_file(a: Path, b: Path) -> bool:
     if a.exists() and b.exists():
         return a.samefile(b)
     return os.path.normcase(a) == os.path.normcase(b.resolve())
-
-
-def output_rate(info: MediaInfo) -> Fraction:
-    return info.video.nominal_rate or DEFAULT_RATE
 
 
 def snap_to_frames(intervals: Sequence[Interval], rate: Fraction) -> tuple[Interval, ...]:
@@ -333,10 +337,15 @@ def render(
         *("-an", "-sn", "-dn"),
         *("-movflags", "+faststart", "-f", "mp4", str(destination)),
     ]
-    if on_frames is None:
-        run_tool(args, action=RENDER_ACTION)
-    else:
-        run_tool_with_progress(args, action=RENDER_ACTION, on_frames=on_frames)
+    try:
+        if on_frames is None:
+            run_tool(args, action=RENDER_ACTION)
+        else:
+            run_tool_with_progress(args, action=RENDER_ACTION, on_frames=on_frames)
+    except EncodeError:
+        raise
+    except MediaToolError as exc:
+        raise EncodeError(exc.action, exc.returncode, exc.stderr) from exc
 
 
 def _video_start(info: MediaInfo) -> float:

@@ -1,23 +1,20 @@
 """How good a shot is: what was done, how cleanly, how impressively, how watchably.
 
-The criteria Dom approved on 2026-10-18 (``docs/rating-plan.md``). Each part is 0-1 and
-comes from signals the analysis already measures; none of them recognises a trick's
-quality directly, they are measured stand-ins:
+Each part is 0-1 and comes from signals the analysis already measures; none of them
+recognises a trick's quality directly, they are measured stand-ins:
 
 - **trick** (what): the tricks in the shot by type (doubles above flips, rolls and power
   loops, above yaw spins, above close passes), with a bonus for tricks linked together and
   less for the same trick repeated;
 - **clean** (how well): no crash within 3 s after the shot, little wobble after each
-  trick, speed kept through it (his kept moments held 1.2x their speed, the cut ones 0.6x),
-  and a full turn;
+  trick, speed kept through it, and a full turn;
 - **impressive** (context): how close the flying got (approach rate) and how fast it was;
   the image model's scenery is added later as a small nudge, never as a filter;
 - **watchable** (picture): how much of the shot the motion fit could follow (blur and
-  breakup), and that it is not too dark. Shown, but weighted 0: Dom rated blurry, fast
-  shots higher, not lower.
+  breakup), and that it is not too dark. Shown, but weighted 0: fast action is often
+  blurry, and blur is not a reason to rate a shot lower.
 
-`Quality.score` weighs them 0.4 / 0.3 / 0.3 / 0 (tuned to Dom's own ratings, see PLAN.md)
-and `stars` turns the score into 1-5.
+`Quality.score` weighs them (`WEIGHTS`) and `stars` turns the score into 1-5.
 """
 
 from __future__ import annotations
@@ -31,8 +28,6 @@ from numpy.typing import NDArray
 
 FloatArray = NDArray[np.float64]
 
-# Tuned to Dom's 50 own ratings (2026-10-18): the picture part counted against his
-# higher-rated shots (fast, blurry action), so it no longer counts.
 WEIGHTS = {"trick": 0.4, "clean": 0.3, "impressive": 0.3, "watchable": 0.0}
 TRICK_VALUES = {
     "double back flip": 1.2,
@@ -47,9 +42,8 @@ TRICK_VALUES = {
     "spin": 0.35,
     "close pass": 0.35,
 }
-# Score at which 2, 3, 4 and 5 stars begin, matched to how Dom spread his own 39 ratings
-# (15 % 1 star, 28 % 2, 46 % 3, 5 % 4, 5 % 5; 11 ratings a held key made were removed), so
-# the stars read on his scale: most shots are an OK 3, and 4 or 5 stars are rare.
+# Score at which 2, 3, 4 and 5 stars begin: most shots are an OK 3, and 4 or 5 stars are
+# rare.
 STAR_BOUNDS = (0.59, 0.63, 0.77, 0.81)
 
 
@@ -104,7 +98,7 @@ class Quality:
 
 @dataclass(frozen=True)
 class ClipSignals:
-    """Per-frame signals of one clip that the rating reads (from `montage._Motion`)."""
+    """Per-frame signals of one clip that the rating reads (from `montage.MotionSummary`)."""
 
     fps: float
     rate: FloatArray  # deg/s, lightly smoothed

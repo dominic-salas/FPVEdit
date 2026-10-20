@@ -8,12 +8,11 @@ from pathlib import Path
 import pytest
 
 from fpvedit.highlights import Interval
-from fpvedit.media import find_tools, frame_times, probe
+from fpvedit.media import find_tools, frame_times, output_rate, probe
 from fpvedit.render import (
     EncodeConfig,
     expected_frame_count,
     first_frame_time,
-    output_rate,
     render,
     snap_to_frames,
     validate_output,

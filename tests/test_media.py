@@ -160,7 +160,7 @@ def _dvr_times() -> np.ndarray:
 
 
 def test_steady_recording_with_signal_loss_is_constant_rate() -> None:
-    # Dom's 20261008-134959: its average rate is 2.9 % low only because of the ending.
+    # A real recording (20261008-134959): its average rate is 2.9 % low only because of the ending.
     stream = media.parse_probe(Path("a.ts"), PROBE).video
     times = _dvr_times()
     assert media.regular_step_share(times, Fraction(60)) > 0.98

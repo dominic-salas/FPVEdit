@@ -14,8 +14,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
-      # Oldest and newest Python on Linux, newest on Windows: the repository is private, so
-      # this keeps each push to a few dozen of the free monthly Actions minutes.
+      # Oldest and newest supported Python on Linux, newest on Windows.
       matrix:
         include:
           - { os: ubuntu-latest, python: "3.12" }

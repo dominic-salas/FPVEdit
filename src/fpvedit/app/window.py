@@ -67,7 +67,11 @@ from fpvedit.app.model import ShotList
 from fpvedit.app.ratepage import RatePage
 from fpvedit.app.review import ReviewPage, describe_music
 from fpvedit.app.settings import AppSettings
-from fpvedit.cli import (
+from fpvedit.app.widgets import button, plural, timecode
+from fpvedit.errors import CancelledError, FPVEditError
+from fpvedit.media import MediaInfo, Tools, find_tools, run_tool
+from fpvedit.montage import Shot, pick_shots
+from fpvedit.pipeline import (
     MONTAGE_SUFFIX,
     MontagePlan,
     PipelineConfig,
@@ -76,9 +80,6 @@ from fpvedit.cli import (
     keep_rated,
     render_montage,
 )
-from fpvedit.errors import CancelledError, FPVEditError
-from fpvedit.media import MediaInfo, Tools, find_tools, run_tool
-from fpvedit.montage import Shot, pick_shots
 from fpvedit.render import (
     NVENC,
     EncodeConfig,
@@ -108,15 +109,6 @@ def _is_recording(path: Path) -> bool:
     stem = path.stem.lower()
     ours = any(marker in stem for marker in OUTPUT_MARKERS)
     return path.suffix.lower() in VIDEO_SUFFIXES and not ours
-
-
-def clock(seconds: float) -> str:
-    minutes, rest = divmod(max(0.0, seconds), 60)
-    return f"{int(minutes)}:{rest:04.1f}"
-
-
-def plural(count: int, noun: str) -> str:
-    return f"{count} {noun}{'' if count == 1 else 's'}"
 
 
 def time_left(elapsed: float, share: float) -> str:
@@ -176,14 +168,6 @@ def eyebrow(text: str = "") -> QLabel:
     label = QLabel(text)
     label.setProperty("role", "eyebrow")
     return label
-
-
-def button(text: str, slot: Callable[[], object], *, primary: bool = False) -> QPushButton:
-    widget = QPushButton(text)
-    if primary:
-        widget.setProperty("primary", True)
-    widget.clicked.connect(slot)
-    return widget
 
 
 def restyle(widget: QWidget, name: str, value: object) -> None:
@@ -301,7 +285,7 @@ class MainWindow(QMainWindow):
     # ----- layout -----
 
     def _build(self) -> None:
-        logo = QLabel("fpv<span style='color:#e5322d'>.</span>editor")
+        logo = QLabel("FPV<span style='color:#e5322d'>Edit</span>")
         logo.setProperty("role", "logo")
         self._steps = Steps()
         self._steps.chosen.connect(self._go_to_step)
@@ -327,7 +311,7 @@ class MainWindow(QMainWindow):
         self._pages.addWidget(self._build_work_page())
         self._pages.addWidget(self._build_review_page())
         self._pages.addWidget(self._build_done_page())
-        self._rate = RatePage(self._tools, self._review._mine)
+        self._rate = RatePage(self._tools, self._review.ratings)
         self._rate.back.connect(lambda: self._show_page(self.CLIPS))
         self._pages.addWidget(self._rate)
         self._rated_clips: set[Path] = set()  # clips whose shots went to the rating screen
@@ -925,7 +909,7 @@ class MainWindow(QMainWindow):
         self._end_finding()
         learn = self._settings.learn_taste
         min_stars = self._settings.min_stars if learn else 1
-        ratings = self._review._mine if learn else None
+        ratings = self._review.ratings if learn else None
         if not plan.shots or not scenery.available():
             self._plan_ready(keep_rated(self._tools, plan, min_stars=min_stars, ratings=ratings))
             return
@@ -1110,7 +1094,7 @@ class MainWindow(QMainWindow):
         self._last_output = final
         self._output, self._force = None, False
         self._done_text.setText(
-            f"Your montage is ready: {clock(length)} long, "
+            f"Your montage is ready: {timecode(length)} long, "
             f"{plural(len(self._current_shots()), 'shot')}. "
             f"Made on {where} in {elapsed:.0f} s and checked frame by frame."
         )
@@ -1238,7 +1222,7 @@ class MainWindow(QMainWindow):
     # ----- menu -----
 
     def _open_settings(self) -> None:
-        dialog = SettingsDialog(self._settings, self._cache_dir, self, self._review._mine)
+        dialog = SettingsDialog(self._settings, self._cache_dir, self, self._review.ratings)
         dialog.exec()  # ratings may have been cleared even if it was cancelled
         self._refresh_output()
         self._review.refresh()  # the timeline colours may have changed
@@ -1312,24 +1296,6 @@ def locate_tools(settings: AppSettings) -> Tools | None:
 
 
 APP_NAME = "FPVEdit"
-OLD_APP_NAME = "fpv-editor"  # the name until 2026-10-20
-
-
-def move_from_old_name(old: str = OLD_APP_NAME, new: str = APP_NAME) -> str | None:
-    """Once, after the rename to FPVEdit: move the old data folder (ratings, saved
-    measurements, logs) to the new name, so nothing is lost. Returns what happened, for
-    the log, or None if there was nothing to move. If it cannot be moved yet (the old
-    version still open), the old folder is used this time and the move is tried again."""
-    old_folder, new_folder = data_folder(old), data_folder(new)
-    if old_folder is None or new_folder is None or not old_folder.is_dir():
-        return None
-    if new_folder.exists():
-        return None
-    try:
-        old_folder.rename(new_folder)
-    except OSError as exc:
-        return f"kept using {old_folder} for now: {exc}"
-    return f"moved {old_folder} to {new_folder}"
 
 
 def run(argv: Sequence[str]) -> int:
@@ -1341,21 +1307,9 @@ def run(argv: Sequence[str]) -> int:
     app.setApplicationDisplayName(APP_NAME)
     app.setApplicationVersion(__version__)
     app.setWindowIcon(app_icon())
-    moved = move_from_old_name()
-    if moved is not None and not moved.startswith("moved"):
-        QMessageBox.warning(
-            None,
-            APP_NAME,
-            "FPV Editor is now called FPVEdit, and your ratings and saved measurements move "
-            f"to its folder. They could not be moved yet ({moved}). Close the old FPV Editor "
-            "window and start FPVEdit again.",
-        )
-        return 1
     base = data_folder()
     log_file = start_logging(base / "logs") if base else None
     log.info("FPVEdit %s starting", __version__)
-    if moved:
-        log.info("renamed from fpv-editor: %s", moved)
     settings = AppSettings()
     theme.apply(app, theme.THEMES.get(settings.theme, theme.DARK), theme.load_fonts())
     tools = locate_tools(settings)

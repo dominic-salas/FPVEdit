@@ -2,10 +2,10 @@
   "flight": "20261010-203859",
   "source_file": "20261010-203859.ts",
   "duration_s": 200.08,
-  "annotator": "Dom",
+  "annotator": "the pilot",
   "annotated_on": "2026-10-12",
   "complete": false,
-  "notes": "Raw HDZero BoxPro+ DVR recording (analog feed), MPEG-TS. Times are m:ss at 1 s resolution. Dom: crashes should in general be cut; tricks right before a crash may be cut too, cutting in dead space where possible.",
+  "notes": "Raw HDZero BoxPro+ DVR recording (analog feed), MPEG-TS. Times are m:ss at 1 s resolution. the pilot: crashes should in general be cut; tricks right before a crash may be cut too, cutting in dead space where possible.",
   "events": [
     {"start": "0:16", "end": "0:22", "label": "failed", "keep": "exclude", "note": "FAILED flip trick trying to weave between gates; it followed a successful weave trick"},
     {"start": "0:23", "end": "0:32", "label": "failed", "keep": "exclude", "note": "FAILED flow"},

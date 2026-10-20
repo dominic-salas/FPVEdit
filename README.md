@@ -70,7 +70,7 @@ Settings > Clear my ratings empty them.
 - **Something went wrong**: Menu > Show the log file, and attach the log to a
   [bug report](https://github.com/dominic-salas/FPVEdit/issues/new/choose).
 
-Known limitations are listed in [PLAN.md](PLAN.md#known-gaps-tracked).
+Known limitations are listed in [docs/limitations.md](docs/limitations.md).
 
 ## Command line
 

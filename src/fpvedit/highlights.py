@@ -144,10 +144,6 @@ class Selection:
     retention: float
     warnings: tuple[str, ...] = field(default_factory=tuple)
 
-    @property
-    def kept_duration(self) -> float:
-        return sum(interval.duration for interval in self.intervals)
-
 
 def window_sum(values: FloatArray, window: int) -> FloatArray:
     """Sum over a centred window of ``window`` samples (truncated at the edges)."""
@@ -169,7 +165,7 @@ def time_mask(count: int, fps: float, start: float, end: float) -> BoolArray:
     return mask
 
 
-class _Motion:
+class MotionSummary:
     """Per-frame motion summaries used by the policy."""
 
     def __init__(self, measurements: Measurements) -> None:
@@ -204,7 +200,7 @@ def select_highlights(
             retention=1.0,
             warnings=(f"input is shorter than {config.short_input_s:g} s; kept all of it",),
         )
-    motion = _Motion(measurements)
+    motion = MotionSummary(measurements)
     cuts: list[Cut] = []
 
     def cut(mask: BoolArray, removed: BoolArray, reason: CutReason) -> BoolArray:
@@ -307,14 +303,14 @@ def _long_runs(mask: BoolArray, min_length: int) -> BoolArray:
     return result
 
 
-def _still(motion: _Motion, config: SelectionConfig) -> BoolArray:
+def _still(motion: MotionSummary, config: SelectionConfig) -> BoolArray:
     return np.asarray(
         (motion.speed_smooth < config.still_speed) & (motion.rate_smooth < config.still_rate)
     )
 
 
 def _on_ground(
-    motion: _Motion, landings: Sequence[tuple[float, float]], config: SelectionConfig
+    motion: MotionSummary, landings: Sequence[tuple[float, float]], config: SelectionConfig
 ) -> BoolArray:
     """Camera still for a while: sitting on the ground. Keep the moment before lift-off.
 
@@ -337,7 +333,9 @@ def _on_ground(
     return result
 
 
-def _ground_stops(ground: BoolArray, motion: _Motion, config: SelectionConfig) -> list[ScreenEvent]:
+def _ground_stops(
+    ground: BoolArray, motion: MotionSummary, config: SelectionConfig
+) -> list[ScreenEvent]:
     """Each time the quad comes to rest right after tumbling, as a disarm (stats screen)
     event: the start of time on the ground, or a short dead stop (a crash often lies
     still for under a second before the pilot flips it over). Without the OSD's disarm,
@@ -360,7 +358,7 @@ def _ground_stops(ground: BoolArray, motion: _Motion, config: SelectionConfig) -
     return stops
 
 
-def _is_crash(disarm: float, motion: _Motion, config: SelectionConfig) -> bool:
+def _is_crash(disarm: float, motion: MotionSummary, config: SelectionConfig) -> bool:
     fps = motion.fps
     before, after = config.crash_window_s
     start, end = round((disarm - before) * fps), round((disarm - after) * fps)
@@ -372,7 +370,7 @@ def _is_crash(disarm: float, motion: _Motion, config: SelectionConfig) -> bool:
 
 
 def _landing_rearms(
-    events: Sequence[ScreenEvent], motion: _Motion, config: SelectionConfig
+    events: Sequence[ScreenEvent], motion: MotionSummary, config: SelectionConfig
 ) -> list[tuple[float, float]]:
     """Quick, gentle disarm and re-arm, as (stats start, ARMED end) spans to keep."""
     spans = []
@@ -388,7 +386,7 @@ def _landing_rearms(
 
 
 def _failure_start(
-    disarm: float, motion: _Motion, flying: BoolArray, config: SelectionConfig
+    disarm: float, motion: MotionSummary, flying: BoolArray, config: SelectionConfig
 ) -> float:
     """The calmest recent moment before a crash: where the failed move began."""
     fps = motion.fps
@@ -442,7 +440,7 @@ def _crash_end(
 
 def _failures(
     events: Sequence[ScreenEvent],
-    motion: _Motion,
+    motion: MotionSummary,
     flying: BoolArray,
     still: BoolArray,
     config: SelectionConfig,
@@ -480,7 +478,7 @@ def _failures(
 
 
 def _dull(
-    motion: _Motion, keep: BoolArray, landed: BoolArray, config: SelectionConfig
+    motion: MotionSummary, keep: BoolArray, landed: BoolArray, config: SelectionConfig
 ) -> BoolArray:
     """Kept stretches of at least ``dull_s`` without a trick, spin, close pass or stunt
     landing."""

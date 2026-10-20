@@ -42,6 +42,7 @@ from fpvedit.app.myratings import MyRatings
 from fpvedit.app.preview import PREVIEW_HEIGHT, PreviewView, Segment
 from fpvedit.app.settings import AppSettings
 from fpvedit.app.timeline import Block, Timeline, clip_colour, rating_colour, stars_text
+from fpvedit.app.widgets import button, plural, timecode
 from fpvedit.errors import FPVEditError
 from fpvedit.media import MUSIC_SUFFIXES, AudioFile, MediaInfo, Tools, probe_audio
 from fpvedit.montage import Shot
@@ -91,15 +92,6 @@ def tint(widget: QPushButton, colour: str) -> None:
     widget.setStyleSheet(f"QPushButton {{ color: {colour}; border-color: {colour}; }}")
 
 
-def clock(seconds: float) -> str:
-    minutes, rest = divmod(max(0.0, seconds), 60)
-    return f"{int(minutes)}:{rest:04.1f}"
-
-
-def plural(count: int, noun: str) -> str:
-    return f"{count} {noun}{'' if count == 1 else 's'}"
-
-
 def describe(shot: Shot) -> str:
     counts: dict[str, int] = {}
     for moment in shot.moments:
@@ -114,14 +106,6 @@ def describe(shot: Shot) -> str:
 def label(text: str = "", role: str = "eyebrow") -> QLabel:
     widget = QLabel(text)
     widget.setProperty("role", role)
-    return widget
-
-
-def button(text: str, slot: Callable[[], object], *, primary: bool = False) -> QPushButton:
-    widget = QPushButton(text)
-    if primary:
-        widget.setProperty("primary", True)
-    widget.clicked.connect(slot)
     return widget
 
 
@@ -177,8 +161,8 @@ def describe_music(tracks: Sequence[AudioFile], montage: float) -> str:
         return "NO MUSIC. THE MONTAGE IS SILENT."
     music = sum(track.duration for track in tracks)
     if music > montage + 0.05:
-        return f"{clock(music)} OF MUSIC, CUT AND FADED OUT AT {clock(montage)}"
-    return f"MUSIC ENDS AT {clock(music)}; THE LAST {clock(montage - music)} ARE SILENT"
+        return f"{timecode(music)} OF MUSIC, CUT AND FADED OUT AT {timecode(montage)}"
+    return f"MUSIC ENDS AT {timecode(music)}; THE LAST {timecode(montage - music)} ARE SILENT"
 
 
 class ReviewPage(QWidget):
@@ -565,7 +549,9 @@ class ReviewPage(QWidget):
         self._music_list.blockSignals(True)
         self._music_list.clear()
         for number, track in enumerate(self._music, start=1):
-            self._music_list.addItem(f"{number:02d}   {track.path.name}   {clock(track.duration)}")
+            self._music_list.addItem(
+                f"{number:02d}   {track.path.name}   {timecode(track.duration)}"
+            )
         self._music_list.blockSignals(False)
         self._music_list.setVisible(bool(self._music))
         self._music_list.setFixedHeight(min(len(self._music), 5) * 34 + 6)
@@ -599,6 +585,11 @@ class ReviewPage(QWidget):
         """Play pictures only (a shot on a loop, a candidate): the music stays quiet."""
         self._music_preview.stop()
         self._video.play(segments, index, first, loop=loop)
+
+    @property
+    def ratings(self) -> MyRatings:
+        """The pilot's own ratings, shared with the Rate shots page and the settings."""
+        return self._mine
 
     def set_theme(self, palette: theme.Palette, fonts: theme.Fonts) -> None:
         self._palette = palette
@@ -655,7 +646,7 @@ class ReviewPage(QWidget):
                     else f"{number:02d}  {self._name(shot)}",
                     tooltip=(
                         f"Shot {number}: {describe(shot)}, {stars_text(stars)}\n"
-                        f"{self._name(shot)}, {clock(shot.start)} to {clock(shot.end)} "
+                        f"{self._name(shot)}, {timecode(shot.start)} to {timecode(shot.end)} "
                         f"({shot.duration:.1f} s)"
                     ),
                     thumbnail=self._thumbnail(shot),
@@ -683,10 +674,10 @@ class ReviewPage(QWidget):
                     for clip in used
                 )
             )
-        self._overview_total.setText(f"{plural(len(shots), 'shot')}, {clock(total)}")
+        self._overview_total.setText(f"{plural(len(shots), 'shot')}, {timecode(total)}")
         self._refresh_music()
         self._heading_summary.setText(
-            f"{plural(len(shots), 'shot')}, {clock(total)} long. {self._summary}"
+            f"{plural(len(shots), 'shot')}, {timecode(total)} long. {self._summary}"
         )
         self._show_time()
         self._show_editor()
@@ -720,7 +711,7 @@ class ReviewPage(QWidget):
         self._shot_title.setText(describe(shot).capitalize())
         self._shot_source.setText(
             f"<span style='color:{clip_colour(shot.clip)}'>■</span> "
-            f"{self._name(shot).upper()}<br>{clock(shot.start)} TO {clock(shot.end)}   "
+            f"{self._name(shot).upper()}<br>{timecode(shot.start)} TO {timecode(shot.end)}   "
             f"{shot.duration:.1f} S"
         )
         reasons = shot.quality.reasons if shot.quality is not None else ()
@@ -851,7 +842,7 @@ class ReviewPage(QWidget):
         )
 
     def _show_time(self) -> None:
-        self._time.setText(f"{clock(self._position)} / {clock(self._total())}")
+        self._time.setText(f"{timecode(self._position)} / {timecode(self._total())}")
 
     def _ended(self) -> None:
         self._music_preview.stop()
@@ -977,7 +968,7 @@ class ReviewPage(QWidget):
             stars = rating(shot, [*self._current(), shot])
             text = (
                 f"{stars_text(stars)}  {describe(shot)}\n{self._name(shot)}   "
-                f"{clock(shot.start)}  ·  {shot.duration:.1f} s"
+                f"{timecode(shot.start)}  ·  {shot.duration:.1f} s"
             )
             self._alternatives.addItem(QListWidgetItem(icon, text))
         self._alternatives.blockSignals(False)

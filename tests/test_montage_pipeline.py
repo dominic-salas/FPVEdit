@@ -10,9 +10,10 @@ from pathlib import Path
 
 import pytest
 
-from fpvedit.cli import PipelineConfig, main, run_montage
+from fpvedit.cli import main
 from fpvedit.errors import InvalidInputError, NoFlightContentError, OutputExistsError
 from fpvedit.media import find_tools, probe
+from fpvedit.pipeline import PipelineConfig, run_montage
 from fpvedit.render import EncodeConfig
 from media_fixtures import Span, ffmpeg_available, make_flight
 

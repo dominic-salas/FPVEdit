@@ -120,9 +120,9 @@ def test_a_taste_for_what_is_in_view_is_learned_from_the_picture() -> None:
 
 
 def test_keep_rated_uses_own_stars_and_the_learned_taste(tmp_path: Path) -> None:
-    from fpvedit.cli import MontagePlan, keep_rated
     from fpvedit.media import Tools
     from fpvedit.montage import MontageConfig
+    from fpvedit.pipeline import MontagePlan, keep_rated
 
     class Fixed:
         """Ratings that like close passes and dislike everything else, plus one own rating."""

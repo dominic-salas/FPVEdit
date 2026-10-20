@@ -4,16 +4,15 @@ The model is replaced by fixed scores here; `-m model` runs the real one."""
 
 from __future__ import annotations
 
-import dataclasses
 from pathlib import Path
 
 import numpy as np
 import pytest
 
 from fpvedit import scenery
-from fpvedit.cli import MontagePlan, keep_rated
 from fpvedit.media import Tools
 from fpvedit.montage import Moment, MomentKind, MontageConfig, Shot
+from fpvedit.pipeline import MontagePlan, keep_rated
 from fpvedit.rating import Quality
 
 TOOLS = Tools(ffmpeg="ffmpeg", ffprobe="ffprobe", ffmpeg_major=7)
@@ -76,7 +75,7 @@ def test_a_failing_model_keeps_the_plain_ratings(monkeypatch: pytest.MonkeyPatch
 
 
 @pytest.mark.model
-def test_the_model_tells_a_room_from_a_forest(tmp_path: Path) -> None:
+def test_the_model_tells_a_room_from_a_forest() -> None:
     """Real SigLIP 2 inference on two drawn pictures (downloads the weights once)."""
     model = scenery.SceneryModel("auto")
     room = np.full((224, 224, 3), 200, dtype=np.uint8)
@@ -89,7 +88,6 @@ def test_the_model_tells_a_room_from_a_forest(tmp_path: Path) -> None:
         forest[60:200, x : x + 8] = (70, 50, 30)  # trunks
     values = model.indoorness([room, forest])
     assert values[0] > values[1]
-    assert dataclasses.is_dataclass(MontageConfig())
 
 
 def test_progress_follows_the_real_work(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

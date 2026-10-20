@@ -30,14 +30,10 @@ def test_remove_and_undo() -> None:
     assert not shots.can_undo
 
 
-def test_move_and_reorder() -> None:
+def test_move() -> None:
     shots = make()
     shots.move(2, 0)
     assert list(shots.shots) == [C, A, B]
-    shots.reorder([2, 1, 0])
-    assert list(shots.shots) == [B, A, C]
-    with pytest.raises(ValueError, match="every shot once"):
-        shots.reorder([0, 0, 1])
 
 
 def test_trim_moves_ends_and_drops_moments_outside() -> None:

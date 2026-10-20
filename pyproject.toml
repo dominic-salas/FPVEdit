@@ -1,7 +1,7 @@
 [project]
 name = "fpvedit"
 version = "1.0.0"
-description = "One-command offline highlight editor for FPV freestyle recordings"
+description = "Offline montage editor for FPV freestyle recordings: finds flips, spins and close passes"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
@@ -9,12 +9,14 @@ authors = [{ name = "Dominic Salas" }]
 requires-python = ">=3.12"
 classifiers = [
     "Environment :: Console",
+    "Environment :: Win32 (MS Windows)",
+    "Environment :: X11 Applications :: Qt",
     "Operating System :: Microsoft :: Windows",
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
     "Topic :: Multimedia :: Video :: Non-Linear Editor",
 ]
-# Runtime dependencies are added per milestone, each with a stated reason (see PLAN.md).
+# Runtime dependencies, each with the reason it is needed.
 dependencies = [
     "numpy>=2.0",
     "opencv-python-headless>=4.10,<6",  # 5.x verified; re-check before a major upgrade
@@ -30,11 +32,9 @@ ml = ["torch>=2.9", "transformers>=4.56", "pillow>=11"]
 
 [project.scripts]
 fpvedit = "fpvedit.cli:main"
-fpv-editor = "fpvedit.cli:main"  # the name until 2026-10-20, kept so old shortcuts work
 
 [project.gui-scripts]
 fpvedit-app = "fpvedit.app:main"
-fpv-editor-app = "fpvedit.app:main"  # the old name, for existing desktop shortcuts
 
 [dependency-groups]
 build = [

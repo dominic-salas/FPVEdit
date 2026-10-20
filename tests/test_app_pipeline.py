@@ -8,7 +8,10 @@ from pathlib import Path
 
 import pytest
 
-from fpvedit.cli import (
+from fpvedit.errors import CancelledError
+from fpvedit.media import find_tools, probe, run_tool_with_progress
+from fpvedit.montage import Shot
+from fpvedit.pipeline import (
     ClipJob,
     PipelineConfig,
     combine_clips,
@@ -17,9 +20,6 @@ from fpvedit.cli import (
     plan_montage,
     render_montage,
 )
-from fpvedit.errors import CancelledError
-from fpvedit.media import find_tools, probe, run_tool_with_progress
-from fpvedit.montage import Shot
 from fpvedit.render import EncodeConfig
 from media_fixtures import Span, ffmpeg_available, make_flight
 
@@ -158,7 +158,7 @@ def test_window_lists_and_edits_the_shots(clips: tuple[Path, Path], tmp_path: Pa
     from fpvedit.app.myratings import MyRatings
     from fpvedit.app.settings import AppSettings
     from fpvedit.app.window import MainWindow, video_files
-    from fpvedit.cli import _taste_for
+    from fpvedit.pipeline import taste_predictor
     from fpvedit.taste import Taste
 
     app = QApplication.instance() or QApplication([])
@@ -193,7 +193,7 @@ def test_window_lists_and_edits_the_shots(clips: tuple[Path, Path], tmp_path: Pa
         assert window._current_shots() == montage_before  # nothing changes until the next montage
         # The learned taste gives a rated shot its own stars; with fewer ratings than it
         # needs to learn, every other shot keeps the app's own stars.
-        taste = _taste_for(plan.infos, review._mine, Taste.fit(review._mine.rated_shots()))
+        taste = taste_predictor(plan.infos, review._mine, Taste.fit(review._mine.rated_shots()))
         rated, *others = window._current_shots()
         assert taste(rated) == 4.0
         for other in others:

@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 
 from fpvedit.errors import (
+    EncodeError,
     InvalidInputError,
     MediaToolError,
     OutputExistsError,
@@ -162,7 +163,7 @@ def test_fallback_moves_on_only_when_the_encode_fails() -> None:
     def encode_fails_on_gpu(encode: EncodeConfig) -> str:
         tried.append(encode.video_codec)
         if encode == NVENC:
-            raise MediaToolError(RENDER_ACTION, 1, "No NVENC capable devices found")
+            raise EncodeError(RENDER_ACTION, 1, "No NVENC capable devices found")
         return "done"
 
     assert with_fallback([NVENC, cpu], encode_fails_on_gpu) == ("done", cpu)

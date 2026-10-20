@@ -1,8 +1,8 @@
-"""Dom's own star ratings of shots, kept so the rating can be tuned to his taste.
+"""The pilot's own star ratings of shots, kept so the rating can learn their taste.
 
 Pressing 1-5 while a shot plays (or clicking the stars in the shot panel) appends one line
 of JSON to ``my-ratings.jsonl`` in the app's data folder: the recording, the shot's times,
-his stars, and the app's own rating with its parts and reasons, so the two can be compared
+their stars, and the app's own rating with its parts and reasons, so the two can be compared
 later. Nothing leaves the computer. A later rating of the same shot replaces the earlier one
 when the file is read, and an undo is a line with 0 stars (the file is only appended to).
 """
