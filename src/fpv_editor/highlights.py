@@ -68,6 +68,7 @@ class CutReason(Enum):
     STATIC = "static"
     ON_GROUND = "on the ground"
     CRASH = "crash"
+    FAILED_MOVE = "move before a crash"  # cut from the edit; a montage shot may use it
     REARM_CHURN = "repeated disarms"
     DULL = "dull"
     SHORT = "short leftover"
@@ -102,6 +103,10 @@ class SelectionConfig:
     landing_rearm_s: float = 3.0  # a landing disarm re-armed this fast is part of the flight
     crash_lead_s: float = 3.5  # the failed move starts at least this long before the disarm
     crash_lookback_s: float = 8.0  # ... and at most this long
+    # The impact itself: the last this long before a crash's disarm is cut as the crash;
+    # what comes before it is the failed move (a pass that went well just before stays
+    # usable for a montage shot).
+    crash_impact_s: float = 1.5
     calm_slack: float = 20.0  # deg/s above the calmest moment that still counts as calm
     # without an OSD, a dead stop this still and long stands in for a disarm
     impact_speed: float = 0.08  # widths/s
@@ -109,6 +114,8 @@ class SelectionConfig:
     impact_still_s: float = 0.5
     impact_tumble_rate: float = 300.0  # 90th percentile rotation (deg/s) just before it
     crash_after_s: float = 12.0  # a crash is over by the re-arm or take-off within this
+    crash_still_gap_s: float = 2.0  # lying still this soon after the re-arm is still the crash
+    crash_refly_s: float = 4.0  # ... as is a re-armed stretch this short ending in a disarm
     churn_disarms: int = 3  # this many disarms ...
     churn_window_s: float = 15.0  # ... within this time are cut as a whole
     calm_rate: float = 60.0  # deg/s: calm flying that ends a churn cut ...
@@ -215,8 +222,9 @@ def select_highlights(
     # Without an OSD there are no disarms to read; coming to rest on the ground stands in
     # for them, so a tumble just before it is still found as a crash.
     stops = events if flight.has_osd else _ground_stops(ground, motion, config)
-    crash, churn = _failures(stops, motion, keep.copy(), _still(motion, config), config)
+    crash, failed, churn = _failures(stops, motion, keep.copy(), _still(motion, config), config)
     keep = cut(keep, crash, CutReason.CRASH)
+    keep = cut(keep, failed, CutReason.FAILED_MOVE)
     keep = cut(keep, churn, CutReason.REARM_CHURN)
     landed = np.zeros(count, dtype=bool)
     for start, end in landings:
@@ -401,15 +409,32 @@ def _crash_end(
     fps: float,
     config: SelectionConfig,
 ) -> float:
-    """When the crash is over: the re-arm, or the end of lying still (turtle mode, getting
-    the quad upright) before it takes off again, whichever is later."""
+    """When the crash is over: the first re-arm, or the end of lying still (turtle mode,
+    getting the quad upright) before it takes off again, whichever is later. A later
+    re-arm or rest belongs to the next flight (a quick pilot re-arms within seconds),
+    unless that flight ends in another disarm within ``crash_refly_s`` (turtle mode)."""
     horizon = disarm + config.crash_after_s
     end = disarm + 0.5
-    for event in events:
-        if event.kind is Screen.ARMED and disarm < event.start <= horizon:
-            end = max(end, event.end)
+    current = disarm
+    while True:
+        rearm = next(
+            (e.end for e in events if e.kind is Screen.ARMED and current < e.start <= horizon),
+            None,
+        )
+        if rearm is None:
+            break
+        end = max(end, rearm)
+        again = next(
+            (e.start for e in events if e.kind is Screen.STATS and rearm <= e.start <= horizon),
+            None,
+        )
+        if again is None or again - rearm >= config.crash_refly_s:
+            break
+        current = again
     first, last = round(disarm * fps), min(len(still), round(horizon * fps))
     for start, stop in runs(still[first:last]):
+        if (first + start) / fps > end + config.crash_still_gap_s:
+            break  # flying again in between: a new flight
         if (stop - start) / fps >= config.still_quiet_min_s:
             end = max(end, (first + stop) / fps - config.liftoff_keep_s)
     return end
@@ -421,17 +446,20 @@ def _failures(
     flying: BoolArray,
     still: BoolArray,
     config: SelectionConfig,
-) -> tuple[BoolArray, BoolArray]:
-    """Masks of crashes (with the failed move before them) and of re-arm churn."""
+) -> tuple[BoolArray, BoolArray, BoolArray]:
+    """Masks of crashes, of the failed moves before them and of re-arm churn."""
     fps = motion.fps
     count = len(flying)
     crash = np.zeros(count, dtype=bool)
+    failed = np.zeros(count, dtype=bool)
     churn = np.zeros(count, dtype=bool)
     disarms = [e.start for e in events if e.kind is Screen.STATS and e.start > 0]
     crashes = {t for t in disarms if _is_crash(t, motion, config)}
     for disarm in crashes:
         start = _failure_start(disarm, motion, flying, config)
-        crash |= time_mask(count, fps, start, _crash_end(disarm, events, still, fps, config))
+        impact = max(start, disarm - config.crash_impact_s)
+        failed |= time_mask(count, fps, start, impact)
+        crash |= time_mask(count, fps, impact, _crash_end(disarm, events, still, fps, config))
     calm = (
         (motion.rate_smooth < config.calm_rate)
         & (motion.speed_smooth >= config.still_speed)
@@ -448,7 +476,7 @@ def _failures(
         while index < count and not calm_held[index]:
             index += 1
         churn |= time_mask(count, fps, start, index / fps)
-    return crash, churn
+    return crash, failed & ~crash, churn
 
 
 def _dull(

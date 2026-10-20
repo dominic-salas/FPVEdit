@@ -1,8 +1,9 @@
 """Pick the best shots from several clips for one montage.
 
 Each clip is first cleaned with the flight-state rules of `highlights.py`: boot and menus,
-time disarmed, static, sitting on the ground, crashes with the failed move before them
-and re-arm churn are never usable. What remains is searched for *moments*:
+time disarmed, static, sitting on the ground, crashes (the impact; a pass that went well
+just before one stays usable) and re-arm churn are never usable. What remains is searched
+for *moments*:
 
 - flips and rolls: the camera turns 180 degrees or more within a second (a big flip,
   330 degrees or more, counts extra); `tricks.py` names each one by its axis (back or
@@ -114,6 +115,9 @@ class MontageConfig:
     length_slack_s: float = 4.0  # the montage may run this much over or stop this short
     shot_min_s: float = 8.0
     shot_max_s: float = 15.0
+    # A flight shorter than shot_min_s (re-armed between crashes) is one shot, shown
+    # whole, when it lasts this long and has a moment anywhere in it.
+    short_flight_s: float = 4.0
     lead_s: float = 2.0  # a shot starts this long before its first moment
     edge_s: float = 0.5  # a moment this close to the start of a shot is not shown whole
     tail_s: float = 2.0  # ... nor one this close to its end (it would be cut short)
@@ -268,6 +272,13 @@ def candidate_shots(
     shots: dict[tuple[int, int], Shot] = {}
     for low, high in runs(usable):
         if high - low < shortest:
+            if high - low >= round(config.short_flight_s * fps):
+                whole = dataclasses.replace(config, edge_s=0.0, tail_s=0.0)
+                shot = _score(clip, low / fps, high / fps, moments, motion, whole)
+                if shot is not None:
+                    named = [(m.time, m.name) for m in shot.moments]
+                    quality = rate_shot(shot.start, shot.end, named, signals)
+                    shots[(low, high)] = dataclasses.replace(shot, quality=quality)
             continue
         inside = [m for m in moments if low <= m.time * fps < high]
         for moment in inside:

@@ -82,10 +82,45 @@ def test_crash_is_cut_with_the_failed_move_before_it() -> None:
         Timeline(60).armed_message(2).tumble(18.5, 20).stats(20, 24).armed_message(30).stats(55, 58)
     )
     selection = select(timeline)
-    assert cut_reason(selection, 18) is CutReason.CRASH
-    assert cut_reason(selection, 17) is CutReason.CRASH
+    assert cut_reason(selection, 19) is CutReason.CRASH
+    assert cut_reason(selection, 17) is CutReason.FAILED_MOVE
     assert not any(kept(selection, t) for t in (17, 19, 22, 27, 30.2))
     assert kept(selection, 12) and kept(selection, 35)
+
+
+def test_a_crash_ends_at_the_re_arm_and_the_next_flight_stays() -> None:
+    # Crash, re-armed at once, then a whole flight that ends in a landing.
+    timeline = (
+        Timeline(60)
+        .armed_message(2)
+        .tumble(18.5, 20)
+        .stats(20, 21)
+        .armed_message(21.5)
+        .still(32, 33)
+        .stats(33, 35)
+        .armed_message(36)
+        .stats(55, 58)
+    )
+    selection = select(timeline)
+    assert cut_reason(selection, 20.5) is not None
+    assert kept(selection, 27)
+
+
+def test_a_re_arm_that_soon_disarms_again_is_part_of_the_crash() -> None:
+    # Crash, re-arm, turtle mode and a second disarm, then flying on.
+    timeline = (
+        Timeline(60)
+        .armed_message(2)
+        .tumble(18.5, 20)
+        .stats(20, 21)
+        .armed_message(21.5)
+        .stats(24, 25)
+        .armed_message(25.5)
+        .stats(55, 58)
+    )
+    selection = select(timeline)
+    assert not kept(selection, 23)
+    assert kept(selection, 35)
 
 
 def test_gentle_landing_is_not_a_crash() -> None:
@@ -155,7 +190,7 @@ def test_without_osd_a_tumble_into_a_dead_stop_is_a_crash() -> None:
     timeline = Timeline(60, osd=False).tumble(28.5, 30).still(30, 30.8)
     selection = select(timeline)
     assert cut_reason(selection, 29) is CutReason.CRASH
-    assert cut_reason(selection, 27) is CutReason.CRASH  # the failed move before it
+    assert cut_reason(selection, 27) is CutReason.FAILED_MOVE
     assert kept(selection, 15) and kept(selection, 45)
 
 
