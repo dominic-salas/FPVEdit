@@ -102,9 +102,10 @@ class SceneryModel:
                 .to(device)
                 .eval()
             )
-            self._processor = AutoProcessor.from_pretrained(  # type: ignore[no-untyped-call]
-                MODEL_ID, revision=MODEL_REVISION
-            )
+            # Untyped in transformers, missing without the ml extra: Any either way, so
+            # the type check passes with and without it installed.
+            processor: Any = AutoProcessor
+            self._processor = processor.from_pretrained(MODEL_ID, revision=MODEL_REVISION)
         except (OSError, ValueError) as exc:
             raise SceneryError(f"could not load {MODEL_ID}: {exc}") from exc
         self._torch, self._device, self._dtype = torch, device, dtype
