@@ -6,6 +6,7 @@ H.264 montage of their best shots (`--trim`: one recording edited as a whole fli
 ## Commands
 - Install dev env: `uv sync` (CI); on Dom's PC `uv sync --extra app --extra ml`, since a plain `uv sync` removes PyTorch and the image model's packages from the `.venv` his desktop shortcut runs
 - Fast checks (run after every change): `uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run pytest`
+- Before every push, the same checks as CI (no ml extra, so type ignores that only the ml packages need fail there): `uv run --isolated --locked mypy` and `uv run --isolated --locked pytest -p no:cacheprovider`; after pushing, `gh run watch` until CI is green. A red CI run emails Dom.
 - Model tests (download weights, opt-in): `uv run pytest -m model`
 - Prohibited-file check: `uv run python scripts/check_staged.py` (staged) or `--all`
 
