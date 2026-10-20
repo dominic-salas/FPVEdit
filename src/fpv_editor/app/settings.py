@@ -101,11 +101,12 @@ class AppSettings:
 
     @property
     def min_stars(self) -> int:
-        """Shots rated below this many stars are left out of a new montage."""
+        """Shots rated below this many stars are left out of a new montage (1: none are;
+        Dom rates every shot himself for now)."""
         try:
-            value = int(str(self._store.value("review/min_stars", 3)))
+            value = int(str(self._store.value("review/min_stars", 1)))
         except ValueError:
-            return 3
+            return 1
         return min(5, max(1, value))
 
     @min_stars.setter
