@@ -120,6 +120,33 @@ def test_timeline_click_picks_and_drag_moves_a_shot() -> None:
     assert len(seeked) == 1 and 24 < seeked[0] < 26
 
 
+def test_dragging_the_playhead_scans_through_the_montage() -> None:
+    from PySide6.QtCore import QPoint, Qt
+    from PySide6.QtTest import QTest
+
+    from fpv_editor.app.timeline import RULER, Block, Timeline
+
+    QApplication.instance() or QApplication([])
+    timeline = Timeline()
+    timeline.resize(306, 90)
+    timeline.set_blocks([Block(10.0, i, f"{i}", "", None) for i in range(3)])
+    scrubbed: list[float] = []
+    seeked: list[float] = []
+    moved: list[tuple[int, int]] = []
+    timeline.scrubbed.connect(scrubbed.append)
+    timeline.seeked.connect(seeked.append)
+    timeline.moved.connect(lambda i, gap: moved.append((i, gap)))
+    y = RULER + 20
+    QTest.mousePress(timeline, Qt.MouseButton.LeftButton, pos=QPoint(2, y))  # the playhead
+    QTest.mouseMove(timeline, QPoint(100, y))
+    QTest.mouseMove(timeline, QPoint(200, y))
+    timeline.set_position(1.0)  # a frame of an earlier seek must not move the needle back
+    QTest.mouseRelease(timeline, Qt.MouseButton.LeftButton, pos=QPoint(200, y))
+    assert moved == []  # dragging the playhead never moves a shot
+    assert len(scrubbed) == 3 and scrubbed == sorted(scrubbed) and 9 < scrubbed[1] < 11
+    assert len(seeked) == 1 and 19 < seeked[0] < 21  # play on from where it was let go
+
+
 def test_dot_letters_share_the_x_height_and_baseline() -> None:
     from fpv_editor.app.look import BASELINE, GLYPHS, ROWS, X_TOP
 

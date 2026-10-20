@@ -242,6 +242,7 @@ class ReviewPage(QWidget):
         self._timeline = Timeline()
         self._timeline.picked.connect(self._picked)
         self._timeline.seeked.connect(self._seek)
+        self._timeline.scrubbed.connect(self._scrub)
         self._timeline.moved.connect(self._moved)
         self._legend = QLabel()
         self._legend.setProperty("role", "caption")
@@ -857,6 +858,18 @@ class ReviewPage(QWidget):
         self._position = self._total()
         self._timeline.set_position(self._position)
         self._show_play_state()
+        self._show_time()
+
+    def _scrub(self, seconds: float) -> None:
+        """The playhead is being dragged: show the frame under it; it plays on when let go."""
+        shots = self._current()
+        if self._choosing is not None or not shots:
+            return
+        index, clip_seconds = locate(shots, seconds)
+        self._music_preview.stop()
+        self._video.show_frame(self._info(shots[index]), clip_seconds)
+        self._position = seconds
+        self._show_now(index)
         self._show_time()
 
     def _seek(self, seconds: float) -> None:
