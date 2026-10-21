@@ -4,6 +4,8 @@ FPVEdit turns raw FPV freestyle recordings (`.ts` or `.mp4` from your goggles' D
 montage of their best shots: flips, rolls, spins and close passes, with the crashes, menus,
 static and dull cruising left out. It runs entirely on your computer; nothing is uploaded.
 
+![The montage page: the shots on a timeline coloured by rating, one shot open for editing](docs/images/montage.png)
+
 ## Download (Windows)
 
 1. Download `FPVEdit-<version>-setup.exe` from the
@@ -38,6 +40,11 @@ never touched.
 what you like. With Settings > My ratings turned on, the next montage leaves out shots it
 predicts you would rate low; you can always add them back. Ratings never change the montage
 you are editing.
+
+<p>
+  <img src="docs/images/clips.png" width="49%" alt="Clips being analysed in the background as soon as they are added">
+  <img src="docs/images/rate-shots.png" width="49%" alt="The Rate shots screen: one shot at a time, 1 to 5 stars">
+</p>
 
 ### How it decides
 
