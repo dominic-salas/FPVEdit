@@ -135,6 +135,7 @@ def stylesheet(p: Palette, fonts: Fonts) -> str:
     QLabel[role="eyebrow"] {{ color: {p.faint}; font-family: {mono}; font-size: 8pt; }}
     QLabel[role="caption"] {{ color: {p.muted}; font-family: {mono}; font-size: 8pt; }}
     QLabel[role="muted"] {{ color: {p.muted}; }}
+    QLabel[role="hint"] {{ color: {p.faint}; font-size: 9pt; }}
     QLabel[role="status"] {{ color: {p.muted}; font-family: {mono}; font-size: 8pt; }}
     QLabel[role="step"] {{ color: {p.faint}; font-family: {mono}; font-size: 8pt; }}
     QLabel[role="step-on"] {{ color: {p.text}; font-family: {mono}; font-size: 8pt; }}

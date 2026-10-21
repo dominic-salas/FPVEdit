@@ -316,12 +316,14 @@ class ReviewPage(QWidget):
         column.setSpacing(8)
         column.addWidget(label("THE MONTAGE"))
         column.addWidget(self._overview_total)
-        self._legend_title = label()
-        column.addWidget(self._legend_title)
+        column.addWidget(label("TIMELINE COLOURS"))
+        self._legend_hint = label(role="hint")
+        column.addWidget(self._legend_hint)
         column.addWidget(self._legend)
         column.addWidget(button("+  ADD A SHOT", lambda: self._open_chooser("add")))
         column.addSpacing(18)
-        column.addWidget(label("MUSIC   TRACKS PLAY IN THIS ORDER"))
+        column.addWidget(label("MUSIC"))
+        column.addWidget(label("Tracks play in this order", "hint"))
         column.addWidget(self._music_list)
         column.addWidget(self._music_fit)
         column.addLayout(music_buttons)
@@ -658,7 +660,7 @@ class ReviewPage(QWidget):
         self._timeline.set_position(self._position)
         used = sorted({shot.clip for shot in shots})
         if by_rating:
-            self._legend_title.setText("TIMELINE COLOURS: RATING IN THIS MONTAGE")
+            self._legend_hint.setText("Rating in this montage")
             self._legend.setText(
                 "  ".join(
                     f"<span style='color:{rating_colour(n)}'>■</span> {n}★" for n in range(1, 6)
@@ -666,7 +668,7 @@ class ReviewPage(QWidget):
                 + "<br>5★ is the top fifth of these shots (tricks, passes, speed)"
             )
         else:
-            self._legend_title.setText("TIMELINE COLOURS: RECORDINGS")
+            self._legend_hint.setText("One colour per recording")
             self._legend.setText(
                 "<br>".join(
                     f"<span style='color:{clip_colour(clip)}'>■</span> "
