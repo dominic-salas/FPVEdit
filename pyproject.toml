@@ -22,6 +22,13 @@ dependencies = [
     "opencv-python-headless>=4.10,<6",  # 5.x verified; re-check before a major upgrade
 ]
 
+[project.urls]
+Homepage = "https://github.com/dominic-salas/FPVEdit"
+Download = "https://github.com/dominic-salas/FPVEdit/releases/latest"
+Issues = "https://github.com/dominic-salas/FPVEdit/issues"
+Changelog = "https://github.com/dominic-salas/FPVEdit/blob/main/CHANGELOG.md"
+Funding = "https://ko-fi.com/dvsalas"
+
 [project.optional-dependencies]
 # The desktop app (fpvedit-app). Qt for Python, LGPL-3.0, used as an unmodified library.
 app = ["PySide6-Essentials>=6.10"]

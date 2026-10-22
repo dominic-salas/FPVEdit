@@ -1,10 +1,15 @@
 # FPVEdit
 
+[![CI](https://github.com/dominic-salas/FPVEdit/actions/workflows/ci.yml/badge.svg)](https://github.com/dominic-salas/FPVEdit/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/dominic-salas/FPVEdit)](https://github.com/dominic-salas/FPVEdit/releases/latest)
+[![MIT licence](https://img.shields.io/github/license/dominic-salas/FPVEdit)](LICENSE)
+[![Support on Ko-fi](https://img.shields.io/badge/Ko--fi-support-ff5e5b?logo=ko-fi&logoColor=white)](https://ko-fi.com/dvsalas)
+
 FPVEdit turns raw FPV freestyle recordings (`.ts` or `.mp4` from your goggles' DVR) into one
 montage of their best shots: flips, rolls, spins and close passes, with the crashes, menus,
 static and dull cruising left out. It runs entirely on your computer; nothing is uploaded.
 
-![The montage page: the shots on a timeline coloured by rating, one shot open for editing](docs/images/montage.png)
+![The montage page: the picked shots on a timeline coloured by rating, with background music](docs/images/montage.png)
 
 ## Download (Windows)
 
@@ -127,6 +132,11 @@ Development: see [CONTRIBUTING.md](CONTRIBUTING.md). The installer is built by
 `.github/workflows/release.yml` (standalone app with PyInstaller, FFmpeg, Inno Setup).
 `eval/annotations/` holds hand-labelled test flights and `scripts/evaluate.py` scores an
 edit against them.
+
+## Support
+
+FPVEdit is free and open source. If it saves you editing time, you can buy me a coffee on
+[Ko-fi](https://ko-fi.com/dvsalas). Bug reports and pull requests help just as much.
 
 ## Licence
 

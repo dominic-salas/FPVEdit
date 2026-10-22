@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Review page: the Music and Timeline colours labels sit on their own line, apart from
+  their hints.
+
 ## 1.0.0 (2026-10-20)
 
 First public release: a Windows installer with everything included (FFmpeg too).
