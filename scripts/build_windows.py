@@ -78,6 +78,8 @@ def copy_ffmpeg(source: Path, target: Path) -> str:
 def copy_licences(target: Path, ffmpeg_licence: str | None) -> None:
     target.mkdir(parents=True, exist_ok=True)
     shutil.copy2(ROOT / "LICENSE", target / "FPVEdit-LICENSE.txt")
+    for font_licence in (ROOT / "src" / "fpvedit" / "app" / "fonts").glob("*-OFL.txt"):
+        shutil.copy2(font_licence, target / font_licence.name)
     for package in LICENSED_PACKAGES:
         distribution = importlib.metadata.distribution(package)
         for file in distribution.files or []:
@@ -100,8 +102,7 @@ def copy_licences(target: Path, ffmpeg_licence: str | None) -> None:
         "- Qt for Python: PySide6 and shiboken6 (LGPL-3.0), used unmodified as shared "
         "libraries; you may replace them with your own build of the same version\n"
         "- NumPy (BSD-3-Clause), OpenCV (Apache-2.0)\n"
-        "- The fonts Space Grotesk and Geist Mono (SIL Open Font License 1.1; licence texts "
-        "in _internal/fpvedit/app/fonts)\n"
+        "- The fonts Space Grotesk and Geist Mono (SIL Open Font License 1.1)\n"
         f"- {ffmpeg}\n"
         "The licence texts of these packages are in this folder.\n",
         encoding="utf-8",
