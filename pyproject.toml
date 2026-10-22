@@ -23,7 +23,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/dominic-salas/FPVEdit"
+Homepage = "https://dvsalas.com/fpvedit"
+Repository = "https://github.com/dominic-salas/FPVEdit"
 Download = "https://github.com/dominic-salas/FPVEdit/releases/latest"
 Issues = "https://github.com/dominic-salas/FPVEdit/issues"
 Changelog = "https://github.com/dominic-salas/FPVEdit/blob/main/CHANGELOG.md"
