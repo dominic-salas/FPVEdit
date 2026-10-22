@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.0.1 (2026-10-22)
 
 - Review page: the Music and Timeline colours labels sit on their own line, apart from
   their hints.

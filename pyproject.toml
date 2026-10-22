@@ -1,6 +1,6 @@
 [project]
 name = "fpvedit"
-version = "1.0.0"
+version = "1.0.1"
 description = "Offline montage editor for FPV freestyle recordings: finds flips, spins and close passes"
 readme = "README.md"
 license = "MIT"
