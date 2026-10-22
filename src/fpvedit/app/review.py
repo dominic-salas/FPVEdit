@@ -414,7 +414,7 @@ class ReviewPage(QWidget):
         self._alternatives.setIconSize(QPixmap(96, 54).size())
         self._alternatives.setWordWrap(True)
         self._alternatives.currentRowChanged.connect(self._alternative_selected)
-        self._use = button("USE THIS SHOT", self._use_alternative, primary=True)
+        self._use = button("Use this shot", self._use_alternative, primary=True)
         buttons = QHBoxLayout()
         buttons.addWidget(button("CANCEL", self._close_chooser))
         buttons.addStretch(1)
@@ -974,7 +974,7 @@ class ReviewPage(QWidget):
             )
             self._alternatives.addItem(QListWidgetItem(icon, text))
         self._alternatives.blockSignals(False)
-        self._use.setText("USE INSTEAD" if mode == "swap" else "ADD TO MONTAGE")
+        self._use.setText("Use instead" if mode == "swap" else "Add to montage")
         self._use.setEnabled(bool(self._alts))
         self._side.setCurrentIndex(2)
         if self._alts:

@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- The app's look matches dvsalas.com again: amber accent, softer dark and warm light
+  backgrounds, the site's borders, rounded solid buttons and square tool buttons.
+
 ## 1.0.1 (2026-10-22)
 
 - Review page: the Music and Timeline colours labels sit on their own line, apart from

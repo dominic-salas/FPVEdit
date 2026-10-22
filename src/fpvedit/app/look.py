@@ -118,8 +118,8 @@ class StatusDot(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setFixedSize(10, 10)
-        self._idle = QColor("#6e6e6e")
-        self._accent = QColor("#e5322d")
+        self._idle = QColor("#8c8c8c")
+        self._accent = QColor("#f2a93b")
         self._busy = False
         self._phase = 0
         self._timer = QTimer(self)

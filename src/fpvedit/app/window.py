@@ -285,7 +285,8 @@ class MainWindow(QMainWindow):
     # ----- layout -----
 
     def _build(self) -> None:
-        logo = QLabel("FPV<span style='color:#e5322d'>Edit</span>")
+        logo = QLabel()
+        self._logo = logo
         logo.setProperty("role", "logo")
         self._steps = Steps()
         self._steps.chosen.connect(self._go_to_step)
@@ -338,7 +339,7 @@ class MainWindow(QMainWindow):
         intro.setMaximumWidth(560)
         buttons = QHBoxLayout()
         buttons.setSpacing(8)
-        buttons.addWidget(button("ADD CLIPS", self._choose_clips, primary=True))
+        buttons.addWidget(button("Add clips", self._choose_clips, primary=True))
         buttons.addWidget(button("ADD A FOLDER", self._choose_folder))
         buttons.addSpacing(24)
         self._quick_rate = button("★  JUST RATE SHOTS", self._rate_folder)
@@ -370,7 +371,7 @@ class MainWindow(QMainWindow):
         tools.addWidget(self._remove_clips_button)
         tools.addStretch(1)
         tools.addWidget(self._clips_summary)
-        self._find = button("FIND SHOTS  →", self._find_shots, primary=True)
+        self._find = button("Find shots  →", self._find_shots, primary=True)
         self._rate_button = button("RATE SHOTS", self._open_rating)
         list_page = DotGrid()
         self._list_page = list_page
@@ -469,7 +470,7 @@ class MainWindow(QMainWindow):
         self._notes_button = button("", self._show_notes)
         self._notes_button.setProperty("flat", True)
         self._output_label = eyebrow()
-        self._export = button("EXPORT MONTAGE  →", self._start_render, primary=True)
+        self._export = button("Export montage  →", self._start_render, primary=True)
         back = button("←  CLIPS", lambda: self._show_page(self.CLIPS))
         bar = self._action_bar(
             [back, self._notes_button],
@@ -492,7 +493,7 @@ class MainWindow(QMainWindow):
         self._done_path.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         buttons = QHBoxLayout()
         buttons.setSpacing(8)
-        buttons.addWidget(button("OPEN VIDEO", self._open_output, primary=True))
+        buttons.addWidget(button("Open video", self._open_output, primary=True))
         buttons.addWidget(button("SHOW IN FOLDER", self._show_output))
         buttons.addWidget(button("←  BACK TO REVIEW", lambda: self._show_page(self.REVIEW)))
         buttons.addWidget(button("NEW MONTAGE", self._new_montage))
@@ -1122,6 +1123,7 @@ class MainWindow(QMainWindow):
         for clips in (self._clips, self._work_clips):
             clips.card.set_theme(palette, self._fonts)
             clips.viewport().update()
+        self._logo.setText(f"FPV<span style='color:{palette.accent}'>Edit</span>")
         self._title.set_colour(palette.text)
         self._done_title.set_colour(palette.text)
         self._dot.set_colours(palette.faint, palette.accent)

@@ -1,9 +1,9 @@
-"""The app's look, after dvsalas.com: near-black (or near-white) surfaces, thin borders,
-small uppercase mono labels, one red accent.
+"""The app's look, the same as dvsalas.com: soft near-black (or warm off-white) surfaces,
+thin borders, small uppercase mono labels, one amber accent.
 
-Colours are tokens in a palette per theme; `stylesheet` turns a palette into Qt style
-sheet rules. Fonts: Geist, Geist Mono and Doto when their files are in ``fonts/`` (SIL
-Open Font License), otherwise Windows' own Segoe UI and Consolas.
+Colours are tokens in a palette per theme, with the site's values; `stylesheet` turns a
+palette into Qt style sheet rules. Fonts: Space Grotesk and Geist Mono when their files are
+in ``fonts/`` (SIL Open Font License), otherwise Windows' own Segoe UI and Consolas.
 """
 
 from __future__ import annotations
@@ -34,29 +34,29 @@ class Palette:
 
 DARK = Palette(
     name="dark",
-    bg="#0a0a0a",
-    surface="#111111",
-    surface_2="#171717",
-    border="#222222",
-    border_strong="#333333",
+    bg="#121212",
+    surface="#1a1a1a",
+    surface_2="#212121",
+    border="#2a2a2a",
+    border_strong="#3d3d3d",
     text="#ededed",
-    muted="#a1a1a1",
-    faint="#6e6e6e",
-    accent="#e5322d",
-    dot="#1c1c1c",
+    muted="#a3a3a3",
+    faint="#8c8c8c",
+    accent="#f2a93b",
+    dot="#262626",
 )
 LIGHT = Palette(
     name="light",
-    bg="#fafafa",
-    surface="#ffffff",
-    surface_2="#f2f2f2",
-    border="#e6e6e6",
-    border_strong="#d4d4d4",
-    text="#0a0a0a",
-    muted="#5c5c5c",
-    faint="#8a8a8a",
-    accent="#d71921",
-    dot="#e4e4e4",
+    bg="#f7f7f5",
+    surface="#efefec",
+    surface_2="#e7e7e3",
+    border="#dededa",
+    border_strong="#c4c4bf",
+    text="#171717",
+    muted="#5f5f5f",
+    faint="#6e6e6e",
+    accent="#b45309",
+    dot="#e2e2de",
 )
 THEMES = {DARK.name: DARK, LIGHT.name: LIGHT}
 
@@ -79,7 +79,7 @@ def load_fonts() -> Fonts:
         return next((name for name in names if name in families), names[-1])
 
     return Fonts(
-        sans=first("Geist", "Segoe UI", "Arial"),
+        sans=first("Space Grotesk", "Segoe UI", "Arial"),
         mono=first("Geist Mono", "Cascadia Mono", "Consolas", "Courier New"),
         dot="Doto" if "Doto" in families else None,
     )
@@ -147,23 +147,23 @@ def stylesheet(p: Palette, fonts: Fonts) -> str:
     QPushButton[role="step"]:enabled {{ color: {p.muted}; }}
     QPushButton[role="step"]:enabled:hover {{ color: {p.text}; }}
     QPushButton[role="step"][state="on"] {{ color: {p.text}; }}
-    QLabel[role="logo"] {{ font-family: {mono}; font-size: 12pt; font-weight: 600; }}
+    QLabel[role="logo"] {{ font-family: "{fonts.sans}"; font-size: 14pt; font-weight: 600; }}
 
-    QFrame[role="panel"] {{ background: {p.bg}; border: 1px solid {p.border};
-        border-radius: 8px; }}
+    QFrame[role="panel"] {{ background: {p.surface}; border: 1px solid {p.border};
+        border-radius: 12px; }}
     QFrame[role="header"] {{ background: {p.bg}; border: none;
         border-bottom: 1px solid {p.border}; }}
     QFrame[role="footer"] {{ background: {p.bg}; border: none;
         border-top: 1px solid {p.border}; }}
 
-    QPushButton {{ background: transparent; color: {p.muted}; border: 1px solid {p.border};
-        border-radius: 6px; padding: 6px 12px; font-family: {mono}; font-size: 8pt; }}
-    QPushButton:hover {{ color: {p.text}; border-color: {p.border_strong};
-        background: {p.surface_2}; }}
-    QPushButton:pressed {{ background: {p.surface}; }}
+    QPushButton {{ background: transparent; color: {p.muted}; border: 1px solid {p.border_strong};
+        border-radius: 0; padding: 6px 10px; font-family: {mono}; font-size: 8pt; }}
+    QPushButton:hover {{ color: {p.text}; border-color: {p.muted}; background: {p.surface}; }}
+    QPushButton:pressed {{ background: {p.surface_2}; }}
     QPushButton:disabled {{ color: {p.faint}; border-color: {p.border}; background: transparent; }}
     QPushButton[primary="true"] {{ background: {p.text}; color: {p.bg}; border-color: {p.text};
-        font-weight: 600; }}
+        border-radius: 8px; padding: 7px 16px; font-family: "{fonts.sans}"; font-size: 10pt;
+        font-weight: 500; }}
     QPushButton[primary="true"]:hover {{ background: {p.muted}; border-color: {p.muted}; }}
     QPushButton[primary="true"]:disabled {{ background: {p.surface_2}; color: {p.faint};
         border-color: {p.border}; }}
@@ -172,14 +172,14 @@ def stylesheet(p: Palette, fonts: Fonts) -> str:
     QPushButton[flat="true"]:hover {{ border-color: {p.border}; }}
 
     QListWidget {{ background: transparent; border: none; outline: none; }}
-    QListWidget::item {{ color: {p.text}; border: 1px solid transparent; border-radius: 6px;
+    QListWidget::item {{ color: {p.text}; border: 1px solid transparent; border-radius: 8px;
         padding: 4px; margin: 2px 0; }}
     QListWidget::item:hover {{ background: {p.surface}; border-color: {p.border}; }}
     QListWidget::item:selected {{ background: {p.surface_2}; border-color: {p.border_strong};
         color: {p.text}; }}
 
     QComboBox, QDoubleSpinBox, QLineEdit {{ background: {p.surface}; color: {p.text};
-        border: 1px solid {p.border}; border-radius: 6px; padding: 4px 8px;
+        border: 1px solid {p.border_strong}; border-radius: 8px; padding: 4px 8px;
         font-family: {mono}; font-size: 8pt; }}
     QComboBox:hover, QDoubleSpinBox:hover {{ border-color: {p.border_strong}; }}
     QComboBox QAbstractItemView {{ background: {p.surface}; border: 1px solid {p.border_strong};
@@ -204,10 +204,11 @@ def stylesheet(p: Palette, fonts: Fonts) -> str:
     QSplitter::handle:vertical {{ height: 12px; }}
 
     QMenuBar {{ background: {p.bg}; color: {p.muted}; font-family: {mono}; font-size: 8pt; }}
-    QMenuBar::item {{ padding: 4px 10px; border-radius: 6px; }}
+    QMenuBar::item {{ padding: 4px 10px; border-radius: 8px; }}
     QMenuBar::item:selected {{ background: {p.surface_2}; color: {p.text}; }}
-    QMenu {{ background: {p.surface}; border: 1px solid {p.border_strong}; padding: 4px; }}
-    QMenu::item {{ padding: 6px 24px 6px 12px; border-radius: 4px; color: {p.text}; }}
+    QMenu {{ background: {p.surface}; border: 1px solid {p.border_strong}; padding: 4px;
+        border-radius: 8px; }}
+    QMenu::item {{ padding: 6px 24px 6px 12px; border-radius: 6px; color: {p.text}; }}
     QMenu::item:selected {{ background: {p.surface_2}; }}
     QMenu::separator {{ height: 1px; background: {p.border}; margin: 4px 6px; }}
 
