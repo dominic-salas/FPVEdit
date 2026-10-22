@@ -1,9 +1,12 @@
 # Changelog
 
-## Unreleased
+## 1.1.0 (2026-10-22)
 
-- The app's look matches dvsalas.com again: amber accent, softer dark and warm light
-  backgrounds, the site's borders, rounded solid buttons and square tool buttons.
+- A new look, the same as dvsalas.com: amber accent, softer dark and warm light
+  backgrounds, thin borders, rounded solid buttons and square tool buttons.
+- The fonts Space Grotesk and Geist Mono are included (SIL Open Font License), so the app
+  looks the same on every computer.
+- New screenshots in the README.
 
 ## 1.0.1 (2026-10-22)
 

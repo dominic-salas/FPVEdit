@@ -144,6 +144,7 @@ FPVEdit is free and open source. If it saves you editing time, you can buy me a 
 
 FPVEdit is MIT licensed ([LICENSE](LICENSE)). The Windows build includes FFmpeg (GPL build,
 run as a separate program; source at https://ffmpeg.org), Qt for Python (LGPL-3.0), Python,
-NumPy and OpenCV; their licences are in the `licenses` folder of the installation. The
+NumPy, OpenCV and the fonts Space Grotesk and Geist Mono (SIL Open Font License); their
+licences are in the `licenses` folder of the installation. The
 optional image model's weights are Google's SigLIP 2 (Apache-2.0), downloaded on first use
 and never shipped.

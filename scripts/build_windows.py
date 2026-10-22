@@ -100,6 +100,8 @@ def copy_licences(target: Path, ffmpeg_licence: str | None) -> None:
         "- Qt for Python: PySide6 and shiboken6 (LGPL-3.0), used unmodified as shared "
         "libraries; you may replace them with your own build of the same version\n"
         "- NumPy (BSD-3-Clause), OpenCV (Apache-2.0)\n"
+        "- The fonts Space Grotesk and Geist Mono (SIL Open Font License 1.1; licence texts "
+        "in _internal/fpvedit/app/fonts)\n"
         f"- {ffmpeg}\n"
         "The licence texts of these packages are in this folder.\n",
         encoding="utf-8",
@@ -121,6 +123,7 @@ def pyinstaller(
             *("--name", name, "--icon", str(icon)),
             *("--distpath", str(out), "--workpath", str(build / "work" / name)),
             *("--specpath", str(build), "--exclude-module", "tkinter"),
+            *("--collect-data", "fpvedit"),  # the app's fonts, read at run time
             str(launcher),
         ],
         check=True,
