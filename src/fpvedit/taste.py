@@ -14,6 +14,12 @@ predicted from all the others), against the app's own stars as the alternative: 
 or inconsistent ratings the app's own rating stays, and the learned taste takes over only
 when it predicts the ratings better. Fitting takes well under a second, so it is redone
 whenever shots are found.
+
+The pilot's edits teach it too, more weakly than a star (`EDITS`): a shot of the app's that
+they removed counts as a low rating, one they exported as it was or added as a high one.
+They are weighted in the fit and in the leave-one-out comparison alike, so edits alone can
+also teach a taste, and the app's own rating still stays unless the taste predicts them
+better.
 """
 
 from __future__ import annotations
@@ -33,6 +39,14 @@ from fpvedit.rating import Quality
 FloatArray = NDArray[np.float64]
 
 MIN_RATINGS = 8  # fewer than this and the app's own rating is used as it is
+# What an edit says, as (stars, weight against a star rating's 1). Trims are only kept.
+EDITS = {
+    "removed": (2, 0.3),
+    "exported": (4, 0.2),
+    "added": (4, 0.6),
+    "marked": (4, 0.6),
+}
+EXACT_UP_TO = 80  # more samples than this: leave-one-out from the closed form
 STRENGTHS = (1.0, 3.0, 10.0, 30.0, 100.0, 300.0, 1000.0)  # ridge penalties tried
 FLIPS = ("flip", "roll", "power loop")
 NOTES = (
@@ -55,6 +69,7 @@ class RatedShot:
     stars: int  # the pilot's own, 1-5
     recording: Path | None = None  # where it came from, to see its picture later
     start: float = 0.0
+    weight: float = 1.0  # a star rating's 1; an edit's is lower (`EDITS`)
 
 
 class Ratings(Protocol):
@@ -124,19 +139,21 @@ class Taste:
     @classmethod
     def fit(cls, rated: Sequence[RatedShot]) -> Taste:
         y = np.array([float(r.stars) for r in rated])
+        w = np.array([r.weight for r in rated])
         base = np.array([_base(r.quality) for r in rated])
-        base_error = float(np.mean(np.abs(y - base))) if len(rated) else 0.0
+        base_error = _mean(np.abs(y - base), w) if len(rated) else 0.0
         if len(rated) < MIN_RATINGS:
             return cls(None, None, len(rated), base_error, base_error, False)
         x = np.array([features(r.quality, r.tricks, r.duration) for r in rated])
-        plain, plain_error = _choose(x, y, base_error)
+        plain, plain_error = _choose(x, y, w, base_error)
         seen = [r for r in rated if r.quality.picture is not None]
         pictured, pictured_error = None, base_error
         if len(seen) >= MIN_RATINGS:
             xp = np.array([features(r.quality, r.tricks, r.duration, picture=True) for r in seen])
             yp = np.array([float(r.stars) for r in seen])
-            seen_base = float(np.mean(np.abs(yp - np.array([_base(r.quality) for r in seen]))))
-            pictured, pictured_error = _choose(xp, yp, min(seen_base, plain_error))
+            wp = np.array([r.weight for r in seen])
+            seen_base = _mean(np.abs(yp - np.array([_base(r.quality) for r in seen])), wp)
+            pictured, pictured_error = _choose(xp, yp, wp, min(seen_base, plain_error))
         uses_picture = pictured is not None
         error = pictured_error if uses_picture else plain_error
         return cls(plain, pictured, len(rated), error, base_error, uses_picture)
@@ -150,27 +167,58 @@ class Taste:
         return _base(quality)
 
 
-def _fit(x: FloatArray, y: FloatArray, strength: float) -> _Model:
-    mean = x.mean(axis=0)
-    scale = x.std(axis=0)
+def _mean(values: FloatArray, weights: FloatArray) -> float:
+    return float(np.sum(values * weights) / np.sum(weights))
+
+
+def _fit(x: FloatArray, y: FloatArray, w: FloatArray, strength: float) -> _Model:
+    """Ridge regression with each sample weighted by ``w``."""
+    mean = (w @ x) / w.sum()
+    scale = np.sqrt((w @ (x - mean) ** 2) / w.sum())
     scale[scale < 1e-9] = 1.0
     z = (x - mean) / scale
-    offset = float(y.mean())
-    # Dual form: fewer ratings than features (a few dozen against ~35) is the usual case.
-    alpha = np.linalg.solve(z @ z.T + strength * np.eye(len(z)), y - offset)
-    return _Model(mean, scale, offset, np.asarray(z.T @ alpha, dtype=np.float64))
+    offset = float(w @ y / w.sum())
+    # Minimising sum(w (y - z b)^2) + strength |b|^2. With fewer samples than features (a
+    # few dozen ratings against ~35) the dual form is smaller: b = z.T a with
+    # (W z z.T + s I) a = W y; with months of edits, the primal (z.T W z + s I) b = z.T W y.
+    if len(z) <= z.shape[1]:
+        gram = w[:, None] * (z @ z.T) + strength * np.eye(len(z))
+        weights = z.T @ np.linalg.solve(gram, w * (y - offset))
+    else:
+        inner = z.T @ (w[:, None] * z) + strength * np.eye(z.shape[1])
+        weights = np.linalg.solve(inner, z.T @ (w * (y - offset)))
+    return _Model(mean, scale, offset, np.asarray(weights, dtype=np.float64))
 
 
-def _choose(x: FloatArray, y: FloatArray, to_beat: float) -> tuple[_Model | None, float]:
+def _left_out(x: FloatArray, y: FloatArray, w: FloatArray, strength: float) -> FloatArray:
+    """Each sample's prediction from a fit to all the others."""
+    if len(y) <= EXACT_UP_TO:
+        keep = ~np.eye(len(y), dtype=bool)
+        return np.array(
+            [
+                _fit(x[keep[i]], y[keep[i]], w[keep[i]], strength).predict(x[i])
+                for i in range(len(y))
+            ]
+        )
+    # Closed form (centring kept from the full fit): residual / (1 - leverage).
+    model = _fit(x, y, w, strength)
+    z = (x - model.mean) / model.scale
+    inner = z.T @ (w[:, None] * z) + strength * np.eye(z.shape[1])
+    leverage = w * np.einsum("ij,ji->i", z, np.linalg.solve(inner, z.T))
+    residual = y - (model.offset + z @ model.weights)
+    return np.asarray(
+        np.clip(y - residual / np.maximum(1.0 - leverage, 1e-6), 1, 5), dtype=np.float64
+    )
+
+
+def _choose(
+    x: FloatArray, y: FloatArray, w: FloatArray, to_beat: float
+) -> tuple[_Model | None, float]:
     """The ridge strength that predicts left-out ratings best, if it beats ``to_beat``."""
     best: tuple[float, float | None] = (to_beat, None)
     for tried in STRENGTHS:
-        errors = []
-        for i in range(len(y)):
-            keep = np.arange(len(y)) != i
-            errors.append(abs(_fit(x[keep], y[keep], tried).predict(x[i]) - y[i]))
-        loo = float(np.mean(errors))
+        loo = _mean(np.abs(_left_out(x, y, w, tried) - y), w)
         if loo < best[0] - 1e-9:
             best = (loo, tried)
     error, strength = best
-    return (_fit(x, y, strength) if strength is not None else None), error
+    return (_fit(x, y, w, strength) if strength is not None else None), error

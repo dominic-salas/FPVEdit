@@ -25,6 +25,7 @@ class ShotList:
     ) -> None:
         """``durations`` gives each clip's analysed length, which trims stay inside."""
         self._shots = tuple(shots)
+        self._proposed = tuple(shots)  # what the app picked, to compare the edit against
         self._candidates = tuple(candidates)
         self._durations = dict(durations)
         self._history: list[tuple[Shot, ...]] = []
@@ -128,6 +129,34 @@ class ShotList:
             if len(chosen) == limit:
                 break
         return chosen
+
+    def outcome(self) -> list[tuple[Shot, str]]:
+        """What the edit says about each shot: the app's picks that were "removed" (or
+        swapped out), kept as they were ("exported"), or only "trimmed" (with their new
+        times), and the shots "added" from the candidates.
+
+        Read when the montage is exported, so an undone edit says nothing.
+        """
+        final = set(self._shots)
+        kept = [s for s in self._proposed if s in final]
+        gone = [s for s in self._proposed if s not in final]
+        result = [(s, "exported") for s in kept]
+        for shot in self._shots:
+            if shot in self._proposed:
+                continue
+            was = next((s for s in gone if _mostly_same(s, shot) and _same_moments(s, shot)), None)
+            if was is not None:
+                gone.remove(was)
+                result.append((shot, "trimmed"))
+            else:
+                result.append((shot, "added"))
+        result.extend((s, "removed") for s in gone)
+        return result
+
+
+def _same_moments(a: Shot, b: Shot) -> bool:
+    """Whether a trim of one could have made the other (a trim only drops moments)."""
+    return set(a.moments) <= set(b.moments) or set(b.moments) <= set(a.moments)
 
 
 def _mostly_same(a: Shot, b: Shot) -> bool:

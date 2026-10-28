@@ -492,14 +492,20 @@ def keep_rated(
             "the image model is not installed (uv sync --extra ml), so the ratings do not "
             "include scenery"
         )
+    candidates = plan.candidates
     if ratings is not None:
         stars_for = taste_predictor(plan.infos, ratings, Taste.fit(rated))
-        shots = tuple(
-            dataclasses.replace(s, quality=dataclasses.replace(s.quality, taste=stars_for(s)))
-            if s.quality is not None
-            else s
-            for s in shots
-        )
+
+        def tasted(found: tuple[Shot, ...]) -> tuple[Shot, ...]:
+            return tuple(
+                dataclasses.replace(s, quality=dataclasses.replace(s.quality, taste=stars_for(s)))
+                if s.quality is not None
+                else s
+                for s in found
+            )
+
+        # The candidates too, so the shots offered to add are ordered by the same taste.
+        shots, candidates = tasted(shots), tasted(candidates)
     stars = [s.quality.stars if s.quality is not None else 3 for s in shots]
     bar = min(min_stars, max(stars))
     kept = tuple(s for s, n in zip(shots, stars, strict=True) if n >= bar)
@@ -508,7 +514,9 @@ def keep_rated(
         notes.append(
             f"left out {len(left_out)} shot(s) rated below {bar} stars; they can be added back"
         )
-    return dataclasses.replace(plan, shots=kept, left_out=left_out, warnings=tuple(notes))
+    return dataclasses.replace(
+        plan, candidates=candidates, shots=kept, left_out=left_out, warnings=tuple(notes)
+    )
 
 
 # Each analysis runs one FFmpeg decode (multi-threaded) and one Python process; a quarter
