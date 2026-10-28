@@ -908,9 +908,9 @@ class MainWindow(QMainWindow):
         config = PipelineConfig().montage  # every distinct shot; no target length
         plan = combine_clips(infos, results, config, warnings)
         self._end_finding()
-        learn = self._settings.learn_taste
-        min_stars = self._settings.min_stars if learn else 1
-        ratings = self._review.ratings if learn else None
+        # The taste is always learned (ratings and edits); the setting only leaves out shots.
+        min_stars = self._settings.min_stars if self._settings.learn_taste else 1
+        ratings = self._review.ratings
         if not plan.shots or not scenery.available():
             self._plan_ready(keep_rated(self._tools, plan, min_stars=min_stars, ratings=ratings))
             return
@@ -1094,6 +1094,7 @@ class MainWindow(QMainWindow):
         final, length, elapsed, where = result
         self._last_output = final
         self._output, self._force = None, False
+        self._review.note_exported()
         self._done_text.setText(
             f"Your montage is ready: {timecode(length)} long, "
             f"{plural(len(self._current_shots()), 'shot')}. "

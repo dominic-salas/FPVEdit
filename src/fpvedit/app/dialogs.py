@@ -98,7 +98,7 @@ class SettingsDialog(QDialog):
         self._rating.setChecked(settings.colour_by_rating)
         form.addRow("Review", self._rating)
         self._learn = QCheckBox(
-            "Learn my taste from my ratings and leave out shots I'd likely dislike "
+            "Leave out shots I'd likely dislike, as learned from my ratings and edits "
             "(from the next montage on)"
         )
         self._learn.setChecked(settings.learn_taste)
@@ -145,8 +145,10 @@ class SettingsDialog(QDialog):
 
     def _show_ratings(self) -> None:
         count = self._ratings.count if self._ratings is not None else 0
+        edits = self._ratings.edit_count if self._ratings is not None else 0
         self._ratings_label.setText(
-            f"{count} shot{'s' if count != 1 else ''} rated (kept on this computer only)"
+            f"{count} shot{'s' if count != 1 else ''} rated, {edits} learned from your edits "
+            "(kept on this computer only)"
         )
 
     def _clear_ratings(self) -> None:
@@ -155,8 +157,8 @@ class SettingsDialog(QDialog):
         answer = QMessageBox.question(
             self,
             "Clear my ratings",
-            f"Forget all {self._ratings.count} of your shot ratings? What was learned from "
-            "them goes too. This cannot be undone.",
+            f"Forget all {self._ratings.count} of your shot ratings and what your edits "
+            "taught? What was learned from them goes too. This cannot be undone.",
         )
         if answer == QMessageBox.StandardButton.Yes:
             try:

@@ -9,6 +9,7 @@ moves it. Every edit goes through `ShotList`, so it can be undone.
 from __future__ import annotations
 
 import functools
+import logging
 import queue
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -64,6 +65,9 @@ HINTS = (
 )
 PLAY_COLOUR = HINTS[2][2]
 FULL_SCREEN_COLOUR = HINTS[3][2]
+
+
+log = logging.getLogger("fpvedit.app")
 
 
 def hint_bar() -> QWidget:
@@ -613,6 +617,19 @@ class ReviewPage(QWidget):
         self._selected = None
         self._say("Shot removed. Ctrl+Z brings it back.")
         self._edited(start)
+
+    def note_exported(self) -> None:
+        """The montage was exported: remember what the edit said about its shots."""
+        if self._shots is None:
+            return
+        outcome = [(self._info(shot).path, shot, what) for shot, what in self._shots.outcome()]
+        try:
+            self._mine.note_edits(outcome)
+        except OSError as exc:  # the montage itself is fine; only the lesson is lost
+            log.warning("could not save what the edit said: %s", exc)
+            self._say(f"Your edits could not be saved to learn from ({exc}).")
+            return
+        log.info("noted %d edits", len(outcome))
 
     # ----- state -----
 

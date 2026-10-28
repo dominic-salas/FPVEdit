@@ -199,6 +199,15 @@ def test_window_lists_and_edits_the_shots(clips: tuple[Path, Path], tmp_path: Pa
         for other in others:
             assert other.quality is not None
             assert taste(other) == float(other.quality.stars)
+        # An export remembers what the edit said; a file it cannot write loses only that.
+        review._picked(0, 0.0)
+        review.remove_selected()
+        review.note_exported()
+        edits = (tmp_path / "my-edits.jsonl").read_text(encoding="utf-8")
+        assert '"edit": "removed"' in edits
+        review._mine.edits_file = tmp_path  # a folder: appending to it fails
+        review.note_exported()
+        window._undo()
         if len(plan.shots) > 1:
             review._moved(0, len(plan.shots))  # drag the first shot to the end
             assert window._current_shots()[-1] == plan.shots[0]
@@ -272,7 +281,12 @@ def test_window_analyses_clips_in_the_background(clips: tuple[Path, Path], tmp_p
         window._find_shots()  # nothing left to analyse: the shots are picked at once
         wait(lambda: not window._busy(), 5)
         expected = plan_montage(tools, [probe(tools, p) for p in paths], workers=1)
-        assert window._current_shots() == expected.shots
+
+        def where(found: tuple[Shot, ...]) -> list[tuple[int, float, float]]:
+            return [(s.clip, s.start, s.end) for s in found]
+
+        # The same shots; the window's also carry the learned taste (always learned).
+        assert where(window._current_shots()) == where(expected.shots)
         assert window._pages.currentIndex() == window.REVIEW
         # "My ratings" off (the default): every shot found is kept, whatever its stars.
         assert window._plan is not None and window._plan.left_out == ()
@@ -305,7 +319,7 @@ def test_window_analyses_clips_in_the_background(clips: tuple[Path, Path], tmp_p
         window._find_shots()
         wait(lambda: not window._busy(), 5)
         again = plan_montage(tools, [probe(tools, p) for p in window.clip_paths()], workers=1)
-        assert window._current_shots() == again.shots
+        assert where(window._current_shots()) == where(again.shots)
     finally:
         window.close()
         app.processEvents()
