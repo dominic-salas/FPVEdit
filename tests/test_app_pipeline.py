@@ -208,6 +208,26 @@ def test_window_lists_and_edits_the_shots(clips: tuple[Path, Path], tmp_path: Pa
         review._mine.edits_file = tmp_path  # a folder: appending to it fails
         review.note_exported()
         window._undo()
+        # A missed shot: play a whole recording, mark a moment no shot shows.
+        review._mine.edits_file = tmp_path / "my-edits.jsonl"
+        review._open_finder()
+        assert review._choosing == "find" and review._mode == "clip"
+        clip = review._searched()
+        assert clip is not None
+        taken = [(s.start, s.end) for s in window._current_shots() if s.clip == clip]
+        free = [
+            t / 2
+            for t in range(int(plan.clips[clip].analysed_duration * 2))
+            if all(not a - 3 <= t / 2 < b + 3 for a, b in taken)
+        ]
+        assert free, "the fixture leaves room for a marked shot"
+        review._find_moved(free[len(free) // 2])
+        review.mark_here()
+        assert review._choosing is None
+        assert len(window._current_shots()) == len(plan.shots) + 1
+        review.note_exported()
+        assert '"edit": "marked"' in (tmp_path / "my-edits.jsonl").read_text(encoding="utf-8")
+        window._undo()
         if len(plan.shots) > 1:
             review._moved(0, len(plan.shots))  # drag the first shot to the end
             assert window._current_shots()[-1] == plan.shots[0]

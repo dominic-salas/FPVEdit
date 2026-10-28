@@ -10,7 +10,7 @@ from __future__ import annotations
 import dataclasses
 from collections.abc import Iterable, Sequence
 
-from fpvedit.montage import Shot, strength
+from fpvedit.montage import CutMap, Shot, shot_at, strength
 
 MIN_SHOT_S = 1.0  # a trim never makes a shot shorter than this
 
@@ -21,16 +21,50 @@ def overlaps(a: Shot, b: Shot) -> bool:
 
 class ShotList:
     def __init__(
-        self, shots: Sequence[Shot], candidates: Sequence[Shot], durations: dict[int, float]
+        self,
+        shots: Sequence[Shot],
+        candidates: Sequence[Shot],
+        durations: dict[int, float],
+        cuts: dict[int, CutMap] | None = None,
     ) -> None:
-        """``durations`` gives each clip's analysed length, which trims stay inside."""
+        """``durations`` gives each clip's analysed length, which trims stay inside;
+        ``cuts`` what a shot marked by hand in each clip needs (`mark`)."""
         self._shots = tuple(shots)
         self._proposed = tuple(shots)  # what the app picked, to compare the edit against
         self._candidates = tuple(candidates)
         self._durations = dict(durations)
+        self._cuts = dict(cuts or {})
+        self._marked: set[Shot] = set()  # built by the pilot with `mark`
         self._history: list[tuple[Shot, ...]] = []
         moments = {(s.clip, m) for s in (*shots, *candidates) for m in s.moments}
         self._moments = sorted(moments, key=lambda cm: (cm[0], cm[1].time))
+
+    def can_mark(self, clip: int) -> bool:
+        return clip in self._cuts
+
+    def clip_duration(self, clip: int) -> float:
+        return self._durations.get(clip, 0.0)
+
+    def mark(self, clip: int, time: float) -> int:
+        """Build a shot of ``clip`` around ``time`` (seconds into the recording), in the
+        room between that clip's other shots, and add it; returns its position.
+
+        Raises ValueError when the clip cannot be marked in or there is no room there.
+        """
+        cuts = self._cuts.get(clip)
+        if cuts is None:
+            raise ValueError("that clip has no analysis to build a shot from")
+        same = [s for s in self._shots if s.clip == clip]
+        if any(s.start <= time < s.end for s in same):
+            raise ValueError("that moment is already in the montage")
+        low = max([0.0, *(s.end for s in same if s.end <= time)])
+        high = min([self._durations.get(clip, time), *(s.start for s in same if s.start > time)])
+        found = [m for c, m in self._moments if c == clip]
+        shot = shot_at(clip, time, cuts, found, (low, high))
+        if shot is None:
+            raise ValueError("there is no room for a shot there")
+        self._marked.add(shot)
+        return self.add(shot)
 
     @property
     def shots(self) -> tuple[Shot, ...]:
@@ -106,7 +140,9 @@ class ShotList:
         self._set(shot if i == index else s for i, s in enumerate(self._shots))
 
     def alternatives(self, index: int | None = None, limit: int = 12) -> list[Shot]:
-        """Candidates that fit beside the current shots, best first, without near-copies.
+        """Candidates that fit beside the current shots, without near-copies: the pilot's
+        predicted stars first (`taste.py`, learned from their ratings and edits), then
+        what the shot shows.
 
         With ``index``: those from the same clip as that shot, which could replace it.
         Without: those from every clip, which could be added.
@@ -122,7 +158,7 @@ class ShotList:
             and (current is None or not _mostly_same(c, current))
         ]
         chosen: list[Shot] = []
-        for candidate in sorted(pool, key=lambda c: (-strength(c), c.clip, c.start)):
+        for candidate in sorted(pool, key=lambda c: (-_stars(c), -strength(c), c.clip, c.start)):
             if any(overlaps(candidate, c) for c in chosen):
                 continue  # candidates overlap each other a lot; show each moment once
             chosen.append(candidate)
@@ -133,7 +169,7 @@ class ShotList:
     def outcome(self) -> list[tuple[Shot, str]]:
         """What the edit says about each shot: the app's picks that were "removed" (or
         swapped out), kept as they were ("exported"), or only "trimmed" (with their new
-        times), and the shots "added" from the candidates.
+        times), the shots "added" from the candidates and those "marked" by hand.
 
         Read when the montage is exported, so an undone edit says nothing.
         """
@@ -149,9 +185,15 @@ class ShotList:
                 gone.remove(was)
                 result.append((shot, "trimmed"))
             else:
-                result.append((shot, "added"))
+                result.append((shot, "marked" if shot in self._marked else "added"))
         result.extend((s, "removed") for s in gone)
         return result
+
+
+def _stars(shot: Shot) -> float:
+    if shot.quality is None:
+        return 3.0
+    return shot.quality.taste if shot.quality.taste is not None else float(shot.quality.stars)
 
 
 def _same_moments(a: Shot, b: Shot) -> bool:
