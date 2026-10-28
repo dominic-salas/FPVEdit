@@ -48,7 +48,7 @@ from fpvedit.media import (
     probe,
     probe_audio,
 )
-from fpvedit.montage import MontageConfig, Shot, candidate_shots, pick_shots
+from fpvedit.montage import CutMap, MontageConfig, Shot, candidate_shots, cut_map, pick_shots
 from fpvedit.picture import PictureConfig, decoded_size
 from fpvedit.render import (
     EncodeConfig,
@@ -111,13 +111,15 @@ class Clip:
 
     Only what rendering needs is kept: the per-frame measurements of each clip are
     dropped once its candidate shots are found, so memory does not grow with the number
-    of clips.
+    of clips. ``cuts`` keeps the little a shot built by hand needs (about 2.6 MB per ten
+    minutes at 60 fps).
     """
 
     index: int
     info: MediaInfo
     times: NDArray[np.float64] | None
     analysed_duration: float
+    cuts: CutMap | None = field(default=None, compare=False, repr=False)
 
 
 @dataclass(frozen=True)
@@ -571,12 +573,18 @@ def _plan_clip(job: ClipJob, step: Callable[[float], None]) -> ClipResult:
     except NoFlightContentError as exc:
         return ClipResult(job.index, None, (), (f"{name}: nothing usable ({exc})",))
     warnings = [f"{name}: {note}" for note in (*_gap_warnings(info, times), *analysis.warnings)]
+    cuts = cut_map(analysis.measurements, analysis.selection, job.montage, job.config.selection)
     found = candidate_shots(
-        job.index, analysis.measurements, analysis.selection, job.montage, job.config.selection
+        job.index,
+        analysis.measurements,
+        analysis.selection,
+        job.montage,
+        job.config.selection,
+        cuts,
     )
     if not found:
         warnings.append(f"{name}: no flip, spin or close pass to build a shot around")
-    clip = Clip(job.index, info, times, analysis.analysed_duration)
+    clip = Clip(job.index, info, times, analysis.analysed_duration, cuts)
     return ClipResult(job.index, clip, tuple(found), tuple(warnings))
 
 

@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- **Find a missed shot**: on the montage page, play any whole recording, and at the moment
+  you want press M (or Mark a shot here): a shot is built around it, cut in calm moments
+  and out of any turn, and added to the montage.
+- **FPVEdit learns from your edits**: when you export, what you did is remembered on this
+  computer (shots you removed, kept, added or marked) and teaches the taste, more weakly
+  than a star rating. The taste is always learned now; Settings > My ratings only decides
+  whether shots predicted low are left out.
+- Shots offered to add or swap come in the order of your predicted stars.
+
 ## 1.1.0 (2026-10-22)
 
 - A new look, the same as dvsalas.com: amber accent, softer dark and warm light

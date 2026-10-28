@@ -151,6 +151,9 @@ class MontageConfig:
     min_gap_s: float = 4.0  # between two shots of the same clip
 
 
+MIN_MARKED_S = 2.0  # the shortest shot a mark builds
+
+
 def usable_footage(
     measurements: Measurements, selection: Selection, config: SelectionConfig | None = None
 ) -> BoolArray:
@@ -233,20 +236,31 @@ def _peaks(values: FloatArray, threshold: float, gap_s: float, fps: float) -> li
     return sorted(chosen)
 
 
-def candidate_shots(
-    clip: int,
+@dataclass(frozen=True, eq=False)
+class CutMap:
+    """What building a shot in one clip needs, per frame, once its measurements are gone:
+    where a shot may be, where it can be cut, and what its rating reads. Kept with the
+    clip so the pilot can build a shot at any moment (`shot_at`)."""
+
+    usable: BoolArray
+    calm: FloatArray  # deg/s, a cut goes to the calmest frame nearby
+    turning: BoolArray  # a cut never falls in these frames
+    signals: ClipSignals
+
+    @property
+    def fps(self) -> float:
+        return self.signals.fps
+
+
+def cut_map(
     measurements: Measurements,
     selection: Selection,
     config: MontageConfig | None = None,
     selection_config: SelectionConfig | None = None,
-) -> list[Shot]:
-    """Every shot worth considering in one clip (they overlap; `pick_shots` chooses)."""
+) -> CutMap:
     config = config or MontageConfig()
     fps = measurements.fps
     usable = usable_footage(measurements, selection, selection_config)
-    moments = find_moments(measurements, usable, config)
-    if not moments:
-        return []
     motion = MotionSummary(measurements)
     # Frames whose motion could not be measured (blur in a fast flip) are not calm.
     rate = np.where(np.isnan(measurements.motion).any(axis=1), np.inf, motion.rate)
@@ -255,10 +269,6 @@ def candidate_shots(
     fast = rolling_median(rate, max(1, round(0.1 * fps))) >= config.fast_turn_rate
     near_fast = window_sum(fast.astype(np.float64), 2 * round(config.fast_turn_gap_s * fps) + 1) > 0
     turning = (calm >= config.turning_rate) | near_fast
-    shortest = round(config.shot_min_s * fps)
-    longest = round(config.shot_max_s * fps)
-    reach = round(config.snap_s * fps)
-    lengths = {shortest, round((shortest + longest) / 2), longest}
     signals = ClipSignals(
         fps=fps,
         rate=rolling_median(motion.rate, max(1, round(0.1 * fps))),
@@ -269,6 +279,31 @@ def candidate_shots(
         brightness=np.nan_to_num(measurements.brightness),
         crashes=tuple(c.start for c in selection.cuts if c.reason is CutReason.CRASH),
     )
+    return CutMap(usable, calm, turning, signals)
+
+
+def candidate_shots(
+    clip: int,
+    measurements: Measurements,
+    selection: Selection,
+    config: MontageConfig | None = None,
+    selection_config: SelectionConfig | None = None,
+    cuts: CutMap | None = None,
+) -> list[Shot]:
+    """Every shot worth considering in one clip (they overlap; `pick_shots` chooses)."""
+    config = config or MontageConfig()
+    cuts = cuts or cut_map(measurements, selection, config, selection_config)
+    fps = measurements.fps
+    usable = cuts.usable
+    moments = find_moments(measurements, usable, config)
+    if not moments:
+        return []
+    motion = MotionSummary(measurements)
+    calm, turning, signals = cuts.calm, cuts.turning, cuts.signals
+    shortest = round(config.shot_min_s * fps)
+    longest = round(config.shot_max_s * fps)
+    reach = round(config.snap_s * fps)
+    lengths = {shortest, round((shortest + longest) / 2), longest}
     shots: dict[tuple[int, int], Shot] = {}
     for low, high in runs(usable):
         if high - low < shortest:
@@ -299,6 +334,60 @@ def candidate_shots(
                     quality = rate_shot(shot.start, shot.end, named, signals)
                     shots[(start, end)] = dataclasses.replace(shot, quality=quality)
     return list(shots.values())
+
+
+def shot_at(
+    clip: int,
+    time: float,
+    cuts: CutMap,
+    moments: Sequence[Moment],
+    within: tuple[float, float],
+    config: MontageConfig | None = None,
+) -> Shot | None:
+    """A shot of ``clip`` built around ``time`` (seconds), as the pilot marked it: centred
+    on it, ``shot_min_s``-``shot_max_s`` long where there is room, its ends in calm frames
+    and out of any turn, and inside ``within`` (the room between the
+    clip's other shots). It stays in the stretch of usable flying around ``time`` when
+    there is one; a mark outside any (a ground tap the analysis cut) uses ``within`` alone.
+    ``moments`` are those found in the clip; the ones it shows are rated with it. None
+    when ``within`` has no room for `MIN_MARKED_S` around ``time``.
+    """
+    config = config or MontageConfig()
+    fps, count = cuts.fps, len(cuts.usable)
+    low, high = max(0, round(within[0] * fps)), min(count, round(within[1] * fps))
+    at = min(max(round(time * fps), low), high - 1)
+    if high - low < round(MIN_MARKED_S * fps) or not low <= at < high:
+        return None
+    if cuts.usable[at]:
+        run_low, run_high = next((a, b) for a, b in runs(cuts.usable) if a <= at < b)
+        if run_high - run_low >= round(MIN_MARKED_S * fps):
+            low, high = max(low, run_low), min(high, run_high)
+    shortest = min(round(config.shot_min_s * fps), high - low)
+    longest = min(round(config.shot_max_s * fps), high - low)
+    length = round((shortest + longest) / 2)
+    start = min(max(at - length // 2, low), high - length)
+    reach = round(config.snap_s * fps)
+    start = _calmest(cuts.calm, start, reach, low, high)
+    end = _calmest(cuts.calm, start + length, reach, low, high)
+    end = min(max(end, start + shortest), start + longest, high)
+    # Each end out of any turn: past it where there is room (the whole turn shows),
+    # otherwise back before it. A mark is the pilot's choice, so the length may give.
+    turning = cuts.turning
+    first, last = start, end
+    if turning[last - 1]:
+        after = _turn_end(turning, last - 1) + 1
+        last = after if after <= high else _turn_start(turning, last - 1)
+    if turning[first]:
+        before = _turn_start(turning, first) - 1
+        first = before if before >= low else _turn_end(turning, first)
+    if first <= at < last:
+        start, end = first, last
+    shown = tuple(m for m in moments if start <= m.time * fps < end)
+    a, b = start / fps, end / fps
+    speed = float(np.median(cuts.signals.speed[start:end]))
+    score = sum(m.weight for m in shown) + config.speed_weight * min(speed, config.speed_cap)
+    quality = rate_shot(a, b, [(m.time, m.name) for m in shown], cuts.signals)
+    return Shot(clip, a, b, score, shown, quality)
 
 
 def _clear_of_turns(

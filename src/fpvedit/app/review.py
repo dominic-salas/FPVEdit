@@ -17,12 +17,14 @@ from pathlib import Path
 from PySide6.QtCore import QObject, Qt, QThread, Signal
 from PySide6.QtGui import QCloseEvent, QIcon, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
+    QComboBox,
     QFileDialog,
     QHBoxLayout,
     QLabel,
     QListWidget,
     QListWidgetItem,
     QPushButton,
+    QSlider,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
@@ -195,7 +197,9 @@ class ReviewPage(QWidget):
         self._position = 0.0  # seconds into the montage
         self._mode = "montage"  # or "shot" (one shot looping) or "preview" (a candidate)
         self._alts: list[Shot] = []
-        self._choosing: str | None = None  # "swap" or "add"
+        self._choosing: str | None = None  # "swap", "add" or "find" (a missed shot)
+        self._find_clips: list[int] = []  # the clips a shot can be marked in
+        self._find_at = 0.0  # seconds into the recording being searched
         self._thumbs: dict[tuple[Path, float], QPixmap] = {}
         self._requested: set[tuple[Path, float]] = set()
         self._palette = theme.DARK
@@ -253,6 +257,7 @@ class ReviewPage(QWidget):
         self._side.addWidget(self._build_overview())
         self._side.addWidget(self._build_editor())
         self._side.addWidget(self._build_chooser())
+        self._side.addWidget(self._build_finder())
         self._side.setFixedWidth(SIDE_WIDTH)
 
         body = QHBoxLayout()
@@ -284,6 +289,7 @@ class ReviewPage(QWidget):
             (QKeySequence(Qt.Key.Key_Escape), self.leave_full_screen),
             (QKeySequence(Qt.Key.Key_Left), functools.partial(self._step_shot, -1)),
             (QKeySequence(Qt.Key.Key_Right), functools.partial(self._step_shot, 1)),
+            (QKeySequence(Qt.Key.Key_M), self.mark_here),
             *(
                 (QKeySequence(str(stars)), functools.partial(self.rate_current, stars))
                 for stars in range(1, 6)
@@ -325,6 +331,11 @@ class ReviewPage(QWidget):
         column.addWidget(self._legend_hint)
         column.addWidget(self._legend)
         column.addWidget(button("+  ADD A SHOT", lambda: self._open_chooser("add")))
+        self._find_button = button("+  FIND A MISSED SHOT", self._open_finder)
+        self._find_button.setToolTip(
+            "Play a whole recording and mark the moment you want: a shot is built around it"
+        )
+        column.addWidget(self._find_button)
         column.addSpacing(18)
         column.addWidget(label("MUSIC"))
         column.addWidget(label("Tracks play in this order", "hint"))
@@ -432,6 +443,46 @@ class ReviewPage(QWidget):
         column.addLayout(buttons)
         return panel
 
+    def _build_finder(self) -> QWidget:
+        self._find_clip = QComboBox()
+        self._find_clip.currentIndexChanged.connect(self._find_clip_changed)
+        self._find_slider = QSlider(Qt.Orientation.Horizontal)
+        self._find_slider.sliderMoved.connect(self._find_scrub)
+        self._find_slider.sliderReleased.connect(lambda: self._play_clip(self._find_at))
+        self._find_time = label()
+        self._find_play = button("▶  PLAY", self._toggle_clip)
+        tint(self._find_play, PLAY_COLOUR)
+        transport = QHBoxLayout()
+        transport.addWidget(self._find_play)
+        transport.addWidget(self._find_time)
+        transport.addStretch(1)
+        mark = button("MARK A SHOT HERE", self.mark_here, primary=True)
+        mark.setToolTip("Build a shot around this moment and add it to the montage (or press M)")
+        buttons = QHBoxLayout()
+        buttons.addWidget(button("CANCEL", self._close_chooser))
+        buttons.addStretch(1)
+        buttons.addWidget(mark)
+        hint = label(
+            "Play a whole recording. When the moment you want is on screen, press M or "
+            "MARK A SHOT HERE: a shot is built around it, cut in calm moments. FPVEdit "
+            "learns from what you mark.",
+            "hint",
+        )
+        hint.setWordWrap(True)
+        panel = QWidget()
+        column = QVBoxLayout(panel)
+        column.setContentsMargins(0, 0, 0, 0)
+        column.setSpacing(8)
+        column.addWidget(label("FIND A MISSED SHOT"))
+        column.addWidget(hint)
+        column.addWidget(label("RECORDING"))
+        column.addWidget(self._find_clip)
+        column.addWidget(self._find_slider)
+        column.addLayout(transport)
+        column.addStretch(1)
+        column.addLayout(buttons)
+        return panel
+
     # ----- the window's side -----
 
     def set_montage(
@@ -510,6 +561,8 @@ class ReviewPage(QWidget):
             self._play_montage(self._position)
         elif self._mode == "shot":
             self._loop_selected()
+        elif self._mode == "clip":
+            self._play_clip(self._find_at)
 
     # ----- music -----
 
@@ -793,6 +846,9 @@ class ReviewPage(QWidget):
     # ----- playback -----
 
     def toggle_play(self) -> None:
+        if self._choosing == "find":
+            self._toggle_clip()
+            return
         if not self._current() or self._choosing is not None:
             return
         if self._video.playing:
@@ -835,6 +891,7 @@ class ReviewPage(QWidget):
     def _show_play_state(self) -> None:
         playing = self._video.playing
         self._play.setText("❚❚  PAUSE" if playing else "▶  PLAY")
+        self._find_play.setText("❚❚  PAUSE" if playing else "▶  PLAY")
         if self._selected is not None:
             self._show_editor()
 
@@ -848,6 +905,9 @@ class ReviewPage(QWidget):
             self._position = montage_time(shots, self._selected, seconds)
             self._timeline.set_position(self._position)
             self._show_now(self._selected, looping=True)
+        elif self._mode == "clip":
+            self._find_moved(seconds)
+            return
         self._show_time()
 
     def _show_now(self, index: int, *, looping: bool = False) -> None:
@@ -999,6 +1059,89 @@ class ReviewPage(QWidget):
         else:
             self._pause_all()
             self._show_play_state()
+
+    # ----- finding a missed shot -----
+
+    def _open_finder(self) -> None:
+        if self._shots is None or self._choosing is not None:
+            return
+        self._find_clips = [i for i in range(len(self._infos)) if self._shots.can_mark(i)]
+        if not self._find_clips:
+            self._say("No recording here has the analysis a marked shot needs.")
+            return
+        self._choosing = "find"
+        self._mode = "clip"
+        self._side.setCurrentIndex(3)
+        selected = self._current()[self._selected].clip if self._selected is not None else None
+        self._find_clip.blockSignals(True)
+        self._find_clip.clear()
+        for i in self._find_clips:
+            self._find_clip.addItem(self._infos[i].path.name)
+        self._find_clip.blockSignals(False)
+        first = self._find_clips.index(selected) if selected in self._find_clips else 0
+        self._find_clip.setCurrentIndex(first)
+        self._find_clip_changed(first)
+
+    def _searched(self) -> int | None:
+        row = self._find_clip.currentIndex()
+        return self._find_clips[row] if 0 <= row < len(self._find_clips) else None
+
+    def _find_clip_changed(self, row: int) -> None:
+        clip = self._searched()
+        if clip is None or self._shots is None:
+            return
+        self._find_slider.setRange(0, round(self._shots.clip_duration(clip) * 10))
+        self._find_moved(0.0)
+        self._play_clip(0.0)
+
+    def _play_clip(self, seconds: float) -> None:
+        clip = self._searched()
+        if clip is None or self._shots is None or self._choosing != "find":
+            return
+        self._mode = "clip"
+        segment = Segment(self._infos[clip], 0.0, self._shots.clip_duration(clip))
+        self._play_video([segment], 0, seconds)
+        self._now.setText(f"SEARCHING   {self._infos[clip].path.name.upper()}")
+        self._show_play_state()
+
+    def _toggle_clip(self) -> None:
+        if self._video.playing:
+            self._pause_all()
+            self._show_play_state()
+        else:
+            self._play_clip(self._find_at)
+
+    def _find_scrub(self, tenths: int) -> None:
+        clip = self._searched()
+        if clip is None:
+            return
+        self._find_moved(tenths / 10)
+        self._video.show_frame(self._infos[clip], self._find_at)
+        self._show_play_state()
+
+    def _find_moved(self, seconds: float) -> None:
+        clip = self._searched()
+        self._find_at = seconds
+        if not self._find_slider.isSliderDown():
+            self._find_slider.setValue(round(seconds * 10))
+        length = self._shots.clip_duration(clip) if clip is not None and self._shots else 0.0
+        self._find_time.setText(f"{timecode(seconds)} / {timecode(length)}")
+
+    def mark_here(self) -> None:
+        """Build a shot around the moment being shown and add it to the montage."""
+        clip = self._searched()
+        if self._choosing != "find" or clip is None or self._shots is None:
+            return
+        try:
+            position = self._shots.mark(clip, self._find_at)
+        except ValueError as exc:
+            self._say(f"Not possible: {exc}.")
+            return
+        self._choosing = None
+        self._mode = "montage"
+        self._selected = position
+        self._say(f"Shot marked and added as number {position + 1}. Ctrl+Z undoes it.")
+        self._edited(shot_starts(self._current())[position])
 
     def _close_chooser(self) -> None:
         if self._choosing is None:

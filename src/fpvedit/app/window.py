@@ -940,7 +940,8 @@ class MainWindow(QMainWindow):
             raise TypeError(f"expected a MontagePlan, got {type(result).__name__}")
         self._plan = result
         durations = {clip.index: clip.analysed_duration for clip in result.clips}
-        self._shots = ShotList(result.shots, result.candidates, durations)
+        cuts = {clip.index: clip.cuts for clip in result.clips if clip.cuts is not None}
+        self._shots = ShotList(result.shots, result.candidates, durations, cuts)
         self._output, self._force = None, False
         self._annotate_clips(result)
         self._set_notes(result.warnings)
