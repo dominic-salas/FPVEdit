@@ -130,6 +130,13 @@ else on the CPU; `--no-scenery` skips it. Its similarity scores are compared bet
 only: they are not probabilities and do not recognise tricks. The Windows installer does not
 include it (PyTorch with CUDA is several GB).
 
+The same extra adds GeoCalib (code Apache-2.0, weights CC-BY-4.0, about 110 MB downloaded
+from GitHub on first use), which reads which way is down in the frames just before and just
+after each fast turn. That fixes how far the turn really went, which the motion alone
+under-counts in the blur: a flip that came back round is named as a whole flip (or a double),
+one that did not by how far it got ("half roll", "3/4 back flip"). Without it, trick names
+come from the motion alone, as before.
+
 Development: see [CONTRIBUTING.md](CONTRIBUTING.md). The installer is built by
 `.github/workflows/release.yml` (standalone app with PyInstaller, FFmpeg, Inno Setup).
 `eval/annotations/` holds hand-labelled test flights and `scripts/evaluate.py` scores an
@@ -147,4 +154,6 @@ run as a separate program; source at https://ffmpeg.org), Qt for Python (LGPL-3.
 NumPy, OpenCV and the fonts Space Grotesk and Geist Mono (SIL Open Font License); their
 licences are in the `licenses` folder of the installation. The
 optional image model's weights are Google's SigLIP 2 (Apache-2.0), downloaded on first use
-and never shipped.
+and never shipped. The optional gravity model is GeoCalib by Veicht, Sarlin, Lindenberger and
+Pollefeys (ECCV 2024, https://github.com/cvg/GeoCalib): code Apache-2.0, weights CC-BY-4.0,
+downloaded on first use and never shipped.

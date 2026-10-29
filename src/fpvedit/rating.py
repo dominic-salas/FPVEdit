@@ -26,6 +26,7 @@ from itertools import pairwise
 import numpy as np
 from numpy.typing import NDArray
 
+from fpvedit.attitude import Attitude
 from fpvedit.osd import Throttle
 
 FloatArray = NDArray[np.float64]
@@ -111,6 +112,7 @@ class ClipSignals:
     brightness: FloatArray  # 0-1
     crashes: tuple[float, ...]  # start times of crash cuts
     throttle: Throttle | None = None  # read from the OSD (`osd.py`), if shown
+    attitude: Attitude | None = None  # turns measured with gravity (`attitude.py`)
 
 
 def _clip(value: float, low: float = 0.0, high: float = 1.0) -> float:
@@ -165,6 +167,10 @@ def rate_shot(
         later = signals.speed[i + round(0.5 * fps) : i + round(2 * fps)]
         if len(before) and len(later):
             kept.append(float(np.median(later)) / max(1e-3, float(np.median(before))))
+        measured = signals.attitude.turn_at(time) if signals.attitude is not None else None
+        if measured is not None and measured.checked:  # gravity saw how far it went
+            fulls.append(measured.degrees)
+            continue
         half = round(0.5 * fps)
         window = slice(max(0, i - half), i + half)
         if float(np.mean(signals.confidence[window])) >= 0.45:  # blur hides the turn

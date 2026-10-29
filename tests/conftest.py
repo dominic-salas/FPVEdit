@@ -12,12 +12,13 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def _no_image_model(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Tests never load the image model unless marked ``model`` (it downloads ~1.5 GB
-    and uses the GPU); the scenery step then behaves as if the ml extra were missing."""
+    """Tests never load the image or gravity model unless marked ``model`` (they download
+    weights and use the GPU); those steps then behave as if the ml extra were missing."""
     if request.node.get_closest_marker("model") is None:
-        from fpvedit import scenery
+        from fpvedit import attitude, scenery
 
         monkeypatch.setattr(scenery, "available", lambda: False)
+        monkeypatch.setattr(attitude, "available", lambda: False)
 
 
 def pytest_sessionstart(session: pytest.Session) -> None:
