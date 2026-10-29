@@ -318,9 +318,10 @@ def candidate_shots(
         inside = [m for m in moments if low <= m.time * fps < high]
         for moment in inside:
             for length in sorted(lengths):
-                start = min(round(moment.time * fps) - round(config.lead_s * fps), high - length)
-                if start < low:
-                    continue
+                # A moment close after take-off starts its shot at the take-off (the lead
+                # is shorter), rather than having no shot.
+                lead = round(moment.time * fps) - round(config.lead_s * fps)
+                start = max(low, min(lead, high - length))
                 start = _calmest(calm, start, reach, low, high)
                 end = _calmest(calm, start + length, reach, low, high)
                 end = min(max(end, start + shortest), start + longest, high)
@@ -396,8 +397,9 @@ def _clear_of_turns(
     """Move a shot's ends out of any turn (a flip or roll) they would cut through.
 
     The start moves back to before the turn (the viewer sees all of it) or, failing
-    that, after it; the end moves on to after the turn or, failing that, back to before
-    it. None if the shot cannot then stay ``shortest``-``longest`` frames long.
+    that, after it; the end moves on to one calm frame after the turn or, failing that,
+    back to before it. None if the shot cannot then stay ``shortest``-``longest`` frames
+    long.
     """
     if turning[start]:
         before = _turn_start(turning, start)
@@ -406,7 +408,7 @@ def _clear_of_turns(
         else:
             start = _turn_end(turning, start)
     if end - 1 >= start and turning[end - 1]:
-        after = _turn_end(turning, end - 1)
+        after = _turn_end(turning, end - 1) + 1  # its last frame then is not turning
         fits = after <= high and after - start <= longest
         end = after if fits else _turn_start(turning, end - 1)
     if not shortest <= end - start <= longest or turning[start] or turning[end - 1]:
