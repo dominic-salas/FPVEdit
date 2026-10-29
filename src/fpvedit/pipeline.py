@@ -7,6 +7,7 @@ line (`cli.py`) and the desktop app (`app/`) both run it.
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import json
 import multiprocessing
@@ -24,8 +25,8 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
-from fpvedit import __version__
-from fpvedit.analysis import Analysis, AnalysisConfig, analysis_document, analyze
+from fpvedit import __version__, osd
+from fpvedit.analysis import Analysis, AnalysisConfig, analysis_document, analyze, cache_path
 from fpvedit.errors import (
     CancelledError,
     FPVEditError,
@@ -557,6 +558,39 @@ class ClipResult:
         )
 
 
+def _throttle(
+    tools: Tools,
+    info: MediaInfo,
+    analysis: Analysis,
+    cache_dir: Path | None,
+    config: AnalysisConfig,
+) -> osd.Throttle | None:
+    """The OSD throttle (`osd.py`), cached beside the recording's measurements with its own
+    version, so reading it never invalidates them. None when it is not on screen."""
+    path = None
+    if cache_dir is not None:
+        try:
+            measured = cache_path(cache_dir, tools, info, config)
+            path = measured.with_name(
+                measured.name.replace(".measurements.npz", f".throttle-v{osd.VERSION}.npz")
+            )
+        except OSError:
+            path = None
+    if path is not None and path.is_file():
+        try:
+            with np.load(path, allow_pickle=False) as data:
+                values = np.asarray(data["values"], dtype=np.float64)
+                return osd.Throttle(float(data["fps"]), values) if values.size else None
+        except (OSError, ValueError, KeyError):
+            pass  # damaged: read it again
+    throttle = osd.read_throttle(tools, info, analysis.area)
+    if path is not None:
+        empty = np.zeros(0)
+        with contextlib.suppress(OSError):  # an unwritable cache only costs reading it again
+            np.savez(path, fps=osd.FPS, values=throttle.values if throttle else empty)
+    return throttle
+
+
 def _plan_clip(job: ClipJob, step: Callable[[float], None]) -> ClipResult:
     """Analyse one clip and find its candidate shots (runs in a worker process)."""
     tools, info, name = job.tools, job.info, job.info.path.name
@@ -573,7 +607,10 @@ def _plan_clip(job: ClipJob, step: Callable[[float], None]) -> ClipResult:
     except NoFlightContentError as exc:
         return ClipResult(job.index, None, (), (f"{name}: nothing usable ({exc})",))
     warnings = [f"{name}: {note}" for note in (*_gap_warnings(info, times), *analysis.warnings)]
-    cuts = cut_map(analysis.measurements, analysis.selection, job.montage, job.config.selection)
+    throttle = _throttle(tools, info, analysis, job.cache_dir, job.config.analysis)
+    cuts = cut_map(
+        analysis.measurements, analysis.selection, job.montage, job.config.selection, throttle
+    )
     found = candidate_shots(
         job.index,
         analysis.measurements,

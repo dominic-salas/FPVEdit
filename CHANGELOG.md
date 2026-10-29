@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **The throttle is read from the OSD.** FPVEdit finds the throttle reading burned into the
+  DVR picture and reads it every 1/12 s, learning the OSD's digits from the flight timer
+  (no font needed). Shots get notes like "throttle punch" (cut during a flip, then punched
+  out), "throttle off" (a dive) and "high throttle", which the learned taste uses. The
+  rating itself is unchanged. Recordings whose throttle is not on screen work as before.
 - **Fewer tricks without a shot**: a trick in the first 2 s after take-off now gets a shot
   that starts at the take-off, and a shot whose end would cut through a flip now ends just
   after it instead of being dropped. On 11 test recordings, 249 of 304 found moments get a
