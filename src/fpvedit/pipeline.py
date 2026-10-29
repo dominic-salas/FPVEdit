@@ -688,8 +688,9 @@ def render_montage(
 ) -> float:
     """Render ``shots`` in the order given to ``final`` and validate it; returns its duration.
 
-    ``music`` tracks play one after another as the soundtrack (the recordings' own audio
-    is never used). ``vertical`` makes a 9:16 video for phones (`montage_fit`)."""
+    ``music`` tracks play one after another as the soundtrack, in place of the
+    recordings' own sound (kept otherwise). ``vertical`` makes a 9:16 video for phones
+    (`montage_fit`)."""
     if not shots:
         raise InvalidInputError("no shots to render")
     fit = montage_fit(clips, shots, vertical=vertical)
@@ -700,10 +701,11 @@ def render_montage(
     try:
         with tempfile.TemporaryDirectory(prefix="fpvedit-", ignore_cleanup_errors=True) as work:
             work_dir = Path(work)
-            files = []
+            files, sounds = [], []
             for number, (clip, segments) in enumerate(parts):
                 text = f"Rendering part {number + 1} of {len(parts)} ({clip.info.path.name})"
                 part = work_dir / f"part{number:03d}.mp4"
+                sound = None if music else work_dir / f"part{number:03d}.wav"
                 render(
                     tools,
                     clip.info,
@@ -713,8 +715,12 @@ def render_montage(
                     work_dir=work_dir,
                     fit=fit,
                     on_frames=_frame_progress(progress, text, sum(sizes[:number]), frames),
+                    sound=sound,
+                    length=sizes[number] / float(fit.rate),
                 )
                 files.append(part)
+                if sound is not None:
+                    sounds.append(sound)
             if progress is not None:
                 progress("Joining and checking the montage", 1.0)
             if music:
@@ -729,7 +735,7 @@ def render_montage(
                 add_music(tools, video, music, with_music, frames / float(fit.rate))
                 shutil.copyfile(with_music, temporary)
             else:
-                join_parts(tools, files, temporary, work_dir)
+                join_parts(tools, files, temporary, work_dir, sounds)
         validate_output(
             tools,
             temporary,
@@ -846,14 +852,19 @@ def render_trim(
     temporary = temporary_output(final)
     try:
         with tempfile.TemporaryDirectory(prefix="fpvedit-", ignore_cleanup_errors=True) as work:
+            work_dir = Path(work)
+            picture, sound = work_dir / "edit.mp4", work_dir / "edit.wav"
             render(
                 tools,
                 info,
                 segments,
-                temporary,
+                picture,
                 encode=encode or config.encode,
-                work_dir=Path(work),
+                work_dir=work_dir,
+                sound=sound,
+                length=frames / float(rate),
             )
+            join_parts(tools, [picture], temporary, work_dir, [sound])
         validate_output(
             tools,
             temporary,

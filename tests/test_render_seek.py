@@ -5,6 +5,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from fpvedit.highlights import Interval
@@ -67,10 +68,20 @@ def test_seeking_keeps_the_same_frames(kind: str, tmp_path: Path) -> None:
     rate = output_rate(info)
     intervals = snap_to_frames([Interval(12.3, 15.0), Interval(19.5, 23.25)], rate)
     expected = expected_frame_count(intervals, rate, times)
-    digests = []
+    digests, sounds = [], []
     for seek in (False, True):
-        output = tmp_path / f"seek{seek}.mp4"
-        render(tools, info, intervals, output, encode=FAST, work_dir=tmp_path, seek=seek)
+        output, sound = tmp_path / f"seek{seek}.mp4", tmp_path / f"seek{seek}.wav"
+        render(
+            tools,
+            info,
+            intervals,
+            output,
+            encode=FAST,
+            work_dir=tmp_path,
+            seek=seek,
+            sound=sound,
+            length=expected / float(rate),
+        )
         validate_output(
             tools,
             output,
@@ -78,8 +89,20 @@ def test_seeking_keeps_the_same_frames(kind: str, tmp_path: Path) -> None:
             rate=rate,
             expected_frames=expected,
             segments=len(intervals),
+            sound=False,  # the picture alone; join_parts adds the sound
         )
         digests.append(_digests(output))
+        sounds.append(_samples(sound))
     assert first_frame_time(tools, info) is not None
     assert len(digests[0]) == expected
     assert digests[0] == digests[1]
+    # The sound is exactly as long as the picture, and the same whether or not it seeked.
+    assert len(sounds[0]) == round(expected / float(rate) * 48000) * 2
+    assert np.abs(sounds[0].astype(np.int32) - sounds[1]).max() <= 1
+
+
+def _samples(path: Path) -> np.ndarray:
+    """The WAV's 16-bit samples (interleaved stereo)."""
+    data = path.read_bytes()
+    start = data.index(b"data") + 8
+    return np.frombuffer(data[start:], dtype="<i2")

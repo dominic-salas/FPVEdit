@@ -1,7 +1,12 @@
-"""Render selected intervals to a video-only H.264 MP4, validate it, then move it into place.
+"""Render selected intervals to an H.264 + AAC MP4, validate it, then move it into place.
 
-The recording's audio is not used: on FPV DVRs it is goggle audio (receiver noise and
-beeps) that has nothing to do with the flight, and pilots add their own music.
+The recording's own sound is kept, cut exactly where the picture is: the same intervals
+are selected from it on the same timeline (`build_audio_graph`), in a pass of its own so
+the picture's encode is the same with or without it. Each part's sound is written as
+PCM exactly as long as its picture; `join_parts` joins the parts' sound sample for
+sample and encodes it to AAC once, so sound and picture stay together however many
+parts there are (AAC per part would shift each joined part by the encoder's delay). A
+recording without audio gives silence. Music, when added, replaces it (`add_music`).
 
 The source is decoded once and a ``select`` filter keeps the frames inside the
 intervals, so memory use does not grow with the number of cuts (separate trim chains
@@ -271,6 +276,46 @@ def build_filter_graph(
     return f"[0:{video_index}]setpts={start},select='{keep}',{retime},{crop},{colour}[v]"
 
 
+AUDIO_RATE = 48000
+AUDIO_BITRATE = "192k"
+
+
+def build_audio_graph(
+    intervals: Sequence[Interval],
+    *,
+    audio_index: int | None,
+    start: float,
+    length: float,
+) -> str:
+    """Filter graph that keeps ``intervals`` of input 0's audio as one continuous ``[a]``,
+    on the same timeline as `build_filter_graph`'s picture, exactly ``length`` seconds.
+
+    ``start`` is the timestamp (seconds, as the input is read) of the first video frame,
+    where that timeline starts: a recording's audio may start before or after its
+    picture. Silence pads it to ``length``; without ``audio_index`` it is all silence.
+    """
+    if not intervals:
+        raise ValueError("at least one interval is required")
+    layout = f"aformat=sample_fmts=s16:sample_rates={AUDIO_RATE}:channel_layouts=stereo"
+    samples = round(length * AUDIO_RATE)
+    if audio_index is None:
+        return f"anullsrc=r={AUDIO_RATE}:cl=stereo,atrim=end_sample={samples},{layout}[a]"
+    # atrim cuts to the sample (aselect keeps whole audio frames, up to 21 ms off per cut).
+    count = len(intervals)
+    pieces = "".join(f"[s{k}]" for k in range(count))
+    cuts = ";".join(
+        f"[s{k}]atrim=start={i.start:.6f}:end={i.end:.6f},asetpts=PTS-STARTPTS[c{k}]"
+        for k, i in enumerate(intervals)
+    )
+    joined = "".join(f"[c{k}]" for k in range(count))
+    # Resampled only after the cuts: resampling first shifted the sound by ~0.1 s.
+    return (
+        f"[0:{audio_index}]asetpts=PTS-{start:.6f}/TB,asplit={count}{pieces};{cuts};"
+        f"{joined}concat=n={count}:v=0:a=1,aresample={AUDIO_RATE},{layout},"
+        f"apad,atrim=end_sample={samples}[a]"
+    )
+
+
 def render(
     tools: Tools,
     info: MediaInfo,
@@ -282,8 +327,13 @@ def render(
     fit: Fit | None = None,
     on_frames: Callable[[int], None] | None = None,
     seek: bool = True,
+    sound: Path | None = None,
+    length: float | None = None,
 ) -> None:
-    """Encode frame-snapped ``intervals`` to ``destination``, a temporary path the caller owns.
+    """Encode frame-snapped ``intervals`` to ``destination`` (picture only), a temporary
+    path the caller owns; with ``sound``, also write their sound there as PCM WAV,
+    ``length`` seconds long (the picture's: frames / output rate; by default the
+    intervals' total), for `join_parts`.
 
     ``on_frames`` is called with the number of frames written so far; if it raises, the
     encode stops. With ``seek``, intervals late in the recording are reached by seeking
@@ -308,10 +358,10 @@ def render(
         # Keep the file's timestamps (the graph subtracts ``origin``) and start decoding at
         # the keyframe before the seek point; ``select`` drops the frames before ``first``.
         begin = first - SEEK_LEAD_S
-        length = last - begin + READ_MARGIN_S + KEYFRAME_MARGIN_S
+        span = last - begin + READ_MARGIN_S + KEYFRAME_MARGIN_S
         reading = [
             *("-copyts", "-noaccurate_seek"),
-            *("-ss", f"{begin + offset:.3f}", "-t", f"{length:.3f}"),
+            *("-ss", f"{begin + offset:.3f}", "-t", f"{span:.3f}"),
         ]
     args = [
         tools.ffmpeg,
@@ -342,6 +392,30 @@ def render(
             run_tool(args, action=RENDER_ACTION)
         else:
             run_tool_with_progress(args, action=RENDER_ACTION, on_frames=on_frames)
+        if sound is not None:
+            # Read with the file's own timestamps: without -copyts FFmpeg starts the audio
+            # at 0 on its own and loses how far it is from the picture. The timeline starts
+            # at the first frame (``origin`` when seeking, else the picture's first time).
+            graph = build_audio_graph(
+                intervals,
+                audio_index=info.audio.index if info.audio is not None else None,
+                start=video_start,
+                length=length if length is not None else sum(i.end - i.start for i in intervals),
+            )
+            audio_script = work_dir / f"{destination.stem}.audio_graph.txt"
+            audio_script.write_text(graph, encoding="utf-8")
+            copyts = () if origin is not None else ("-copyts",)  # seeking reads with it
+            source = (
+                (*copyts, *reading, "-vn", "-i", str(info.path)) if info.audio is not None else ()
+            )
+            run_tool(
+                [
+                    *(tools.ffmpeg, "-nostdin", "-hide_banner", "-v", "error", "-y", *source),
+                    *(tools.filter_script_option, str(audio_script), "-map", "[a]"),
+                    *("-c:a", "pcm_s16le", "-f", "wav", str(sound)),
+                ],
+                action=RENDER_ACTION,
+            )
     except EncodeError:
         raise
     except MediaToolError as exc:
@@ -372,27 +446,43 @@ def first_frame_time(tools: Tools, info: MediaInfo) -> float | None:
     return None
 
 
-def join_parts(tools: Tools, parts: Sequence[Path], destination: Path, work_dir: Path) -> None:
-    """Join rendered parts (same codec, size and rate) without encoding them again."""
+def join_parts(
+    tools: Tools,
+    parts: Sequence[Path],
+    destination: Path,
+    work_dir: Path,
+    sounds: Sequence[Path] = (),
+) -> None:
+    """Join rendered parts (same codec, size and rate) without encoding them again; with
+    ``sounds`` (each part's, from `render`), their sound joined sample for sample and
+    encoded to AAC once becomes the audio track."""
     if not parts:
         raise ValueError("at least one part is required")
-    listing = work_dir / "parts.txt"
-    # Paths in the list are relative to it; the parts are named by us, so need no quoting.
-    listing.write_text(
-        "".join(f"file '{part.relative_to(work_dir).as_posix()}'\n" for part in parts),
-        encoding="utf-8",
-    )
+    if sounds and len(sounds) != len(parts):
+        raise ValueError("one sound per part is required")
+
+    def listing(name: str, files: Sequence[Path]) -> Path:
+        # Paths in the list are relative to it; the files are named by us: no quoting.
+        path = work_dir / name
+        path.write_text(
+            "".join(f"file '{file.relative_to(work_dir).as_posix()}'\n" for file in files),
+            encoding="utf-8",
+        )
+        return path
+
+    concat = ("-f", "concat", "-safe", "0", "-i")
     args = [
-        tools.ffmpeg,
-        "-nostdin",
-        "-hide_banner",
-        "-v",
-        "error",
-        "-y",
-        *("-f", "concat", "-safe", "0", "-i", str(listing)),
-        *("-map", "0:v:0", "-c", "copy", "-an", "-sn", "-dn"),
-        *("-movflags", "+faststart", "-f", "mp4", str(destination)),
+        *(tools.ffmpeg, "-nostdin", "-hide_banner", "-v", "error", "-y"),
+        *concat,
+        str(listing("parts.txt", parts)),
     ]
+    if sounds:
+        args += [*concat, str(listing("sounds.txt", sounds))]
+        args += ["-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy"]
+        args += ["-c:a", "aac", "-b:a", AUDIO_BITRATE, "-ar", str(AUDIO_RATE), "-ac", "2"]
+    else:
+        args += ["-map", "0:v:0", "-c", "copy", "-an"]
+    args += ["-sn", "-dn", "-movflags", "+faststart", "-f", "mp4", str(destination)]
     run_tool(args, action="joining the montage")
 
 
@@ -405,10 +495,11 @@ def validate_output(
     expected_frames: int | None = None,
     segments: int = 1,
     music: bool = False,
+    sound: bool = True,
 ) -> MediaInfo:
-    """Check the stream, frame rate, frame count, colour range and duration, then decode it all.
-
-    With ``music`` the file must have one AAC audio track (the soundtrack); otherwise none.
+    """Check the streams, frame rate, frame count, colour range and duration, then decode
+    it all. With ``music`` or ``sound`` the file must have one AAC audio track (the
+    soundtrack or the recordings' sound); otherwise none.
     """
     try:
         info = probe(tools, path, count_frames=True)
@@ -426,9 +517,10 @@ def validate_output(
             f"rendered video is {video.pix_fmt} / {video.color_range} range, "
             "expected yuv420p limited (tv) range"
         )
-    if music and (info.audio is None or info.audio.codec != "aac"):
-        raise ValidationError("rendered file has no AAC soundtrack")
-    if not music and info.audio is not None:
+    if (music or sound) and (info.audio is None or info.audio.codec != "aac"):
+        what = "soundtrack" if music else "audio track (the recordings' sound)"
+        raise ValidationError(f"rendered file has no AAC {what}")
+    if not (music or sound) and info.audio is not None:
         raise ValidationError("rendered file has an audio track; expected video only")
     if expected_frames is not None and video.frame_count is not None:
         # Recordings with dropped frames have a few fewer frames than their timestamps
