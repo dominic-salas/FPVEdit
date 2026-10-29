@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Fewer tricks without a shot**: a trick in the first 2 s after take-off now gets a shot
+  that starts at the take-off, and a shot whose end would cut through a flip now ends just
+  after it instead of being dropped. On 11 test recordings, 249 of 304 found moments get a
+  shot instead of 243.
+- "No shots found" is said above the clip list instead of in a dialog you have to close.
 - **The montage keeps the recordings' sound**, cut exactly with the picture (in sync to
   within a couple of milliseconds across every cut). Music, when added, still replaces it.
 - **Find a missed shot**: on the montage page, play any whole recording, and at the moment

@@ -14,6 +14,7 @@ from fpvedit.montage import (
     MomentKind,
     MontageConfig,
     Shot,
+    _clear_of_turns,
     candidate_shots,
     find_moments,
     pick_shots,
@@ -209,3 +210,27 @@ def test_no_shot_starts_or_ends_in_a_blurred_flip() -> None:
                 assert not (at - 0.4 < edge < at + 0.9), (
                     f"a cut at {edge:.2f} s cuts the flip at {at}"
                 )
+
+
+def test_an_end_in_a_turn_moves_past_it_when_there_is_room() -> None:
+    turning = np.zeros(300, dtype=bool)
+    turning[100:110] = True  # a flip, frames 100-109
+    # The end would cut the flip: it moves on to one frame after it (the whole flip shows).
+    assert _clear_of_turns(turning, 0, 105, 50, 200, 0, 300) == (0, 111)
+    # Without room after it, the end moves back to before the flip.
+    assert _clear_of_turns(turning, 0, 105, 50, 108, 0, 300) == (0, 100)
+
+
+def test_a_flip_soon_after_take_off_still_gets_a_shot() -> None:
+    plain = flight()
+    measurements, selection = analyse(plain)
+    usable = usable_footage(measurements, selection)
+    take_off = int(np.flatnonzero(usable)[0]) / FPS
+    at = take_off + 1.0  # less than the 2 s lead a shot opens with
+    measurements, selection = analyse(flight().flip(at))
+    # Spins off, so the flip is the only moment (none later to carry it into a shot).
+    only_flips = dataclasses.replace(CONFIG, spin_floor=10_000.0)
+    shots = candidate_shots(0, measurements, selection, only_flips)
+    showing = [s for s in shots if any(m.kind is MomentKind.FLIP for m in s.moments)]
+    assert showing, "the flip has no shot"
+    assert all(s.start >= take_off - 1e-9 for s in showing)

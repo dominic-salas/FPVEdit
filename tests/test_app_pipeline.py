@@ -3,6 +3,7 @@ the window itself (offscreen, when PySide6 is installed)."""
 
 from __future__ import annotations
 
+import dataclasses
 import os
 from pathlib import Path
 
@@ -149,7 +150,9 @@ def test_tool_progress_counts_frames(tmp_path: Path) -> None:
     assert frames and frames[-1] == 90
 
 
-def test_window_lists_and_edits_the_shots(clips: tuple[Path, Path], tmp_path: Path) -> None:
+def test_window_lists_and_edits_the_shots(
+    clips: tuple[Path, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     pytest.importorskip("PySide6")
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtCore import QSettings
@@ -234,6 +237,23 @@ def test_window_lists_and_edits_the_shots(clips: tuple[Path, Path], tmp_path: Pa
             window._undo()
         assert window._current_shots() == plan.shots
         app.processEvents()
+        # Clips with nothing to show: said on the Clips page, never in a dialog (a dialog
+        # waits for a click and stops everything, including an unattended run).
+        import fpvedit.app.window as window_module
+
+        def no_dialog(*args: object) -> None:
+            raise AssertionError(f"a dialog opened: {args[1:]}")
+
+        monkeypatch.setattr(window_module.QMessageBox, "information", no_dialog)
+        empty = dataclasses.replace(plan, shots=(), candidates=(), warnings=("a.ts: no flip",))
+        window._plan_ready(empty)
+        monkeypatch.undo()
+        assert window._pages.currentIndex() == window.CLIPS
+        assert not window._clips_message.isHidden()
+        assert "No flip, spin or close pass" in window._clips_message.text()
+        assert "a.ts: no flip" in window._clips_message.text()
+        window._clips_changed()
+        assert window._clips_message.isHidden()
     finally:
         window.close()
 

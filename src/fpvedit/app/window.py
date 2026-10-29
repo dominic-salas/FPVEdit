@@ -386,6 +386,11 @@ class MainWindow(QMainWindow):
         )
         hint.setProperty("role", "muted")
         column.addWidget(hint)
+        # Why the last Find shots found nothing (not a dialog: that would stop everything).
+        self._clips_message = QLabel()
+        self._clips_message.setWordWrap(True)
+        self._clips_message.setVisible(False)
+        column.addWidget(self._clips_message)
         column.addSpacing(8)
         column.addWidget(self._clips, 1)
         column.addLayout(tools)
@@ -748,6 +753,7 @@ class MainWindow(QMainWindow):
         self._clear_clips()
 
     def _clips_changed(self) -> None:
+        self._say_on_clips("")  # it was about the clips as they were
         if self._plan is not None:
             self._plan = None
             self._shots = None
@@ -797,10 +803,19 @@ class MainWindow(QMainWindow):
 
     # ----- finding shots -----
 
+    def _say_on_clips(self, text: str, notes: Sequence[str] = ()) -> None:
+        """Show ``text`` above the clip list (empty: hide it), with the first ``notes``."""
+        shown = list(notes[:3])
+        if len(notes) > len(shown):
+            shown.append(f"...and {len(notes) - len(shown)} more (hover a clip for its own).")
+        self._clips_message.setText("\n".join([text, *shown]) if text else "")
+        self._clips_message.setVisible(bool(text))
+
     def _find_shots(self) -> None:
         """Wait for the clips' background analysis to finish, then pick the shots."""
         if not self._clips.count() or self._busy():
             return
+        self._say_on_clips("")
         self._analysis.retry_failed()
         for path in self.clip_paths():
             info = self._infos.get(path.resolve())
@@ -960,11 +975,8 @@ class MainWindow(QMainWindow):
             self._show_page(self.REVIEW)
         else:
             self._show_page(self.CLIPS)
-            QMessageBox.information(
-                self,
-                "No shots found",
-                "No flip, spin or close pass was found in these clips.\n\n"
-                + "\n".join(result.warnings),
+            self._say_on_clips(
+                "No flip, spin or close pass was found in these clips.", result.warnings
             )
 
     # ----- shots -----
