@@ -11,6 +11,9 @@
   named by how far it got ("half roll", "3/4 back flip"). Turns gravity cannot see (a flat
   yaw spin, a frame too dark or broken up) keep the old name. About 110 MB of weights
   download on first use; readings are cached.
+- **Right name?** The shot panel asks whether the trick's name is right (Yes, No, or pick
+  the right one under Other). Your name is shown from then on, and the answers are kept on
+  this computer (`my-names.jsonl`) to measure how often the names are right.
 - **The throttle is read from the OSD.** FPVEdit finds the throttle reading burned into the
   DVR picture and reads it every 1/12 s, learning the OSD's digits from the flight timer
   (no font needed). Shots get notes like "throttle punch" (cut during a flip, then punched
