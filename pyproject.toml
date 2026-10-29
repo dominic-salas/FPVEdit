@@ -36,7 +36,17 @@ app = ["PySide6-Essentials>=6.10"]
 # The image model (SigLIP 2, Apache-2.0) that compares the scenery of shots. PyTorch
 # (BSD-3) runs it on an NVIDIA GPU or the CPU; transformers (Apache-2.0) loads it;
 # Pillow (MIT-CMU) feeds it frames. Weights are downloaded on first use, never shipped.
-ml = ["torch>=2.9", "transformers>=4.56", "pillow>=11"]
+# GeoCalib (code Apache-2.0, weights CC-BY-4.0) reads gravity in single frames to measure
+# the tricks' turns (`attitude.py`); it needs torchvision (BSD-3) and kornia (Apache-2.0).
+# Not on PyPI: pinned to a commit. Its plotting and second OpenCV build are not needed.
+ml = [
+    "torch>=2.9",
+    "transformers>=4.56",
+    "pillow>=11",
+    "torchvision>=0.24",
+    "kornia>=0.8",
+    "geocalib @ git+https://github.com/cvg/GeoCalib@1dedb29f94fc11b896c5f572005978aeebccd67f",
+]
 
 [project.scripts]
 fpvedit = "fpvedit.cli:main"
@@ -58,6 +68,17 @@ dev = [
 # CUDA builds of PyTorch on Windows and Linux (the default index has CPU-only Windows wheels).
 [tool.uv.sources]
 torch = [{ index = "pytorch-cu128", marker = "sys_platform == 'win32' or sys_platform == 'linux'" }]
+torchvision = [
+    { index = "pytorch-cu128", marker = "sys_platform == 'win32' or sys_platform == 'linux'" },
+]
+
+[tool.uv]
+# GeoCalib asks for opencv-python and matplotlib; FPVEdit has the headless OpenCV, and
+# GeoCalib's plotting is never imported.
+override-dependencies = [
+    "opencv-python; sys_platform == 'never'",
+    "matplotlib; sys_platform == 'never'",
+]
 
 [[tool.uv.index]]
 name = "pytorch-cu128"
@@ -67,6 +88,9 @@ explicit = true
 [build-system]
 requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+allow-direct-references = true  # GeoCalib, pinned to a commit (the ml extra)
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/fpvedit"]
@@ -92,7 +116,7 @@ strict = true
 files = ["src", "tests", "scripts"]
 
 [[tool.mypy.overrides]]
-module = ["torch", "torch.*", "transformers", "transformers.*"]
+module = ["torch", "torch.*", "transformers", "transformers.*", "geocalib", "geocalib.*"]
 ignore_missing_imports = true  # the optional ml extra
 
 [tool.pytest.ini_options]

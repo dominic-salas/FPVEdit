@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **Tricks are measured, not guessed.** The motion alone under-counts fast flips in the
+  blur (a full flip read 130-380 degrees). With the image tools installed
+  (`uv sync --extra ml`), FPVEdit now reads which way is down in the frames just before and
+  after each fast turn (GeoCalib) and works out how far the turn really went. A flip that
+  came back round is named as one (or a double), on the quad's own axes with the camera's
+  up-tilt taken out, and is no longer rated down as "not a full turn". One that did not is
+  named by how far it got ("half roll", "3/4 back flip"). Turns gravity cannot see (a flat
+  yaw spin, a frame too dark or broken up) keep the old name. About 110 MB of weights
+  download on first use; readings are cached.
 - **The throttle is read from the OSD.** FPVEdit finds the throttle reading burned into the
   DVR picture and reads it every 1/12 s, learning the OSD's digits from the flight timer
   (no font needed). Shots get notes like "throttle punch" (cut during a flip, then punched

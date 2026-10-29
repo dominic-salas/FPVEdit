@@ -12,6 +12,10 @@ These are descriptions of the rotation, not a trained recogniser: the names are 
 the turn looks like. A turn whose axes mix, or that the motion fit could not follow
 through the blur, stays a plain "flip". Power loops are found by their shape (a slow
 full pitch turn away from any flip).
+
+When gravity measured a turn (`attitude.py`), `name_measured` names it from the quad's own
+axes and its real angle instead: whole turns by count ("double back flip"), part turns by
+how far they went ("half roll", "3/4 front flip").
 """
 
 from __future__ import annotations
@@ -20,6 +24,8 @@ from dataclasses import dataclass
 
 import numpy as np
 from numpy.typing import NDArray
+
+from fpvedit.attitude import Attitude, Turn
 
 FloatArray = NDArray[np.float64]
 
@@ -33,6 +39,7 @@ class TrickConfig:
     loop_deg: float = 250.0  # pitch over `loop_s` for a power loop ...
     loop_s: float = 2.5
     loop_fast_deg: float = 180.0  # ... while no single second turns this far (not a flip)
+    measured_dominant: float = 1.5  # with the up-tilt taken out, the axes separate better
 
 
 def name_turn(pitch: float, yaw: float, roll: float, config: TrickConfig | None = None) -> str:
@@ -100,3 +107,29 @@ def power_loop_frames(
         if float(per_second[low : max(low + 1, high - second)].max()) < config.loop_fast_deg:
             result[index] = net[index]
     return result
+
+
+COUNTS = {1: "", 2: "double ", 3: "triple "}
+PARTS = {1: "quarter ", 2: "half ", 3: "3/4 "}
+FRACTIONS = {1: "1/4", 2: "1/2", 3: "3/4"}
+
+
+def name_measured(turn: Turn, attitude: Attitude, config: TrickConfig | None = None) -> str:
+    """Name a turn that gravity checked, from the quad's axes and its measured angle."""
+    config = config or TrickConfig()
+    pitch, yaw, roll = attitude.body_axis(turn)
+    sizes = sorted(((abs(pitch), "pitch"), (abs(yaw), "yaw"), (abs(roll), "roll")), reverse=True)
+    (top, axis), (second, _) = sizes[0], sizes[1]
+    if top < config.measured_dominant * second:
+        kind = "flip"  # the axes mix: the kind is unclear
+    elif axis == "pitch":
+        kind = "back flip" if pitch > 0 else "front flip"
+    else:
+        kind = "roll" if axis == "roll" else "yaw spin"
+    if turn.whole:
+        return f"{COUNTS.get(turn.whole, f'{turn.whole}x ')}{kind}"
+    quarters = round(turn.degrees / 90)
+    if quarters % 4 == 0:
+        return kind  # nearly whole, but gravity did not quite agree
+    whole, part = divmod(quarters, 4)
+    return f"{whole} {FRACTIONS[part]} {kind}s" if whole else f"{PARTS[part]}{kind}"

@@ -25,7 +25,7 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
-from fpvedit import __version__, osd
+from fpvedit import __version__, attitude, osd
 from fpvedit.analysis import Analysis, AnalysisConfig, analysis_document, analyze, cache_path
 from fpvedit.errors import (
     CancelledError,
@@ -49,8 +49,18 @@ from fpvedit.media import (
     probe,
     probe_audio,
 )
-from fpvedit.montage import CutMap, MontageConfig, Shot, candidate_shots, cut_map, pick_shots
+from fpvedit.montage import (
+    CutMap,
+    Moment,
+    MomentKind,
+    MontageConfig,
+    Shot,
+    candidate_shots,
+    cut_map,
+    pick_shots,
+)
 from fpvedit.picture import PictureConfig, decoded_size
+from fpvedit.rating import rate_shot
 from fpvedit.render import (
     EncodeConfig,
     Fit,
@@ -67,6 +77,7 @@ from fpvedit.render import (
     with_fallback,
 )
 from fpvedit.taste import RatedShot, Ratings, Taste
+from fpvedit.tricks import name_measured
 
 DEFAULT_MIN_STARS = 3  # shots rated below this are left out of a montage (can be added)
 
@@ -454,8 +465,18 @@ def keep_rated(
 
     if not plan.shots:
         return plan
-    shots = plan.shots
     notes = list(plan.warnings)
+    if scenery and attitude.available():
+        try:
+            plan = measure_turns(tools, plan, cache_dir=cache_dir, device=device, progress=progress)
+        except FPVEditError as exc:
+            notes.append(f"the tricks' turns could not be measured: {exc}")
+    elif scenery:
+        notes.append(
+            "the gravity model is not installed (uv sync --extra ml), so trick names come "
+            "from the flow alone"
+        )
+    shots = plan.shots
     rated = ratings.rated_shots() if ratings is not None else []
     if scenery and scenery_model.available():
         try:
@@ -519,6 +540,67 @@ def keep_rated(
         )
     return dataclasses.replace(
         plan, candidates=candidates, shots=kept, left_out=left_out, warnings=tuple(notes)
+    )
+
+
+def measure_turns(
+    tools: Tools,
+    plan: MontagePlan,
+    *,
+    cache_dir: Path | None = None,
+    device: str = "auto",
+    progress: Progress | None = None,
+) -> MontagePlan:
+    """Measure each clip's fast turns with gravity (`attitude.py`, in its own process), then
+    name the flips by what was measured and rate their shots again."""
+    clips = [(c, c.cuts) for c in plan.clips if c.cuts is not None]
+    wanted = []
+    for clip, cuts in clips:
+        spans = attitude.fast_turns(cuts.signals.rotation, cuts.fps)
+        wanted.append((clip.info, attitude.anchor_times(spans, cuts.fps)))
+    if not any(times for _, times in wanted):
+        return plan
+    readings = attitude.read_gravity_in_process(
+        tools, wanted, cache_dir=cache_dir, device=device, progress=progress
+    )
+    measured: dict[int, CutMap] = {}
+    for (clip, cuts), gravity in zip(clips, readings, strict=True):
+        found = attitude.measure(cuts.signals.rotation, cuts.fps, gravity)
+        signals = dataclasses.replace(cuts.signals, attitude=found)
+        measured[clip.index] = dataclasses.replace(cuts, signals=signals)
+
+    def named(moment: Moment, found: attitude.Attitude) -> Moment:
+        if moment.kind is not MomentKind.FLIP or moment.trick == "power loop":
+            return moment
+        turn = found.turn_at(moment.time)
+        if turn is None or not turn.checked:
+            return moment
+        return dataclasses.replace(moment, trick=name_measured(turn, found))
+
+    def again(shots: tuple[Shot, ...]) -> tuple[Shot, ...]:
+        result = []
+        for shot in shots:
+            cuts = measured.get(shot.clip)
+            found = cuts.signals.attitude if cuts is not None else None
+            if cuts is None or found is None or shot.quality is None:
+                result.append(shot)
+                continue
+            moments = tuple(named(m, found) for m in shot.moments)
+            quality = rate_shot(
+                shot.start, shot.end, [(m.time, m.name) for m in moments], cuts.signals
+            )
+            result.append(dataclasses.replace(shot, moments=moments, quality=quality))
+        return tuple(result)
+
+    return dataclasses.replace(
+        plan,
+        clips=tuple(
+            dataclasses.replace(c, cuts=measured[c.index]) if c.index in measured else c
+            for c in plan.clips
+        ),
+        shots=again(plan.shots),
+        candidates=again(plan.candidates),
+        left_out=again(plan.left_out),
     )
 
 
@@ -847,12 +929,22 @@ def montage_document(
 ) -> dict[str, Any]:
     """JSON-ready description of a montage: the clips, and the shots in playing order."""
     usable = {clip.index for clip in clips}
+    measured = {
+        clip.index: clip.cuts.signals.attitude.to_json()
+        for clip in clips
+        if clip.cuts is not None and clip.cuts.signals.attitude is not None
+    }
     return {
         "fpvedit_version": __version__,
         "config": dataclasses.asdict(config),
         "output": {"width": fit.width, "height": fit.height, "fps": str(fit.rate)},
         "clips": [
-            {"path": str(info.path), "duration": info.duration, "usable": index in usable}
+            {
+                "path": str(info.path),
+                "duration": info.duration,
+                "usable": index in usable,
+                **({"turns": measured[index]} if index in measured else {}),
+            }
             for index, info in enumerate(infos)
         ],
         "shots": [
