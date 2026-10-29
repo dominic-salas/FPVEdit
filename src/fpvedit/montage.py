@@ -51,6 +51,7 @@ from fpvedit.highlights import (
 )
 from fpvedit.measure import Measurements
 from fpvedit.motion import CONFIDENCE
+from fpvedit.osd import Throttle
 from fpvedit.rating import ClipSignals, Quality, rate_shot
 from fpvedit.tricks import TrickConfig, name_fast_turn, power_loop_frames
 
@@ -257,6 +258,7 @@ def cut_map(
     selection: Selection,
     config: MontageConfig | None = None,
     selection_config: SelectionConfig | None = None,
+    throttle: Throttle | None = None,
 ) -> CutMap:
     config = config or MontageConfig()
     fps = measurements.fps
@@ -278,6 +280,7 @@ def cut_map(
         confidence=np.nan_to_num(measurements.motion[:, CONFIDENCE]),
         brightness=np.nan_to_num(measurements.brightness),
         crashes=tuple(c.start for c in selection.cuts if c.reason is CutReason.CRASH),
+        throttle=throttle,
     )
     return CutMap(usable, calm, turning, signals)
 

@@ -58,6 +58,9 @@ NOTES = (
     "very close",
     "fast",
     "dark",
+    "throttle punch",
+    "throttle off",
+    "high throttle",
 )
 
 

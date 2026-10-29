@@ -26,6 +26,8 @@ from itertools import pairwise
 import numpy as np
 from numpy.typing import NDArray
 
+from fpvedit.osd import Throttle
+
 FloatArray = NDArray[np.float64]
 
 WEIGHTS = {"trick": 0.4, "clean": 0.3, "impressive": 0.3, "watchable": 0.0}
@@ -108,6 +110,7 @@ class ClipSignals:
     confidence: FloatArray  # 0-1
     brightness: FloatArray  # 0-1
     crashes: tuple[float, ...]  # start times of crash cuts
+    throttle: Throttle | None = None  # read from the OSD (`osd.py`), if shown
 
 
 def _clip(value: float, low: float = 0.0, high: float = 1.0) -> float:
@@ -196,4 +199,40 @@ def rate_shot(
     watchable = _clip(1.0 - 2.0 * (1.0 - followed)) * (0.5 if bright < config.dark else 1.0)
     if bright < config.dark:
         reasons.append("dark")
+    reasons.extend(throttle_notes(start, end, turns, signals.throttle))
     return Quality(trick, _clip(clean), impressive, watchable, tuple(reasons))
+
+
+THROTTLE_CHOP = 15.0  # percent: a turn flown at or below this is flown off the throttle
+THROTTLE_PUNCH = 70.0  # ... and a punch out after it reaches this
+THROTTLE_HIGH = 60.0  # median over the shot at or above this: flown on the throttle
+
+
+def throttle_notes(
+    start: float, end: float, turns: Sequence[float], throttle: Throttle | None
+) -> list[str]:
+    """What the OSD throttle says about a shot (notes only; the score is unchanged)."""
+    if throttle is None:
+        return []
+    shot = throttle.between(start, end)
+    shot = shot[np.isfinite(shot)]
+    if len(shot) < 0.3 * max(1.0, (end - start) * throttle.fps):
+        return []  # too little of it was readable
+    notes = []
+    punched = off = False
+    for time in turns:
+        during = throttle.between(time - 0.4, time + 0.4)
+        after = throttle.between(time, time + 1.5)
+        during, after = during[np.isfinite(during)], after[np.isfinite(after)]
+        if len(during) and float(during.min()) <= THROTTLE_CHOP:
+            if len(after) and float(after.max()) >= THROTTLE_PUNCH:
+                punched = True
+            elif float(during.max()) <= THROTTLE_CHOP:
+                off = True
+    if punched:
+        notes.append("throttle punch")
+    if off:
+        notes.append("throttle off")
+    if float(np.median(shot)) >= THROTTLE_HIGH:
+        notes.append("high throttle")
+    return notes
