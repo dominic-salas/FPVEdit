@@ -109,8 +109,8 @@ writes `flight1_montage.mp4` next to the first recording. Options:
   analysis as JSON, only that, and reuse measurements between runs.
 
 Clips of different sizes or frame rates are fitted to the largest size (letterboxed, never
-stretched) at the frame rate of the clip that fills most of the montage. The output has no
-audio from the recordings (DVR audio is goggle noise).
+stretched) at the frame rate of the clip that fills most of the montage. The recordings'
+own sound is kept, cut with the picture (AAC stereo); music you add replaces it.
 
 ## Running from source (Windows or Linux)
 

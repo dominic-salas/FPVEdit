@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **The montage keeps the recordings' sound**, cut exactly with the picture (in sync to
+  within a couple of milliseconds across every cut). Music, when added, still replaces it.
 - **Find a missed shot**: on the montage page, play any whole recording, and at the moment
   you want press M (or Mark a shot here): a shot is built around it, cut in calm moments
   and out of any turn, and added to the montage.

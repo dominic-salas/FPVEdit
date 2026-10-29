@@ -203,3 +203,61 @@ def test_vertical_export_fills_a_9_by_16_frame_with_the_middle(tmp_path: Path) -
         x = 26 * bit + 13 - 92
         shown = (frames[:, 60, x] > 128).tolist()
         assert shown == [bool(n >> bit & 1) for n in expected], bit
+
+
+def beeping_clip(path: Path, seconds: float, beep: float, audio_late: float) -> Path:
+    """Numbered frames at 60 fps, and a 1 kHz beep at ``beep`` s of the picture's time in
+    audio that starts ``audio_late`` s after the picture (MPEG-TS, as DVRs record)."""
+    picture = numbered_clip(path.with_name("picture.mp4"), seconds, 60)
+    on = f"between(t,{beep - audio_late},{beep - audio_late + 0.1})"
+    tone = f"sine=f=1000:r=48000:d={seconds},volume='{on}':eval=frame"
+    subprocess.run(
+        [
+            *("ffmpeg", "-v", "error", "-i", str(picture)),
+            *("-itsoffset", f"{audio_late}", "-f", "lavfi", "-i", tone),
+            *("-map", "0:v", "-map", "1:a", "-c:v", "copy", "-c:a", "aac", str(path)),
+        ],
+        check=True,
+    )
+    return path
+
+
+def sound_of(path: Path) -> np.ndarray:
+    raw = subprocess.run(
+        ["ffmpeg", "-v", "error", "-i", str(path), "-ac", "1", "-ar", "48000", "-f", "s16le", "-"],
+        check=True,
+        capture_output=True,
+    ).stdout
+    return np.frombuffer(raw, dtype="<i2")
+
+
+@pytest.mark.parametrize("audio_late", [0.1, -0.1])
+def test_the_recordings_sound_stays_with_its_picture(tmp_path: Path, audio_late: float) -> None:
+    tools = find_tools()
+    source = beeping_clip(tmp_path / "beep.ts", 12, beep=5.0, audio_late=audio_late)
+    clips = [clip(tools, 0, source)]
+    shots = [shot(0, 2.0, 4.0), shot(0, 4.8, 6.0)]  # the beep is 0.2 s into the second
+    output = tmp_path / "montage.mp4"
+    render_montage(tools, clips, shots, output, force=False, encode=FAST)
+
+    # Where the beep really is in the recording, on the picture's timeline (the tone is
+    # switched on per block of samples, so a few ms after 5.0 s).
+    source_info = probe(tools, source)
+    assert source_info.audio is not None and source_info.audio.start_time is not None
+    assert source_info.video.start_time is not None
+    late = source_info.audio.start_time - source_info.video.start_time
+    beep = late + onset(sound_of(source))
+    info = probe(tools, output)
+    assert info.audio is not None and info.audio.codec == "aac"
+    sound = sound_of(output)
+    expected = 2.0 + (beep - 4.8)
+    heard = onset(sound)
+    assert abs(heard - expected) <= 0.002, f"the beep is at {heard:.4f} s, expected {expected:.4f}"
+    assert abs(len(sound) / 48000 - 3.2) <= 0.03  # as long as the picture
+
+
+def onset(sound: np.ndarray) -> float:
+    # The tone is about 4100 loud; mono to stereo and back makes it about 2900.
+    loud = np.flatnonzero(np.abs(sound) > 1000)
+    assert loud.size, "the beep is missing"
+    return float(loud[0] / 48000)

@@ -77,7 +77,7 @@ def test_end_to_end_keeps_flying_and_cuts_idle(flight: Path) -> None:
 
     info = probe(find_tools(), result.output)
     assert info.video.codec == "h264"
-    assert info.audio is None, "goggle audio is never carried into the edit"
+    assert info.audio is not None and info.audio.codec == "aac", "the recording's sound is kept"
     assert (info.video.width, info.video.height) == (320, 180)
     assert info.duration == pytest.approx(result.edited_duration, abs=0.5)
 
@@ -132,7 +132,7 @@ def test_input_without_audio(tmp_path: Path) -> None:
     source = make_flight(tmp_path / "silent.mp4", FLIGHT, audio=False)
     result = run_trim(source, config=FAST)
     info = probe(find_tools(), result.output)
-    assert info.audio is None
+    assert info.audio is not None and info.audio.codec == "aac"  # silence
 
 
 def test_very_short_input_is_kept_whole(tmp_path: Path) -> None:
@@ -363,21 +363,27 @@ def test_validation_rejects_full_range_output(tmp_path: Path) -> None:
         validate_output(find_tools(), clip, expected_duration=2.0, rate=Fraction(60))
 
 
-def test_validation_rejects_an_audio_track(tmp_path: Path) -> None:
-    clip = _encode(
+def test_validation_wants_sound_only_where_there_should_be_some(tmp_path: Path) -> None:
+    tools = find_tools()
+    sound = _encode(
         tmp_path / "sound.mp4",
         *("-f", "lavfi", "-i", "sine=d=2", *LIMITED, "-c:a", "aac"),
     )
+    silent = _encode(tmp_path / "silent.mp4", *LIMITED)
+    validate_output(tools, sound, expected_duration=2.0, rate=Fraction(60))
     with pytest.raises(ValidationError, match="audio"):
-        validate_output(find_tools(), clip, expected_duration=2.0, rate=Fraction(60))
+        validate_output(tools, silent, expected_duration=2.0, rate=Fraction(60))
+    with pytest.raises(ValidationError, match="audio"):
+        validate_output(tools, sound, expected_duration=2.0, rate=Fraction(60), sound=False)
 
 
 def test_validation_rejects_a_wrong_frame_count(tmp_path: Path) -> None:
     clip = _encode(tmp_path / "ok.mp4", *LIMITED)
     tools = find_tools()
-    validate_output(tools, clip, expected_duration=2.0, rate=Fraction(60), expected_frames=120)
+    check = {"expected_duration": 2.0, "rate": Fraction(60), "sound": False}
+    validate_output(tools, clip, expected_frames=120, **check)  # type: ignore[arg-type]
     with pytest.raises(ValidationError, match="frames"):
-        validate_output(tools, clip, expected_duration=2.0, rate=Fraction(60), expected_frames=200)
+        validate_output(tools, clip, expected_frames=200, **check)  # type: ignore[arg-type]
 
 
 def test_variable_frame_rate_input_is_refused_end_to_end(tmp_path: Path) -> None:
