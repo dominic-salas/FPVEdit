@@ -246,3 +246,45 @@ def test_settings_are_stored_between_runs() -> None:
         QSettings().clear()
         app.setOrganizationName(names[0])
         app.setApplicationName(names[1])
+
+
+def test_right_name_answers_are_kept_apart_from_edits(tmp_path: Path) -> None:
+    from fpvedit.app.myratings import MyRatings
+
+    clip = tmp_path / "a.ts"
+    mine = MyRatings(tmp_path / "my-ratings.jsonl")
+    mine.note_name(clip, 12.3, "back flip", "yes")
+    mine.note_name(clip, 40.0, "flip", "power loop")
+    again = MyRatings(tmp_path / "my-ratings.jsonl")
+    assert again.names_right() == (1, 2)
+    assert again.name(clip, 40.0, "flip") == "power loop"  # the pilot's name is shown
+    assert again.name(clip, 12.3, "back flip") == "back flip"
+    assert again.edit_count == 0 and not (tmp_path / "my-edits.jsonl").exists()
+    again.clear()
+    assert not (tmp_path / "my-names.jsonl").exists()
+
+
+def test_the_shot_panel_asks_right_name_and_shows_the_answer(tmp_path: Path) -> None:
+    from fpvedit.app.model import ShotList
+    from fpvedit.app.review import ReviewPage
+    from fpvedit.media import Tools
+    from fpvedit.montage import Moment, MomentKind, Shot
+    from fpvedit.rating import Quality
+
+    QApplication.instance() or QApplication([])
+    info = type("Info", (), {"path": tmp_path / "a.ts", "duration": 60.0})()
+    quality = Quality(0.8, 0.8, 0.8, 0.8, ("test",))
+    flip = Moment(5.0, MomentKind.FLIP, 3.0, "back flip")
+    shot = Shot(0, 2.0, 12.0, 3.0, (flip,), quality)
+    page = ReviewPage(Tools("ffmpeg", "ffprobe", 7), ratings_file=tmp_path / "my-ratings.jsonl")
+    try:
+        page.set_montage([info], ShotList((shot,), (), {0: 60.0}))
+        page._picked(0, 0.0)
+        assert page._name_row.isVisibleTo(page)
+        assert "BACK FLIP" in page._name_question.text()
+        page._answer_name("roll")
+        assert page._shot_title.text() == "Roll"
+        assert "YOU SAID: ROLL" in page._name_question.text()
+        assert page.ratings.names_right() == (0, 1)
+    finally:
+        page.shutdown()

@@ -8,6 +8,7 @@ moves it. Every edit goes through `ShotList`, so it can be undone.
 
 from __future__ import annotations
 
+import dataclasses
 import functools
 import logging
 import queue
@@ -23,6 +24,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QListWidget,
     QListWidgetItem,
+    QMenu,
     QPushButton,
     QSlider,
     QStackedWidget,
@@ -48,7 +50,7 @@ from fpvedit.app.timeline import Block, Timeline, clip_colour, rating_colour, st
 from fpvedit.app.widgets import button, plural, timecode
 from fpvedit.errors import FPVEditError
 from fpvedit.media import MUSIC_SUFFIXES, AudioFile, MediaInfo, Tools, probe_audio
-from fpvedit.montage import Shot
+from fpvedit.montage import Moment, MomentKind, Shot
 
 THUMB_HEIGHT = 144  # grabbed once, drawn at timeline, list and panel sizes
 TRIM_STEPS = (-0.5, 0.5)
@@ -107,6 +109,31 @@ def describe(shot: Shot) -> str:
         for name, count in counts.items()
     ]
     return ", ".join(names) or "flying"
+
+
+# Names offered under "Other" for a trick the app named wrong.
+TRICK_NAMES = (
+    "back flip",
+    "front flip",
+    "double back flip",
+    "double front flip",
+    "roll",
+    "double roll",
+    "half roll",
+    "yaw spin",
+    "power loop",
+    "split-S",
+    "Matty flip",
+    "juicy flick",
+    "dive",
+    "orbit",
+    "not a trick",
+)
+
+
+def asked_about(shot: Shot) -> Moment | None:
+    """The trick "right name?" asks about: the shot's first flip, roll or spin."""
+    return next((m for m in shot.moments if m.kind is MomentKind.FLIP), None)
 
 
 def label(text: str = "", role: str = "eyebrow") -> QLabel:
@@ -397,6 +424,27 @@ class ReviewPage(QWidget):
         column.addWidget(self._shot_number)
         column.addWidget(self._shot_picture)
         column.addWidget(self._shot_title)
+        self._name_row = QWidget()
+        naming = QHBoxLayout(self._name_row)
+        naming.setContentsMargins(0, 0, 0, 0)
+        naming.setSpacing(6)
+        self._name_question = label("RIGHT NAME?")
+        naming.addWidget(self._name_question)
+        yes = button("YES", lambda: self._answer_name("yes"))
+        yes.setToolTip("The trick's name is right")
+        naming.addWidget(yes)
+        no = button("NO", lambda: self._answer_name("no"))
+        no.setToolTip("The name is wrong (pick the right one under Other)")
+        naming.addWidget(no)
+        other = QPushButton("OTHER ▾")
+        other.setToolTip("Pick the right name")
+        menu = QMenu(other)
+        for name in TRICK_NAMES:
+            menu.addAction(name, functools.partial(self._answer_name, name))
+        other.setMenu(menu)
+        naming.addWidget(other)
+        naming.addStretch(1)
+        column.addWidget(self._name_row)
         column.addWidget(self._shot_source)
         self._shot_reasons = label(role="muted")
         self._shot_reasons.setWordWrap(True)
@@ -780,7 +828,21 @@ class ReviewPage(QWidget):
             )
         else:
             self._shot_picture.clear()
-        self._shot_title.setText(describe(shot).capitalize())
+        path = self._info(shot).path
+        named = tuple(
+            dataclasses.replace(m, trick=self._mine.name(path, m.time, m.name))
+            for m in shot.moments
+        )
+        self._shot_title.setText(describe(dataclasses.replace(shot, moments=named)).capitalize())
+        asked = asked_about(shot)
+        self._name_row.setVisible(asked is not None)
+        if asked is not None:
+            answer = self._mine.answer(path, asked.time)
+            self._name_question.setText(
+                f"RIGHT NAME? ({asked.name.upper()})"
+                if answer is None
+                else f"YOU SAID: {('RIGHT' if answer == 'yes' else answer).upper()}"
+            )
         self._shot_source.setText(
             f"<span style='color:{clip_colour(shot.clip)}'>■</span> "
             f"{self._name(shot).upper()}<br>{timecode(shot.start)} TO {timecode(shot.end)}   "
@@ -814,6 +876,25 @@ class ReviewPage(QWidget):
             f"{count} shot{'s' if count != 1 else ''} rated; the next Find shots learns from them."
         )
         self._now.setText(f"YOU RATED SHOT {index + 1:02d}  {stars_text(stars)}")
+        self._show_editor()
+
+    def _answer_name(self, answer: str) -> None:
+        """Record the pilot's answer to "right name?" for the open shot's first trick."""
+        index = self._selected
+        shots = self._current()
+        if index is None or not shots:
+            return
+        shot = shots[index]
+        asked = asked_about(shot)
+        if asked is None:
+            return
+        try:
+            self._mine.note_name(self._info(shot).path, asked.time, asked.name, answer)
+        except OSError as exc:
+            self._say(f"Could not save your answer: {exc}")
+            return
+        right, answered = self._mine.names_right()
+        self._say(f"Noted. {right} of {answered} trick names right so far.")
         self._show_editor()
 
     def _say(self, text: str) -> None:

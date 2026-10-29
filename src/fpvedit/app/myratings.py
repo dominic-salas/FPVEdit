@@ -10,6 +10,11 @@ Exporting a montage appends what the edit said about its shots to ``my-edits.jso
 it (`model.ShotList.outcome`: removed, exported as it was, trimmed, added, marked), in the
 same form. The taste learns from those more weakly (`taste.EDITS`); a shot's own stars
 always win over what an edit said about it.
+
+"Right name?" answers in the shot panel go to ``my-names.jsonl``: the trick at a time in a
+recording, the name the app gave it and the pilot's answer ("yes", "no" or the right name).
+They are kept apart from the edits, which hold one entry per shot. They measure how often
+the names are right, and the pilot's own name is shown instead of the app's.
 """
 
 from __future__ import annotations
@@ -25,16 +30,23 @@ from fpvedit.rating import Quality
 from fpvedit.taste import EDITS, RatedShot
 
 EDITS_FILE = "my-edits.jsonl"
+NAMES_FILE = "my-names.jsonl"
 
 
 def shot_key(path: Path, shot: Shot) -> str:
     return f"{path.resolve()}|{shot.start:.2f}|{shot.end:.2f}"
 
 
+def moment_key(path: Path, time: float) -> str:
+    return f"{path.resolve()}|{time:.2f}"
+
+
 class MyRatings:
     def __init__(self, file: Path | None) -> None:
         self.file = file
         self.edits_file = file.with_name(EDITS_FILE) if file is not None else None
+        self.names_file = file.with_name(NAMES_FILE) if file is not None else None
+        self._names: dict[str, dict[str, Any]] = {}  # the latest answer for each trick
         self._stars: dict[str, int] = {}
         self._entries: dict[str, dict[str, Any]] = {}  # the latest rating of each shot
         self._edits: dict[str, dict[str, Any]] = {}  # the latest edit of each shot
@@ -52,6 +64,9 @@ class MyRatings:
         for entry in _read(self.edits_file):
             if isinstance(entry.get("key"), str):
                 self._edits[entry["key"]] = entry
+        for entry in _read(self.names_file):
+            if isinstance(entry.get("key"), str) and isinstance(entry.get("answer"), str):
+                self._names[entry["key"]] = entry
 
     @property
     def count(self) -> int:
@@ -103,6 +118,35 @@ class MyRatings:
             entries.append(entry)
         _append(self.edits_file, entries)
 
+    def note_name(self, path: Path, time: float, shown: str, answer: str) -> None:
+        """Remember the pilot's answer to "right name?" for the trick at ``time`` (seconds)
+        of the recording at ``path``: "yes", "no" or the right name."""
+        entry: dict[str, Any] = {
+            "key": moment_key(path, time),
+            "recording": str(path),
+            "time": round(time, 2),
+            "shown": shown,
+            "answer": answer,
+            "named_at": time_stamp(),
+        }
+        self._names[entry["key"]] = entry
+        _append(self.names_file, [entry])
+
+    def answer(self, path: Path, time: float) -> str | None:
+        """The pilot's answer for the trick at ``time``, if they gave one."""
+        entry = self._names.get(moment_key(path, time))
+        return str(entry["answer"]) if entry is not None else None
+
+    def name(self, path: Path, time: float, shown: str) -> str:
+        """The trick's name: the pilot's own when they gave one, else ``shown``."""
+        answer = self.answer(path, time)
+        return answer if answer not in (None, "yes", "no") else shown
+
+    def names_right(self) -> tuple[int, int]:
+        """How many answered names were right ("yes"), of how many answered."""
+        answers = [e["answer"] for e in self._names.values()]
+        return sum(1 for a in answers if a == "yes"), len(answers)
+
     def rated_shots(self) -> list[RatedShot]:
         """Every rating that recorded the app's own rating of the shot, then what the edits
         said about the shots without a rating, to learn from."""
@@ -141,13 +185,18 @@ class MyRatings:
         return rated
 
     def clear(self) -> None:
-        """Forget every rating and edit: the files are deleted (nothing else is kept)."""
+        """Forget every rating, edit and name: the files are deleted (nothing else is kept)."""
         self._stars.clear()
         self._entries.clear()
         self._edits.clear()
-        for file in (self.file, self.edits_file):
+        self._names.clear()
+        for file in (self.file, self.edits_file, self.names_file):
             if file is not None:
                 file.unlink(missing_ok=True)
+
+
+def time_stamp() -> str:
+    return time.strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _describe(path: Path, shot: Shot) -> dict[str, Any]:
