@@ -343,7 +343,7 @@ class MainWindow(QMainWindow):
         buttons.addWidget(button("Add clips", self._choose_clips, primary=True))
         buttons.addWidget(button("ADD A FOLDER", self._choose_folder))
         buttons.addSpacing(24)
-        self._quick_rate = button("★  JUST RATE SHOTS", self._rate_folder)
+        self._quick_rate = button("★  RATE SHOTS", self._rate_folder)
         self._quick_rate.setToolTip("Pick a folder of recordings and rate their shots, no montage")
         buttons.addWidget(self._quick_rate)
         buttons.addStretch(1)
@@ -595,7 +595,7 @@ class MainWindow(QMainWindow):
         if page == self.WORK:
             current = 3 if self._task_page == self.REVIEW else 1
         else:
-            current = {self.CLIPS: 0, self.REVIEW: 2, self.DONE: 3, self.RATE: 0}[page]
+            current = {self.CLIPS: 0, self.REVIEW: 2, self.DONE: 3, self.RATE: -1}[page]
         reachable = {0}
         if self._clips.count():
             reachable.add(1)
@@ -933,7 +933,7 @@ class MainWindow(QMainWindow):
         tools, cache = self._tools, self._cache_dir
 
         def work(progress: Progress) -> object:
-            progress("Rating the shots (with the image model)", 0.0)
+            progress("Rating the shots", 0.0)
             return keep_rated(
                 tools,
                 plan,

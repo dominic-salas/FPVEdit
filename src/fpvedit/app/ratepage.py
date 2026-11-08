@@ -71,7 +71,9 @@ class RatePage(QWidget):
         self._progress = _label(role="hero")
         self._about = _label()
         self._about.setWordWrap(True)
-        stars = QHBoxLayout()
+        self._stars = QWidget()
+        stars = QHBoxLayout(self._stars)
+        stars.setContentsMargins(0, 0, 0, 0)
         stars.setSpacing(10)
         for number in range(1, 6):
             star = QPushButton(f"{number}\n{'★' * number}\n{WORDS[number]}")
@@ -100,8 +102,10 @@ class RatePage(QWidget):
         self._note = _label()
         column.addWidget(self._note)
         column.addWidget(self._video, 1)
+        self._nothing = QWidget()  # keeps the buttons at the bottom when there is no shot
+        column.addWidget(self._nothing, 1)
         column.addWidget(self._about)
-        column.addLayout(stars)
+        column.addWidget(self._stars)
         column.addLayout(controls)
 
         for number in range(1, 6):
@@ -231,3 +235,8 @@ class RatePage(QWidget):
         else:
             text = f"{total} of {GOAL} rated   ({left} shots waiting)"
         self._progress.setText(text)
+        showing = self._current is not None
+        self._video.setVisible(showing)
+        self._stars.setVisible(showing)
+        self._about.setVisible(showing)
+        self._nothing.setVisible(not showing)

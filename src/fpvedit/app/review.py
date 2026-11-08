@@ -100,6 +100,16 @@ def tint(widget: QPushButton, colour: str) -> None:
     widget.setStyleSheet(f"QPushButton {{ color: {colour}; border-color: {colour}; }}")
 
 
+def headline(shot: Shot) -> str:
+    """What a shot is, in a few words: only its biggest kind of moment."""
+    for kind in (MomentKind.FLIP, MomentKind.SPIN, MomentKind.PROXIMITY):
+        top = tuple(m for m in shot.moments if m.kind is kind)
+        named = tuple(m for m in top if m.name != kind.value)  # "back flip", not also "flip"
+        if top:
+            return describe(dataclasses.replace(shot, moments=named or top))
+    return describe(shot)
+
+
 def describe(shot: Shot) -> str:
     counts: dict[str, int] = {}
     for moment in shot.moments:
@@ -299,7 +309,7 @@ class ReviewPage(QWidget):
         column.setContentsMargins(40, 28, 40, 16)
         column.setSpacing(6)
         column.addWidget(label("STEP 3 OF 4"))
-        column.addWidget(label("Your montage", "heading"))
+        column.addWidget(label("Review your montage", "heading"))
         column.addWidget(self._heading_summary)
         column.addSpacing(14)
         column.addLayout(body, 1)
@@ -376,10 +386,6 @@ class ReviewPage(QWidget):
 
     def _build_editor(self) -> QWidget:
         self._shot_number = label()
-        self._shot_picture = QLabel()
-        self._shot_picture.setFixedSize(SIDE_WIDTH, round(SIDE_WIDTH * 9 / 16))
-        self._shot_picture.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._shot_picture.setStyleSheet("background: black; border-radius: 6px;")
         self._shot_title = label(role="hero")
         self._shot_source = QLabel()
         self._shot_source.setProperty("role", "caption")
@@ -422,7 +428,6 @@ class ReviewPage(QWidget):
         column.setContentsMargins(0, 0, 0, 0)
         column.setSpacing(10)
         column.addWidget(self._shot_number)
-        column.addWidget(self._shot_picture)
         column.addWidget(self._shot_title)
         self._name_row = QWidget()
         naming = QHBoxLayout(self._name_row)
@@ -764,6 +769,7 @@ class ReviewPage(QWidget):
                     label=f"{number:02d}  {stars}★"
                     if by_rating
                     else f"{number:02d}  {self._name(shot)}",
+                    short=f"{stars}★" if by_rating else f"{number}",
                     tooltip=(
                         f"Shot {number}: {describe(shot)}, {stars_text(stars)}\n"
                         f"{self._name(shot)}, {timecode(shot.start)} to {timecode(shot.end)} "
@@ -817,23 +823,12 @@ class ReviewPage(QWidget):
             f"SHOT {index + 1:02d} OF {len(shots):02d}   "
             f"<span style='color:{rating_colour(stars)}'>{stars_text(stars)}</span>"
         )
-        pixmap = self._thumbnail(shot)
-        if pixmap is not None:
-            self._shot_picture.setPixmap(
-                pixmap.scaled(
-                    self._shot_picture.size(),
-                    Qt.AspectRatioMode.KeepAspectRatio,
-                    Qt.TransformationMode.SmoothTransformation,
-                )
-            )
-        else:
-            self._shot_picture.clear()
         path = self._info(shot).path
         named = tuple(
             dataclasses.replace(m, trick=self._mine.name(path, m.time, m.name))
             for m in shot.moments
         )
-        self._shot_title.setText(describe(dataclasses.replace(shot, moments=named)).capitalize())
+        self._shot_title.setText(headline(dataclasses.replace(shot, moments=named)).capitalize())
         asked = asked_about(shot)
         self._name_row.setVisible(asked is not None)
         if asked is not None:
@@ -849,7 +844,8 @@ class ReviewPage(QWidget):
             f"{shot.duration:.1f} S"
         )
         reasons = shot.quality.reasons if shot.quality is not None else ()
-        self._shot_reasons.setText("  ·  ".join(reasons))
+        already = {m.name.lower() for m in named}
+        self._shot_reasons.setText("  ·  ".join(r for r in reasons if r.lower() not in already))
         given = self._mine.stars(self._info(shot).path, shot) or 0
         for number, star in enumerate(self._my_star_buttons, start=1):
             star.setText("★" if number <= given else "☆")
@@ -998,7 +994,7 @@ class ReviewPage(QWidget):
         self._now.setText(
             f"{state}  {index + 1:02d}/{len(shots):02d}   "
             f"<span style='color:{clip_colour(shot.clip)}'>■</span> "
-            f"{self._name(shot).upper()}   {describe(shot).upper()}"
+            f"{self._name(shot).upper()}   {headline(shot).upper()}"
         )
 
     def _show_time(self) -> None:
@@ -1239,7 +1235,7 @@ class ReviewPage(QWidget):
             self._now.setText(
                 f"PREVIEW, NOT IN THE MONTAGE   "
                 f"<span style='color:{clip_colour(shot.clip)}'>■</span> "
-                f"{self._name(shot).upper()}   {describe(shot).upper()}"
+                f"{self._name(shot).upper()}   {headline(shot).upper()}"
             )
             self._show_play_state()
 
