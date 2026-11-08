@@ -10,7 +10,7 @@ import multiprocessing
 import sys
 
 
-def main() -> int:
+def main(combined: bool = False) -> int:
     # In the standalone build, analysis worker processes start this same program;
     # freeze_support() runs the worker there instead of a second window.
     multiprocessing.freeze_support()
@@ -21,6 +21,11 @@ def main() -> int:
         )
         print(message, file=sys.stderr)
         return 1
-    from fpvedit.app.window import run
+    from fpvedit.app.window import FLOWFLIGHT, FPVEDIT, run
 
-    return run(sys.argv)
+    return run(sys.argv, FLOWFLIGHT if combined else FPVEDIT)
+
+
+def flowflight() -> int:
+    """The combined app: the same window with the Score, Edit and Clean tabs."""
+    return main(combined=True)

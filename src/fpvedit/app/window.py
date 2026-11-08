@@ -15,6 +15,7 @@ import threading
 import time
 import traceback
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QPointF, QStandardPaths, Qt, QThread, QUrl, Signal
@@ -206,6 +207,21 @@ class DotGrid(QWidget):
         painter.end()
 
 
+@dataclass(frozen=True)
+class Product:
+    """What the window calls itself and whether it has the tabs of the combined app."""
+
+    name: str
+    logo: str
+    accent_from: int
+    app_id: str
+    modes: bool
+
+
+FPVEDIT = Product("FPVEdit", "fpvedit", 3, "FPVEdit.App", modes=False)
+FLOWFLIGHT = Product("FlowFlight", "flowflight", 4, "FlowFlight.App", modes=True)
+
+
 class Steps(QWidget):
     """The four steps in the header; the current one is lit, reachable ones are clickable."""
 
@@ -238,7 +254,7 @@ class Steps(QWidget):
 class MainWindow(QMainWindow):
     """Four screens, one step each: add clips, find shots, review, export."""
 
-    CLIPS, WORK, REVIEW, DONE, RATE, PILOT = range(6)
+    CLIPS, WORK, REVIEW, DONE, RATE, PILOT, CLEAN = range(7)
 
     def __init__(
         self,
@@ -246,9 +262,12 @@ class MainWindow(QMainWindow):
         cache_dir: Path | None,
         settings: AppSettings | None = None,
         log_file: Path | None = None,
+        product: Product | None = None,
     ) -> None:
         super().__init__()
-        self.setWindowTitle(f"FPVEdit {__version__}")
+        self._product = product or FPVEDIT
+        self._edit_page = self.CLIPS  # where the Edit tab returns to
+        self.setWindowTitle(f"{self._product.name} {__version__}")
         self.setWindowIcon(app_icon())
         self.resize(1280, 820)
         self.setAcceptDrops(True)
@@ -291,7 +310,7 @@ class MainWindow(QMainWindow):
     # ----- layout -----
 
     def _build(self) -> None:
-        logo = DotTitle("fpvedit", cell=4, accent_from=3)
+        logo = DotTitle(self._product.logo, cell=4, accent_from=self._product.accent_from)
         self._logo = logo
         self._steps = Steps()
         self._steps.chosen.connect(self._go_to_step)
@@ -310,12 +329,18 @@ class MainWindow(QMainWindow):
         row.addWidget(mark)
         row.addSpacing(10)
         row.addWidget(logo)
+        self._modes = self._build_modes()
+        if self._modes:
+            row.addSpacing(28)
+            for mode in self._modes.values():
+                row.addWidget(mode)
         row.addStretch(1)
         row.addWidget(self._steps)
         row.addStretch(1)
         self._pilot_button = QPushButton("PILOT")
         self._pilot_button.setProperty("flat", True)
         self._pilot_button.clicked.connect(self._open_pilot)
+        self._pilot_button.setVisible(not self._product.modes)
         row.addWidget(self._pilot_button)
         row.addWidget(self._theme_button)
         row.addWidget(self._menu_button)
@@ -331,10 +356,13 @@ class MainWindow(QMainWindow):
         self._pages.addWidget(self._rate)
         self._rated_clips: set[Path] = set()  # clips whose shots went to the rating screen
         self._history = open_history()
-        self._pilot = PilotPage(self._history) if self._history else None
+        self._pilot = PilotPage(self._history, not self._product.modes) if self._history else None
         if self._pilot is not None:
             self._pilot.back.connect(lambda: self._show_page(self.CLIPS))
             self._pages.addWidget(self._pilot)
+        else:
+            self._pages.addWidget(QWidget())  # keeps the page numbers
+        self._pages.addWidget(self._build_clean_page())
 
         central = QWidget()
         layout = QVBoxLayout(central)
@@ -594,7 +622,55 @@ class MainWindow(QMainWindow):
             self._review.activate()
         elif page == self.RATE:
             self._rate.start()
+        if page not in (self.PILOT, self.CLEAN):
+            self._edit_page = page
+        self._refresh_modes()
         self._refresh_steps()
+
+    def _build_modes(self) -> dict[int, QPushButton]:
+        """The Score, Edit and Clean tabs of the combined app; none in FPVEdit alone."""
+        if not self._product.modes:
+            return {}
+        modes: dict[int, QPushButton] = {}
+        for page, text, slot in (
+            (self.PILOT, "SCORE", self._open_pilot),
+            (self.CLIPS, "EDIT", self._open_edit),
+            (self.CLEAN, "CLEAN", self._open_clean),
+        ):
+            mode = QPushButton(text)
+            mode.setProperty("role", "step")
+            mode.clicked.connect(slot)
+            modes[page] = mode
+        return modes
+
+    def _build_clean_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        text = QLabel("Cleaning analog footage is not part of this app yet. Use AnaHD for now.")
+        text.setProperty("role", "hero")
+        layout.addStretch(1)
+        layout.addWidget(text, alignment=Qt.AlignmentFlag.AlignHCenter)
+        layout.addStretch(1)
+        return page
+
+    def _open_edit(self) -> None:
+        if not self._busy():
+            self._show_page(self._edit_page)
+
+    def _open_clean(self) -> None:
+        if not self._busy():
+            self._show_page(self.CLEAN)
+
+    def _refresh_modes(self) -> None:
+        if not self._modes:
+            return
+        page = self._pages.currentIndex()
+        current = page if page in (self.PILOT, self.CLEAN) else self.CLIPS
+        self._steps.setVisible(current == self.CLIPS)
+        for key, mode in self._modes.items():
+            mode.setProperty("state", "on" if key == current else "off")
+            mode.style().unpolish(mode)
+            mode.style().polish(mode)
 
     def _open_pilot(self) -> None:
         if self._pilot is not None and not self._busy():
@@ -1372,27 +1448,27 @@ def locate_tools(settings: AppSettings) -> Tools | None:
 APP_NAME = "FPVEdit"
 
 
-def run(argv: Sequence[str]) -> int:
+def run(argv: Sequence[str], product: Product = FPVEDIT) -> int:
     if sys.platform == "win32":
         # Its own taskbar entry and icon, not those of the Python that runs it from source.
-        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("FPVEdit.App")
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(product.app_id)
     app = QApplication(list(argv))
     # Settings need an organisation name to be stored at all (without one, Qt keeps them
     # only until the app closes): HKEY_CURRENT_USER\Software\FPVEdit on Windows.
     app.setOrganizationName(APP_NAME)
     app.setApplicationName(APP_NAME)
-    app.setApplicationDisplayName(APP_NAME)
+    app.setApplicationDisplayName(product.name)
     app.setApplicationVersion(__version__)
     app.setWindowIcon(app_icon())
     base = data_folder()
     log_file = start_logging(base / "logs") if base else None
-    log.info("FPVEdit %s starting", __version__)
+    log.info("%s %s starting", product.name, __version__)
     settings = AppSettings()
     theme.apply(app, theme.THEMES.get(settings.theme, theme.DARK), theme.load_fonts())
     tools = locate_tools(settings)
     if tools is None:
         return 1
-    window = MainWindow(tools, cache_folder(), settings, log_file)
+    window = MainWindow(tools, cache_folder(), settings, log_file, product)
     window.add_paths([Path(arg) for arg in argv[1:]])
     window.show()
     return app.exec()
