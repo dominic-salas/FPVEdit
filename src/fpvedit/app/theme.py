@@ -156,12 +156,12 @@ def stylesheet(p: Palette, fonts: Fonts) -> str:
         border-top: 1px solid {p.border}; }}
 
     QPushButton {{ background: transparent; color: {p.muted}; border: 1px solid {p.border_strong};
-        border-radius: 0; padding: 6px 10px; font-family: {mono}; font-size: 8pt; }}
+        border-radius: 6px; padding: 6px 10px; font-family: {mono}; font-size: 8pt; }}
     QPushButton:hover {{ color: {p.text}; border-color: {p.muted}; background: {p.surface}; }}
     QPushButton:pressed {{ background: {p.surface_2}; }}
     QPushButton:disabled {{ color: {p.faint}; border-color: {p.border}; background: transparent; }}
     QPushButton[primary="true"] {{ background: {p.text}; color: {p.bg}; border-color: {p.text};
-        border-radius: 8px; padding: 7px 16px; font-family: "{fonts.sans}"; font-size: 10pt;
+        border-radius: 6px; padding: 7px 16px; font-family: "{fonts.sans}"; font-size: 10pt;
         font-weight: 500; }}
     QPushButton[primary="true"]:hover {{ background: {p.muted}; border-color: {p.muted}; }}
     QPushButton[primary="true"]:disabled {{ background: {p.surface_2}; color: {p.faint};
@@ -181,6 +181,7 @@ def stylesheet(p: Palette, fonts: Fonts) -> str:
         border: 1px solid {p.border_strong}; border-radius: 8px; padding: 4px 8px;
         font-family: {mono}; font-size: 8pt; }}
     QComboBox:hover, QDoubleSpinBox:hover {{ border-color: {p.border_strong}; }}
+    QComboBox:disabled {{ color: {p.faint}; background: transparent; border-color: {p.border}; }}
     QComboBox QAbstractItemView {{ background: {p.surface}; border: 1px solid {p.border_strong};
         selection-background-color: {p.surface_2}; color: {p.text}; }}
     QComboBox::drop-down {{ border: none; width: 18px; }}

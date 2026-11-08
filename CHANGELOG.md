@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **A clearer review page.** One preview instead of two, a shorter shot title, timeline
+  labels that are never cut to dots, and ratings shown from grey to amber instead of red to
+  green. The Rate page shows no step as current, and buttons share one shape.
 - **Fewer flips left out.** Without a target length, the shots are chosen to show as many
   flips as possible; before, a flip beside a stronger shot could be dropped. On 12 test
   recordings every turn of 180 degrees or more now has a shot (6 of 49 did not).
