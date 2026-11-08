@@ -3,14 +3,16 @@ dot-matrix title and the status dot."""
 
 from __future__ import annotations
 
+import math
+
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer
 from PySide6.QtGui import (
     QColor,
     QIcon,
-    QLinearGradient,
     QPainter,
     QPainterPath,
     QPaintEvent,
+    QPen,
     QPixmap,
 )
 from PySide6.QtWidgets import QWidget
@@ -19,36 +21,48 @@ SIZES = (16, 24, 32, 48, 64, 128, 256)
 
 
 def icon_pixmap(size: int) -> QPixmap:
-    """A rounded tile with a play mark and four rotor rings: a montage of quad footage."""
+    """The app icon: FPV goggles with the horizon rolling over in the visor, as a flip looks
+    from inside them. Small sizes keep fewer, stronger trails, which would otherwise fade."""
     pixmap = QPixmap(size, size)
     pixmap.fill(Qt.GlobalColor.transparent)
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
     s = float(size)
-    gradient = QLinearGradient(0, 0, s, s)
-    gradient.setColorAt(0.0, QColor("#ff8a00"))
-    gradient.setColorAt(1.0, QColor("#e5232e"))
+    painter.setPen(QPen(QColor("#3d3d3d"), max(1.0, s / 64)))
+    painter.setBrush(QColor("#121212"))
+    edge = max(0.5, s / 128)
+    painter.drawRoundedRect(QRectF(edge, edge, s - 2 * edge, s - 2 * edge), 0.2 * s, 0.2 * s)
+    goggles = QPainterPath()
+    goggles.addRoundedRect(QRectF(0.1 * s, 0.26 * s, 0.8 * s, 0.5 * s), 0.14 * s, 0.14 * s)
+    nose = QPainterPath()
+    nose.addEllipse(QPointF(0.5 * s, 0.8 * s), 0.11 * s, 0.14 * s)
+    goggles = goggles.subtracted(nose)
     painter.setPen(Qt.PenStyle.NoPen)
-    painter.setBrush(gradient)
-    painter.drawRoundedRect(QRectF(0.04 * s, 0.04 * s, 0.92 * s, 0.92 * s), 0.2 * s, 0.2 * s)
-    if size >= 32:  # rotor rings only where they can be seen
-        ring = QColor(255, 255, 255, 110)
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        pen = painter.pen()
-        pen.setStyle(Qt.PenStyle.SolidLine)
-        pen.setColor(ring)
-        pen.setWidthF(max(1.0, 0.03 * s))
-        painter.setPen(pen)
-        for cx, cy in ((0.27, 0.27), (0.73, 0.27), (0.27, 0.73), (0.73, 0.73)):
-            painter.drawEllipse(QPointF(cx * s, cy * s), 0.15 * s, 0.15 * s)
-        painter.setPen(Qt.PenStyle.NoPen)
-    play = QPainterPath()
-    play.moveTo(0.40 * s, 0.30 * s)
-    play.lineTo(0.72 * s, 0.50 * s)
-    play.lineTo(0.40 * s, 0.70 * s)
-    play.closeSubpath()
-    painter.setBrush(QColor("white"))
-    painter.drawPath(play)
+    painter.setBrush(QColor("#1f1f1f"))
+    painter.drawPath(goggles)
+    painter.save()
+    painter.setClipPath(goggles)
+    small = size < 64
+    trails = (
+        ((-34, 120, 0.05), (-12, 190, 0.05))
+        if small
+        else (
+            (-58, 50, 0.03),
+            (-36, 95, 0.03),
+            (-14, 155, 0.03),
+        )
+    )
+    centre = QPointF(s / 2, 0.5 * s)
+    for angle, alpha, width in (*trails, (10, 255, 0.08 if small else 0.05)):
+        colour = QColor("#f2a93b")
+        colour.setAlpha(alpha)
+        painter.setPen(QPen(colour, width * s, Qt.PenStyle.SolidLine, Qt.PenCapStyle.FlatCap))
+        dx, dy = math.cos(math.radians(angle)) * s, math.sin(math.radians(angle)) * s
+        painter.drawLine(centre - QPointF(dx, dy), centre + QPointF(dx, dy))
+    painter.restore()
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+    painter.setPen(QPen(QColor("#ededed"), max(1.0, (0.05 if small else 0.035) * s)))
+    painter.drawPath(goggles)
     painter.end()
     return pixmap
 
