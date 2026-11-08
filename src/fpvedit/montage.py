@@ -31,6 +31,7 @@ order the clips were given, then in recording order.
 
 from __future__ import annotations
 
+import bisect
 import dataclasses
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -130,6 +131,7 @@ class MontageConfig:
     flip_deg: float = 180.0  # turned within one second
     big_flip_deg: float = 330.0
     flip_gap_s: float = 0.8
+    flip_turn_s: float = 1.0  # a shot starts at least this long before a flip it shows
     spin_factor: float = 1.8  # sustained turning this many times the clip's median ...
     spin_floor: float = 90.0  # ... and at least this (deg/s over four seconds)
     spin_gap_s: float = 2.0
@@ -463,6 +465,44 @@ def strength(shot: Shot) -> float:
     return float(shot.score / shot.duration**0.5)
 
 
+def _flips_shown(shot: Shot, config: MontageConfig) -> set[float]:
+    """Flips a shot shows from their start: a time comes from a one-second sum, so the turn
+    can begin up to `flip_turn_s` before it."""
+    return {
+        m.time
+        for m in shot.moments
+        if m.kind is MomentKind.FLIP and shot.start + config.flip_turn_s <= m.time
+    }
+
+
+def _cover_flips(candidates: Sequence[Shot], config: MontageConfig) -> list[Shot]:
+    """The non-overlapping shots of each clip that show the most flips, the stronger shots
+    where that ties (weighted interval scheduling). Picking the strongest shots first loses
+    a flip whose only shots overlap a stronger one."""
+    chosen: list[Shot] = []
+    for clip in sorted({shot.clip for shot in candidates}):
+        shots = sorted(
+            (s for s in candidates if s.clip == clip and _flips_shown(s, config)),
+            key=lambda s: s.end,
+        )
+        ends = [s.end for s in shots]
+        # best[i]: flips shown and strength of the best choice among the first i shots.
+        best: list[tuple[int, float]] = [(0, 0.0)]
+        previous = [bisect.bisect_right(ends, s.start, 0, i) for i, s in enumerate(shots)]
+        for i, shot in enumerate(shots):
+            flips, power = best[previous[i]]
+            taken = (flips + len(_flips_shown(shot, config)), power + strength(shot))
+            best.append(max(best[i], taken))
+        i = len(shots)
+        while i > 0:
+            if best[i] == best[i - 1]:
+                i -= 1
+            else:
+                chosen.append(shots[i - 1])
+                i = previous[i - 1]
+    return chosen
+
+
 def pick_shots(
     candidates: Sequence[Shot], clip_count: int, config: MontageConfig | None = None
 ) -> tuple[Shot, ...]:
@@ -471,13 +511,14 @@ def pick_shots(
 
     Without a target length every distinct shot is kept: each one is built around a
     flip, spin or close pass, and a score threshold would also drop good shots that score
-    low (weaves of close passes). With ``length_s`` the montage stops near that length
-    and no clip fills more than its share.
+    low (weaves of close passes), and flips are placed first so none is lost to a
+    stronger shot beside it. With ``length_s`` the montage stops near that length and no
+    clip fills more than its share.
     """
     config = config or MontageConfig()
     target = config.length_s
     contributing = len({shot.clip for shot in candidates})
-    chosen: list[Shot] = []
+    chosen = _cover_flips(candidates, config) if target is None else []
     used = 0.0
     per_clip = [0.0] * max(1, clip_count)
     ranked = sorted(candidates, key=lambda s: (-strength(s), s.clip, s.start))

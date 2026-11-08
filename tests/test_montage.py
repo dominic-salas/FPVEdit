@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import dataclasses
+from itertools import pairwise
 
 import numpy as np
 import pytest
@@ -11,6 +12,7 @@ from fpvedit.flight import detect_flight
 from fpvedit.highlights import Selection, select_highlights
 from fpvedit.measure import Measurements
 from fpvedit.montage import (
+    Moment,
     MomentKind,
     MontageConfig,
     Shot,
@@ -234,3 +236,28 @@ def test_a_flip_soon_after_take_off_still_gets_a_shot() -> None:
     showing = [s for s in shots if any(m.kind is MomentKind.FLIP for m in s.moments)]
     assert showing, "the flip has no shot"
     assert all(s.start >= take_off - 1e-9 for s in showing)
+
+
+def test_a_flip_beside_a_stronger_shot_is_not_lost() -> None:
+    config = dataclasses.replace(CONFIG, length_s=None)
+    flip = Moment(10.0, MomentKind.FLIP, 3.0, "flip")
+    strong = [Moment(t, MomentKind.FLIP, 4.5, "flip") for t in (15.0, 18.0)]
+    candidates = [
+        Shot(0, 8.0, 16.5, 3.0, (flip,)),  # overlaps the strong shot, as every shot of it does
+        Shot(0, 8.0, 12.0, 3.0, (flip,)),
+        Shot(0, 12.0, 26.0, 20.0, tuple(strong)),
+    ]
+    picked = pick_shots(candidates, 1, config)
+    shown = {m.time for shot in picked for m in shot.moments}
+    assert shown == {10.0, 15.0, 18.0}
+    assert all(a.end <= b.start for a, b in pairwise(picked))  # no footage twice
+
+
+def test_shots_that_only_have_close_passes_are_still_kept() -> None:
+    config = dataclasses.replace(CONFIG, length_s=None)
+    flip = Moment(10.0, MomentKind.FLIP, 3.0, "flip")
+    close = Moment(40.0, MomentKind.PROXIMITY, 1.0, "close pass")
+    picked = pick_shots(
+        [Shot(0, 8.0, 18.0, 3.0, (flip,)), Shot(0, 38.0, 48.0, 1.0, (close,))], 1, config
+    )
+    assert [s.start for s in picked] == [8.0, 38.0]

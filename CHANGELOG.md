@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Fewer flips left out.** Without a target length, the shots are chosen to show as many
+  flips as possible; before, a flip beside a stronger shot could be dropped. On 12 test
+  recordings every turn of 180 degrees or more now has a shot (6 of 49 did not).
 - **The header logo is the dot-matrix title**, and the app has its own taskbar icon when run
   from source.
 - **Vertical exports are 1080x1920**, the size Reels, Shorts and TikTok expect, instead of
