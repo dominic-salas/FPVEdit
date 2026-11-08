@@ -51,6 +51,7 @@ from PySide6.QtWidgets import (
 from fpvedit import __version__, scenery
 from fpvedit.app import theme, windowchrome
 from fpvedit.app.analyser import BackgroundAnalysis
+from fpvedit.app.cleanpage import CleanPage
 from fpvedit.app.cliplist import (
     DETAILS,
     PATH,
@@ -644,14 +645,8 @@ class MainWindow(QMainWindow):
         return modes
 
     def _build_clean_page(self) -> QWidget:
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        text = QLabel("Cleaning analog footage is not part of this app yet. Use AnaHD for now.")
-        text.setProperty("role", "hero")
-        layout.addStretch(1)
-        layout.addWidget(text, alignment=Qt.AlignmentFlag.AlignHCenter)
-        layout.addStretch(1)
-        return page
+        self._clean = CleanPage(self.clip_paths)
+        return self._clean
 
     def _open_edit(self) -> None:
         if not self._busy():
@@ -659,6 +654,7 @@ class MainWindow(QMainWindow):
 
     def _open_clean(self) -> None:
         if not self._busy():
+            self._clean.refresh()
             self._show_page(self.CLEAN)
 
     def _refresh_modes(self) -> None:
