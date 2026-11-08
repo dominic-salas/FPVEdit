@@ -3,11 +3,14 @@ dot-matrix title and the status dot."""
 
 from __future__ import annotations
 
+import math
+
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer
 from PySide6.QtGui import (
     QColor,
     QIcon,
     QPainter,
+    QPainterPath,
     QPaintEvent,
     QPen,
     QPixmap,
@@ -17,22 +20,9 @@ from PySide6.QtWidgets import QWidget
 SIZES = (16, 24, 32, 48, 64, 128, 256)
 
 
-# A quad seen from above, in the dot-matrix style of the title: four rotors on an X frame.
-ICON_DOTS = (
-    "##.....##",
-    "##.....##",
-    "..#...#..",
-    "...#.#...",
-    "....#....",
-    "...#.#...",
-    "..#...#..",
-    "##.....##",
-    "##.....##",
-)
-
-
 def icon_pixmap(size: int) -> QPixmap:
-    """The app icon: an amber dot-matrix quad on a near-black tile."""
+    """The app icon: FPV goggles with the horizon rolling over in the visor, as a flip looks
+    from inside them. Small sizes keep fewer, stronger trails, which would otherwise fade."""
     pixmap = QPixmap(size, size)
     pixmap.fill(Qt.GlobalColor.transparent)
     painter = QPainter(pixmap)
@@ -42,30 +32,37 @@ def icon_pixmap(size: int) -> QPixmap:
     painter.setBrush(QColor("#121212"))
     edge = max(0.5, s / 128)
     painter.drawRoundedRect(QRectF(edge, edge, s - 2 * edge, s - 2 * edge), 0.2 * s, 0.2 * s)
+    goggles = QPainterPath()
+    goggles.addRoundedRect(QRectF(0.1 * s, 0.26 * s, 0.8 * s, 0.5 * s), 0.14 * s, 0.14 * s)
+    nose = QPainterPath()
+    nose.addEllipse(QPointF(0.5 * s, 0.8 * s), 0.11 * s, 0.14 * s)
+    goggles = goggles.subtracted(nose)
     painter.setPen(Qt.PenStyle.NoPen)
-    if size < 64:  # dots turn to noise this small: the same quad, solid
-        amber = QColor("#f2a93b")
-        painter.setPen(QPen(amber, 0.1 * s))
-        for x in (0.28, 0.72):
-            painter.drawLine(QPointF(x * s, 0.28 * s), QPointF((1 - x) * s, 0.72 * s))
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(amber)
-        for x, y in ((0.27, 0.27), (0.73, 0.27), (0.27, 0.73), (0.73, 0.73)):
-            painter.drawEllipse(QPointF(x * s, y * s), 0.16 * s, 0.16 * s)
-        painter.end()
-        return pixmap
-    count = len(ICON_DOTS)
-    cell = 0.78 * s / count
-    margin = (s - cell * count) / 2
-    radius = cell * 0.42
-    for y, row in enumerate(ICON_DOTS):
-        for x, bit in enumerate(row):
-            if bit == "#":
-                centre = x == y == count // 2
-                painter.setBrush(QColor("#ededed" if centre else "#f2a93b"))
-                painter.drawEllipse(
-                    QPointF(margin + (x + 0.5) * cell, margin + (y + 0.5) * cell), radius, radius
-                )
+    painter.setBrush(QColor("#1f1f1f"))
+    painter.drawPath(goggles)
+    painter.save()
+    painter.setClipPath(goggles)
+    small = size < 64
+    trails = (
+        ((-34, 120, 0.09), (-12, 190, 0.09))
+        if small
+        else (
+            (-58, 50, 0.06),
+            (-36, 95, 0.06),
+            (-14, 155, 0.06),
+        )
+    )
+    centre = QPointF(s / 2, 0.5 * s)
+    for angle, alpha, width in (*trails, (10, 255, 0.15 if small else 0.11)):
+        colour = QColor("#f2a93b")
+        colour.setAlpha(alpha)
+        painter.setPen(QPen(colour, width * s, Qt.PenStyle.SolidLine, Qt.PenCapStyle.FlatCap))
+        dx, dy = math.cos(math.radians(angle)) * s, math.sin(math.radians(angle)) * s
+        painter.drawLine(centre - QPointF(dx, dy), centre + QPointF(dx, dy))
+    painter.restore()
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+    painter.setPen(QPen(QColor("#ededed"), max(1.0, (0.05 if small else 0.035) * s)))
+    painter.drawPath(goggles)
     painter.end()
     return pixmap
 

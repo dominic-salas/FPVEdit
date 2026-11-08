@@ -64,7 +64,7 @@ from fpvedit.app.clips import clock as clock_short
 from fpvedit.app.clips import default_output_folder, describe_clip, is_removable
 from fpvedit.app.dialogs import ExportDialog, SettingsDialog, about_text, ask_for_ffmpeg
 from fpvedit.app.logs import start_logging
-from fpvedit.app.look import DotTitle, StatusDot, app_icon
+from fpvedit.app.look import DotTitle, StatusDot, app_icon, icon_pixmap
 from fpvedit.app.model import ShotList
 from fpvedit.app.ratepage import RatePage
 from fpvedit.app.review import ReviewPage, describe_music
@@ -301,6 +301,10 @@ class MainWindow(QMainWindow):
         header.setFixedHeight(56)
         row = QHBoxLayout(header)
         row.setContentsMargins(24, 0, 16, 0)
+        mark = QLabel()
+        mark.setPixmap(icon_pixmap(34))
+        row.addWidget(mark)
+        row.addSpacing(10)
         row.addWidget(logo)
         row.addStretch(1)
         row.addWidget(self._steps)
