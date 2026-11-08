@@ -78,7 +78,9 @@ class CleanPage(QWidget):
             "recordings; cleaning a copy never changes them."
         )
         count = len(self._clips())
-        self._action.setText(f"CLEAN {plural(count, 'CLIP')} IN ANAHD" if count else "OPEN ANAHD")
+        self._action.setText(
+            f"CLEAN {plural(count, 'clip').upper()} IN ANAHD" if count else "OPEN ANAHD"
+        )
 
     def _act(self) -> None:
         program = self._find()
