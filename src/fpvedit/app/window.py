@@ -47,7 +47,7 @@ from PySide6.QtWidgets import (
 )
 
 from fpvedit import __version__, scenery
-from fpvedit.app import theme
+from fpvedit.app import theme, windowchrome
 from fpvedit.app.analyser import BackgroundAnalysis
 from fpvedit.app.cliplist import (
     DETAILS,
@@ -311,6 +311,7 @@ class MainWindow(QMainWindow):
         row.addStretch(1)
         row.addWidget(self._theme_button)
         row.addWidget(self._menu_button)
+        windowchrome.attach(self, header)
 
         self._pages = QStackedWidget()
         self._pages.addWidget(self._build_clips_page())
