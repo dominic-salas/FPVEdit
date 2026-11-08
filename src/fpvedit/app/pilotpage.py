@@ -313,7 +313,8 @@ class PilotPage(QWidget):
             bar.setVisible(scored)
         minutes, seconds = divmod(round(flight.flying_s), 60)
         self._facts.setText(
-            f"{plural(flight.turns, 'turn')}, {flight.crashes} crash{'' if flight.crashes == 1 else 'es'}, "
+            f"{plural(flight.turns, 'turn')}, "
+            f"{flight.crashes} crash{'' if flight.crashes == 1 else 'es'}, "
             f"{minutes}:{seconds:02d} of flying, "
             f"{flight.conditions}."
             if scored
