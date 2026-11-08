@@ -306,3 +306,29 @@ def test_export_warns_only_when_a_vertical_montage_is_too_long(tmp_path: Path) -
     assert not long._length_note.isHidden()
     short._shape.setCurrentIndex(1)
     assert short._length_note.isHidden()
+
+
+def test_a_shot_title_names_only_its_biggest_kind_of_moment() -> None:
+    from fpvedit.app.review import headline
+    from fpvedit.montage import Moment, MomentKind, Shot
+
+    def moment(kind: MomentKind, name: str) -> Moment:
+        return Moment(1.0, kind, 1.0, name)
+
+    flips = (moment(MomentKind.FLIP, "back flip"), moment(MomentKind.SPIN, "spin"))
+    assert headline(Shot(0, 0.0, 9.0, 1.0, flips)) == "back flip"
+    both = (moment(MomentKind.FLIP, "back flip"), moment(MomentKind.FLIP, "flip"))
+    assert headline(Shot(0, 0.0, 9.0, 1.0, both)) == "back flip"
+    spins = (moment(MomentKind.SPIN, "spin"), moment(MomentKind.SPIN, "spin"))
+    assert headline(Shot(0, 0.0, 9.0, 1.0, spins)) == "2 spins"
+    close = (moment(MomentKind.PROXIMITY, "close pass"),)
+    assert headline(Shot(0, 0.0, 9.0, 1.0, close)) == "close pass"
+
+
+def test_steps_light_none_on_a_side_page() -> None:
+    from fpvedit.app.window import Steps
+
+    QApplication.instance() or QApplication([])
+    steps = Steps()
+    steps.show_state(-1, {0})
+    assert [b.property("state") for b in steps._buttons] == ["off"] * 4

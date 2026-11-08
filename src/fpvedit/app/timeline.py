@@ -44,7 +44,8 @@ PLAYHEAD_GRAB = 6  # px either side of the playhead that grab it
 
 
 # 1 to 5 stars: red, orange, yellow, light green, green.
-RATING_COLOURS = ("#d9534f", "#e8873a", "#e3c341", "#9cc24f", "#3fb37f")
+# Grey to the accent: a low relative rating is quiet, not an alarm on the pilot's own shot.
+RATING_COLOURS = ("#5c5c5c", "#7d7464", "#a58c5c", "#d09c48", "#f2a93b")
 
 
 def rating_colour(stars: int) -> str:
@@ -67,6 +68,7 @@ class Block:
     tooltip: str
     thumbnail: QPixmap | None
     colour: str | None = None  # instead of the recording's colour (e.g. the rating's)
+    short: str = ""  # shown when ``label`` does not fit
 
 
 def _tick_step(total: float, width: int) -> float:
@@ -339,10 +341,11 @@ class Timeline(QWidget):
             label_rect = QRect(
                 int(rect.left()) + 6, int(rect.bottom()) - 18, int(rect.width()) - 10, 14
             )
-            text = painter.fontMetrics().elidedText(
-                block.label, Qt.TextElideMode.ElideRight, label_rect.width()
-            )
-            painter.drawText(label_rect, Qt.AlignmentFlag.AlignLeft, text)
+            metrics = painter.fontMetrics()
+            for text in (block.label, block.short):
+                if metrics.horizontalAdvance(text) <= label_rect.width():
+                    painter.drawText(label_rect, Qt.AlignmentFlag.AlignLeft, text)
+                    break
         painter.setClipping(False)
         selected = index == self._selected
         hovered = index == self._hover

@@ -257,9 +257,7 @@ class ExportDialog(QDialog):
         self._encoder.setCurrentIndex(max(0, self._encoder.findData(settings.encoder)))
         self._shape = QComboBox()
         self._shape.addItem("As recorded (landscape)", False)
-        self._shape.addItem(
-            "Vertical 1080x1920 for Reels, Shorts, TikTok (the sides are cut off)", True
-        )
+        self._shape.addItem("Vertical 1080x1920 (the middle of the picture)", True)
         self._shape.setCurrentIndex(1 if settings.vertical_export else 0)
         self._length_note = QLabel(
             f"{duration / 60:.1f} minutes is over the 3 minutes of a Short or a recommended Reel."
