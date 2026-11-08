@@ -44,16 +44,16 @@ def icon_pixmap(size: int) -> QPixmap:
     painter.setClipPath(goggles)
     small = size < 64
     trails = (
-        ((-34, 120, 0.09), (-12, 190, 0.09))
+        ((-34, 120, 0.05), (-12, 190, 0.05))
         if small
         else (
-            (-58, 50, 0.06),
-            (-36, 95, 0.06),
-            (-14, 155, 0.06),
+            (-58, 50, 0.03),
+            (-36, 95, 0.03),
+            (-14, 155, 0.03),
         )
     )
     centre = QPointF(s / 2, 0.5 * s)
-    for angle, alpha, width in (*trails, (10, 255, 0.15 if small else 0.11)):
+    for angle, alpha, width in (*trails, (10, 255, 0.08 if small else 0.05)):
         colour = QColor("#f2a93b")
         colour.setAlpha(alpha)
         painter.setPen(QPen(colour, width * s, Qt.PenStyle.SolidLine, Qt.PenCapStyle.FlatCap))
