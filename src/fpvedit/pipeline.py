@@ -882,12 +882,15 @@ def _frame_progress(
     return lambda frames: report(text, min(1.0, (done + frames) / max(1, total)))
 
 
+VERTICAL_SIZE = (1080, 1920)
+
+
 def montage_fit(clips: Sequence[Clip], shots: Sequence[Shot], *, vertical: bool = False) -> Fit:
     """The largest frame size of the clips the shots use (even, square pixels), so no clip
     loses detail, at the frame rate of the clip that fills most of the montage.
 
-    ``vertical``: a 9:16 frame as tall as the tallest clip, filled edge to edge with the
-    middle of each picture (for phones), instead of the clips' own shape."""
+    ``vertical``: the 1080x1920 frame phone platforms expect, filled edge to edge with the
+    middle of each picture, instead of the clips' own shape."""
     used = {shot.clip for shot in shots}
     clips = [clip for clip in clips if clip.index in used]
     share: dict[int, float] = {}
@@ -896,9 +899,7 @@ def montage_fit(clips: Sequence[Clip], shots: Sequence[Shot], *, vertical: bool 
     main = max(clips, key=lambda clip: (share.get(clip.index, 0.0), -clip.index))
     width, height = max((_display_size(clip.info) for clip in clips), key=lambda s: s[0] * s[1])
     if vertical:
-        height = max(_display_size(clip.info)[1] for clip in clips)
-        height -= height % 2
-        return Fit(round(height * 9 / 32) * 2, height, output_rate(main.info), fill=True)
+        return Fit(*VERTICAL_SIZE, output_rate(main.info), fill=True)
     return Fit(width - width % 2, height - height % 2, output_rate(main.info))
 
 

@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import math
 import os
+import re
 import tempfile
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -71,14 +72,21 @@ class EncodeConfig:
     preset: str = "medium"
     crf: int = 18  # constant quality; for NVENC its -cq level
 
-    def codec_args(self) -> list[str]:
+    def codec_args(self, rate: Fraction = Fraction(30)) -> list[str]:
+        """Constant quality in the structure YouTube asks for: High profile, 2 B-frames and
+        a closed GOP of half the frame rate at ``rate``."""
+        structure = ["-profile:v", "high", "-bf", "2", "-g", str(max(1, round(rate / 2)))]
         if self.video_codec == "h264_nvenc":
             # Constant-quality VBR, the closest NVENC match to x264's CRF.
             return [
                 *("-c:v", "h264_nvenc", "-preset", self.preset, "-tune", "hq"),
                 *("-rc", "vbr", "-cq", str(self.crf), "-b:v", "0"),
+                *structure,
             ]
-        return ["-c:v", self.video_codec, "-preset", self.preset, "-crf", str(self.crf)]
+        return [
+            *("-c:v", self.video_codec, "-preset", self.preset, "-crf", str(self.crf)),
+            *structure,
+        ]
 
 
 # NVIDIA GPU encoding: much faster than libx264 at a similar look for this footage.
@@ -255,7 +263,8 @@ def build_filter_graph(
             "scale=trunc(iw*sar/2)*2:ih,setsar=1,"  # square pixels first
             f"fps={fit.rate.numerator}/{fit.rate.denominator},"
             + (
-                f"scale={fit.width}:{fit.height}:force_original_aspect_ratio=increase,"
+                f"scale={fit.width}:{fit.height}:force_original_aspect_ratio=increase:"
+                "flags=lanczos,"
                 f"crop={fit.width}:{fit.height},setsar=1"
                 if fit.fill
                 else f"scale={fit.width}:{fit.height}:force_original_aspect_ratio=decrease,"
@@ -277,7 +286,34 @@ def build_filter_graph(
 
 
 AUDIO_RATE = 48000
-AUDIO_BITRATE = "192k"
+AUDIO_BITRATE = "384k"  # YouTube's recommendation for stereo
+LOUDNESS_TARGET = -14.0  # LUFS: YouTube only turns louder sound down, never quieter up
+PEAK_CEILING = -1.0  # dBTP
+MAX_BOOST = 12.0  # dB: a nearly silent recording stays quiet instead of becoming hiss
+
+
+def loudness_gain(integrated: float, peak: float) -> float:
+    """The one gain (dB) that brings sound to the target without its peaks passing the
+    ceiling. One gain keeps the sound's own dynamics. Silence (not finite) is left alone."""
+    if not (math.isfinite(integrated) and math.isfinite(peak)):
+        return 0.0
+    return min(LOUDNESS_TARGET - integrated, PEAK_CEILING - peak, MAX_BOOST)
+
+
+def measured_gain(tools: Tools, inputs: Sequence[str], graph: str) -> float:
+    """`loudness_gain` of the sound ``graph`` makes from ``inputs``; ``graph`` ends in
+    ``[sound]``, and nothing else is written."""
+    result = run_tool(
+        [
+            *(tools.ffmpeg, "-nostdin", "-hide_banner", "-v", "info"),
+            *inputs,
+            *("-filter_complex", f"{graph};[sound]loudnorm=print_format=json[measured]"),
+            *("-map", "[measured]", "-f", "null", "-"),
+        ],
+        action="measuring the loudness",
+    )
+    found = dict(re.findall(r'"(input_i|input_tp)"\s*:\s*"([^"]+)"', result.stderr))
+    return loudness_gain(float(found["input_i"]), float(found["input_tp"]))
 
 
 def build_audio_graph(
@@ -379,7 +415,7 @@ def render(
         "[v]",
         "-r",
         f"{out_rate.numerator}/{out_rate.denominator}",
-        *encode.codec_args(),
+        *encode.codec_args(out_rate),
         "-pix_fmt",
         "yuv420p",
         *("-color_range", "tv", "-colorspace", "bt709"),
@@ -478,7 +514,8 @@ def join_parts(
     ]
     if sounds:
         args += [*concat, str(listing("sounds.txt", sounds))]
-        args += ["-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy"]
+        gain = measured_gain(tools, args[args.index("-y") + 1 :], "[1:a:0]anull[sound]")
+        args += ["-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-af", f"volume={gain:.2f}dB"]
         args += ["-c:a", "aac", "-b:a", AUDIO_BITRATE, "-ar", str(AUDIO_RATE), "-ac", "2"]
     else:
         args += ["-map", "0:v:0", "-c", "copy", "-an"]
@@ -561,12 +598,15 @@ def validate_output(
 
 MUSIC_FADE_S = 2.0  # a track cut by the end of the montage fades out over this time
 MUSIC_RATE = 48000
-MUSIC_BITRATE = "192k"
+MUSIC_BITRATE = AUDIO_BITRATE
 
 
-def soundtrack_filter(tracks: Sequence[AudioFile], duration: float) -> str:
+def soundtrack_filter(
+    tracks: Sequence[AudioFile], duration: float, gain: float = 0.0, label: str = "music"
+) -> str:
     """Filter graph for inputs 1..n (the tracks): played one after another, cut to
-    ``duration`` (faded out when cut), silence after the last track if they are short."""
+    ``duration`` (faded out when cut), silence after the last track if they are short,
+    ``gain`` dB louder, as ``[label]``."""
     if not tracks:
         raise ValueError("at least one track is required")
     chains = [
@@ -578,7 +618,7 @@ def soundtrack_filter(tracks: Sequence[AudioFile], duration: float) -> str:
     if sum(track.duration for track in tracks) > duration + 0.05:
         fade = min(MUSIC_FADE_S, duration / 2)
         chain += f",afade=t=out:st={duration - fade:.3f}:d={fade:.3f}"
-    return ";".join([*chains, f"{chain},asetpts=N/SR/TB[music]"])
+    return ";".join([*chains, f"{chain},volume={gain:.2f}dB,asetpts=N/SR/TB[{label}]"])
 
 
 def add_music(
@@ -588,8 +628,10 @@ def add_music(
     args = [tools.ffmpeg, "-nostdin", "-hide_banner", "-v", "error", "-y", "-i", str(video)]
     for track in tracks:
         args += ["-i", str(track.path)]
+    inputs = args[args.index("-y") + 1 :]
+    gain = measured_gain(tools, inputs, soundtrack_filter(tracks, duration, label="sound"))
     args += [
-        *("-filter_complex", soundtrack_filter(tracks, duration)),
+        *("-filter_complex", soundtrack_filter(tracks, duration, gain)),
         *("-map", "0:v:0", "-map", "[music]", "-c:v", "copy"),
         *("-c:a", "aac", "-b:a", MUSIC_BITRATE, "-ar", str(MUSIC_RATE), "-ac", "2"),
         *("-t", f"{duration:.3f}", "-sn", "-dn"),

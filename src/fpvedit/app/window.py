@@ -6,8 +6,10 @@ user's local app-data folder, and the montage is written where the user chooses.
 
 from __future__ import annotations
 
+import ctypes
 import logging
 import os
+import sys
 import threading
 import time
 import traceback
@@ -285,9 +287,8 @@ class MainWindow(QMainWindow):
     # ----- layout -----
 
     def _build(self) -> None:
-        logo = QLabel()
+        logo = DotTitle("fpvedit", cell=4, accent_from=3)
         self._logo = logo
-        logo.setProperty("role", "logo")
         self._steps = Steps()
         self._steps.chosen.connect(self._go_to_step)
         self._theme_button = QPushButton()
@@ -1054,7 +1055,12 @@ class MainWindow(QMainWindow):
         fit = describe_music(music, total).capitalize()
         default.parent.mkdir(parents=True, exist_ok=True)  # the Videos\FPVEdit folder
         dialog = ExportDialog(
-            default, self._settings, fit, self, remember=lambda f: not is_removable(f)
+            default,
+            self._settings,
+            fit,
+            self,
+            duration=total,
+            remember=lambda f: not is_removable(f),
         )
         if not dialog.exec() or dialog.choice is None:
             return
@@ -1137,7 +1143,7 @@ class MainWindow(QMainWindow):
         for clips in (self._clips, self._work_clips):
             clips.card.set_theme(palette, self._fonts)
             clips.viewport().update()
-        self._logo.setText(f"FPV<span style='color:{palette.accent}'>Edit</span>")
+        self._logo.set_colour(palette.text, palette.accent)
         self._title.set_colour(palette.text)
         self._done_title.set_colour(palette.text)
         self._dot.set_colours(palette.faint, palette.accent)
@@ -1315,6 +1321,9 @@ APP_NAME = "FPVEdit"
 
 
 def run(argv: Sequence[str]) -> int:
+    if sys.platform == "win32":
+        # Its own taskbar entry and icon, not those of the Python that runs it from source.
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("FPVEdit.App")
     app = QApplication(list(argv))
     # Settings need an organisation name to be stored at all (without one, Qt keeps them
     # only until the app closes): HKEY_CURRENT_USER\Software\FPVEdit on Windows.

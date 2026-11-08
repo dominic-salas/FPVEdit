@@ -65,7 +65,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--vertical",
         action="store_true",
-        help="make a 9:16 video for phones: as tall as the clips, filled edge to edge with the "
+        help="make a 1080x1920 video for Reels, Shorts and TikTok, filled edge to edge with the "
         "middle of the picture (the sides are cut off)",
     )
     parser.add_argument(

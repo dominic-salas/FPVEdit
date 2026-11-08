@@ -288,3 +288,21 @@ def test_the_shot_panel_asks_right_name_and_shows_the_answer(tmp_path: Path) -> 
         assert page.ratings.names_right() == (0, 1)
     finally:
         page.shutdown()
+
+
+def test_export_warns_only_when_a_vertical_montage_is_too_long(tmp_path: Path) -> None:
+    from PySide6.QtWidgets import QWidget
+
+    from fpvedit.app.dialogs import ExportDialog
+
+    QApplication.instance() or QApplication([])
+    parent = QWidget()
+    settings = settings_in(tmp_path)
+    long = ExportDialog(tmp_path / "m.mp4", settings, "No music", parent, duration=200.0)
+    short = ExportDialog(tmp_path / "m.mp4", settings, "No music", parent, duration=120.0)
+    shape = long._shape
+    assert long._length_note.isHidden()  # landscape: no limit applies
+    shape.setCurrentIndex(1)
+    assert not long._length_note.isHidden()
+    short._shape.setCurrentIndex(1)
+    assert short._length_note.isHidden()

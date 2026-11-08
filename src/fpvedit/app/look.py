@@ -80,30 +80,39 @@ GLYPHS: dict[str, tuple[str, ...]] = {
 
 
 class DotTitle(QWidget):
-    """Large lowercase text drawn as a grid of dots."""
+    """Lowercase text drawn as a grid of dots, in the accent colour from ``accent_from`` on."""
 
-    def __init__(self, text: str, cell: int = 7, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        text: str,
+        cell: int = 7,
+        parent: QWidget | None = None,
+        accent_from: int | None = None,
+    ) -> None:
         super().__init__(parent)
         self._text = text.lower()
         self._cell = cell
         self._colour = QColor("#ededed")
+        self._accent = self._colour
+        self._accent_from = len(self._text) if accent_from is None else accent_from
         columns = sum(6 for _ in self._text) - 1
         self.setFixedSize(columns * cell, ROWS * cell)
 
-    def set_colour(self, colour: str) -> None:
+    def set_colour(self, colour: str, accent: str | None = None) -> None:
         self._colour = QColor(colour)
+        self._accent = QColor(accent or colour)
         self.update()
 
     def paintEvent(self, event: QPaintEvent) -> None:
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(self._colour)
         radius = self._cell * 0.36
         for index, letter in enumerate(self._text):
             rows = GLYPHS.get(letter)
             if rows is None:
                 continue
+            painter.setBrush(self._accent if index >= self._accent_from else self._colour)
             for y, row in enumerate(rows):
                 for x, bit in enumerate(row):
                     if bit == "#":

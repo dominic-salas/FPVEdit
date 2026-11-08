@@ -40,8 +40,8 @@ never touched.
    it; trim its start or end, remove it, drag it to a new place, swap it for another shot
    from the same clip, or add any shot from any clip. Drag the playhead to scan through.
    Add background music if you like. Ctrl+Z undoes.
-4. **Export**: an H.264 MP4, as recorded (landscape) or **vertical 9:16 for phones** (the
-   middle of each shot, filling the screen). Your recordings are never changed.
+4. **Export**: an H.264 MP4, as recorded (landscape) or **vertical 1080x1920 for Reels, Shorts
+   and TikTok** (the middle of each shot, filling the screen). Your recordings are never changed.
 
 **Rate shots** (1-5 stars, on the montage page or the Rate shots screen) to teach FPVEdit
 what you like. With Settings > My ratings turned on, the next montage leaves out shots it
@@ -99,7 +99,7 @@ writes `flight1_montage.mp4` next to the first recording. Options:
 - `-o/--output out.mp4`: where to write the montage.
 - `--length SECONDS`: make the montage about this long, best shots first (by default every
   distinct shot is kept).
-- `--vertical`: a 9:16 video for phones.
+- `--vertical`: a 1080x1920 video for Reels, Shorts and TikTok.
 - `--music FILE` (repeatable): background music, cut and faded at the end.
 - `--trim`: edit one recording as a whole flight instead (cut downtime, crashes and dull
   stretches, keep the rest), written as `<name>_highlight.mp4`.
@@ -110,7 +110,9 @@ writes `flight1_montage.mp4` next to the first recording. Options:
 
 Clips of different sizes or frame rates are fitted to the largest size (letterboxed, never
 stretched) at the frame rate of the clip that fills most of the montage. The recordings'
-own sound is kept, cut with the picture (AAC stereo); music you add replaces it.
+own sound is kept, cut with the picture (AAC stereo); music you add replaces it. Either way
+the montage's sound is set to about -14 LUFS with peaks under -1 dBTP, by one overall volume
+change, so it plays at a normal level on YouTube.
 
 ## Running from source (Windows or Linux)
 
