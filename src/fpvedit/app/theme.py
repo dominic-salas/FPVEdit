@@ -2,7 +2,7 @@
 thin borders, small uppercase mono labels, one amber accent.
 
 Colours are tokens in a palette per theme, with the site's values; `stylesheet` turns a
-palette into Qt style sheet rules. Fonts: Space Grotesk and Geist Mono when their files are
+palette into Qt style sheet rules. Fonts: Instrument Sans and Geist Mono when their files are
 in ``fonts/`` (SIL Open Font License), otherwise Windows' own Segoe UI and Consolas.
 """
 
@@ -79,7 +79,7 @@ def load_fonts() -> Fonts:
         return next((name for name in names if name in families), names[-1])
 
     return Fonts(
-        sans=first("Space Grotesk", "Segoe UI", "Arial"),
+        sans=first("Instrument Sans", "Segoe UI", "Arial"),
         mono=first("Geist Mono", "Cascadia Mono", "Consolas", "Courier New"),
         dot="Doto" if "Doto" in families else None,
     )

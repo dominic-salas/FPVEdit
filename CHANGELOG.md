@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **A new text font.** The app's text is set in Instrument Sans (SIL Open Font License,
+  bundled) instead of the previous face.
 - **Blurred flips are found.** Where the picture smears so badly that motion tracking gives
   up, a turn of 110 degrees in a second now counts as a flip.
 - **A clearer review page.** One preview instead of two, a shorter shot title, timeline
