@@ -139,7 +139,9 @@ class PilotPage(QWidget):
 
     back = Signal()
 
-    def __init__(self, history: FlightHistory, parent: QWidget | None = None) -> None:
+    def __init__(
+        self, history: FlightHistory, show_back: bool = True, parent: QWidget | None = None
+    ) -> None:
         super().__init__(parent)
         self._history = history
         self._flights: list[Flight] = []
@@ -151,7 +153,8 @@ class PilotPage(QWidget):
             self._filter.addItem(text, value)
         self._filter.currentIndexChanged.connect(lambda _: self._apply_filter())
         top = QHBoxLayout()
-        top.addWidget(button("←  CLIPS", self.back.emit))
+        if show_back:
+            top.addWidget(button("←  CLIPS", self.back.emit))
         top.addStretch(1)
         top.addWidget(self._filter)
 

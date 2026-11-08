@@ -53,6 +53,7 @@ fpvedit = "fpvedit.cli:main"
 
 [project.gui-scripts]
 fpvedit-app = "fpvedit.app:main"
+flowflight-app = "fpvedit.app:flowflight"
 
 [dependency-groups]
 build = [
