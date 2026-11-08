@@ -131,6 +131,8 @@ class MontageConfig:
     flip_deg: float = 180.0  # turned within one second
     big_flip_deg: float = 330.0
     flip_gap_s: float = 0.8
+    blurred_flip_deg: float = 110.0  # turned within one second, when tracking collapses ...
+    blurred_confidence: float = 0.2  # ... to below this: the flow under-reads such a flip
     flip_turn_s: float = 1.0  # a shot starts at least this long before a flip it shows
     spin_factor: float = 1.8  # sustained turning this many times the clip's median ...
     spin_floor: float = 90.0  # ... and at least this (deg/s over four seconds)
@@ -155,6 +157,14 @@ class MontageConfig:
 
 
 MIN_MARKED_S = 2.0  # the shortest shot a mark builds
+
+
+def window_max(values: FloatArray, window: int) -> FloatArray:
+    """Largest value in a centred window of ``window`` samples."""
+    half = max(1, window // 2)
+    padded = np.pad(values, half, mode="edge")
+    view = np.lib.stride_tricks.sliding_window_view(padded, 2 * half + 1)
+    return np.asarray(view.max(axis=1), dtype=np.float64)
 
 
 def usable_footage(
@@ -205,6 +215,19 @@ def find_moments(
         weight = config.flip_weight + (config.big_flip_weight if big else 0.0)
         trick = name_fast_turn(motion.rotation, confidence, index, fps)
         moments.append(Moment(index / fps, MomentKind.FLIP, weight, trick))
+    # A flip the blur hides: the flow reads too little of it, and tracking collapses.
+    tracking = rolling_median(np.nan_to_num(confidence), max(1, round(0.1 * fps)))
+    lost = -window_max(-tracking, 2 * second)
+    blurred = usable & (lost < config.blurred_confidence)
+    reach = round(config.flip_gap_s * fps)
+    for index in flips:
+        blurred[max(0, index - reach) : index + reach] = False
+    for index in _peaks(
+        np.where(blurred, turned_1s, 0.0), config.blurred_flip_deg, config.flip_gap_s, fps
+    ):
+        trick = name_fast_turn(motion.rotation, confidence, index, fps)
+        moments.append(Moment(index / fps, MomentKind.FLIP, config.flip_weight, trick))
+        flips.append(index)
     # Power loops: a full pitch turn too slow to count as a flip, away from any flip.
     loops = power_loop_frames(motion.rotation, usable, fps)
     near_flip = np.zeros(len(loops), dtype=bool)

@@ -261,3 +261,20 @@ def test_shots_that_only_have_close_passes_are_still_kept() -> None:
         [Shot(0, 8.0, 18.0, 3.0, (flip,)), Shot(0, 38.0, 48.0, 1.0, (close,))], 1, config
     )
     assert [s.start for s in picked] == [8.0, 38.0]
+
+
+def test_a_blurred_turn_counts_as_a_flip_only_when_tracking_collapses() -> None:
+    timeline = flight()
+    timeline.motion[:, DIVERGENCE] = 0.2
+    second = round(FPS)
+    for at in (40, 70):
+        timeline.motion[at * second : at * second + second, PITCH] = 130.0
+    timeline.motion[40 * second : 40 * second + second, CONFIDENCE] = 0.05
+    measurements, selection = analyse(timeline)
+    flips = [
+        m.time
+        for m in find_moments(measurements, usable_footage(measurements, selection))
+        if m.kind is MomentKind.FLIP
+    ]
+    assert any(abs(t - 40.5) < 1 for t in flips)
+    assert not any(abs(t - 70.5) < 1 for t in flips)

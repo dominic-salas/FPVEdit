@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Blurred flips are found.** Where the picture smears so badly that motion tracking gives
+  up, a turn of 110 degrees in a second now counts as a flip.
 - **Fewer flips left out.** Without a target length, the shots are chosen to show as many
   flips as possible; before, a flip beside a stronger shot could be dropped. On 12 test
   recordings every turn of 180 degrees or more now has a shot (6 of 49 did not).
