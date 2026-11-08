@@ -147,7 +147,6 @@ def stylesheet(p: Palette, fonts: Fonts) -> str:
     QPushButton[role="step"]:enabled {{ color: {p.muted}; }}
     QPushButton[role="step"]:enabled:hover {{ color: {p.text}; }}
     QPushButton[role="step"][state="on"] {{ color: {p.text}; }}
-    QLabel[role="logo"] {{ font-family: "{fonts.sans}"; font-size: 14pt; font-weight: 600; }}
 
     QFrame[role="panel"] {{ background: {p.surface}; border: 1px solid {p.border};
         border-radius: 12px; }}

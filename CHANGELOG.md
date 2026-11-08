@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **The header logo is the dot-matrix title**, and the app has its own taskbar icon when run
+  from source.
 - **Vertical exports are 1080x1920**, the size Reels, Shorts and TikTok expect, instead of
   the recording's own height (404x720 from 720p). The Export window says when a vertical
   montage is longer than 3 minutes.
