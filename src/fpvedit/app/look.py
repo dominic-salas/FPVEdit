@@ -7,10 +7,10 @@ from PySide6.QtCore import QPointF, QRectF, Qt, QTimer
 from PySide6.QtGui import (
     QColor,
     QIcon,
-    QLinearGradient,
     QPainter,
     QPainterPath,
     QPaintEvent,
+    QPen,
     QPixmap,
 )
 from PySide6.QtWidgets import QWidget
@@ -18,37 +18,55 @@ from PySide6.QtWidgets import QWidget
 SIZES = (16, 24, 32, 48, 64, 128, 256)
 
 
+# A quad seen from above, in the dot-matrix style of the title: four rotors on an X frame.
+ICON_DOTS = (
+    "##.....##",
+    "##.....##",
+    "..#...#..",
+    "...#.#...",
+    "....#....",
+    "...#.#...",
+    "..#...#..",
+    "##.....##",
+    "##.....##",
+)
+
+
 def icon_pixmap(size: int) -> QPixmap:
-    """A rounded tile with a play mark and four rotor rings: a montage of quad footage."""
+    """The app icon: an amber dot-matrix quad on a near-black tile."""
     pixmap = QPixmap(size, size)
     pixmap.fill(Qt.GlobalColor.transparent)
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
     s = float(size)
-    gradient = QLinearGradient(0, 0, s, s)
-    gradient.setColorAt(0.0, QColor("#ff8a00"))
-    gradient.setColorAt(1.0, QColor("#e5232e"))
+    painter.setPen(QPen(QColor("#3d3d3d"), max(1.0, s / 64)))
+    painter.setBrush(QColor("#121212"))
+    edge = max(0.5, s / 128)
+    painter.drawRoundedRect(QRectF(edge, edge, s - 2 * edge, s - 2 * edge), 0.2 * s, 0.2 * s)
     painter.setPen(Qt.PenStyle.NoPen)
-    painter.setBrush(gradient)
-    painter.drawRoundedRect(QRectF(0.04 * s, 0.04 * s, 0.92 * s, 0.92 * s), 0.2 * s, 0.2 * s)
-    if size >= 32:  # rotor rings only where they can be seen
-        ring = QColor(255, 255, 255, 110)
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        pen = painter.pen()
-        pen.setStyle(Qt.PenStyle.SolidLine)
-        pen.setColor(ring)
-        pen.setWidthF(max(1.0, 0.03 * s))
-        painter.setPen(pen)
-        for cx, cy in ((0.27, 0.27), (0.73, 0.27), (0.27, 0.73), (0.73, 0.73)):
-            painter.drawEllipse(QPointF(cx * s, cy * s), 0.15 * s, 0.15 * s)
+    if size < 64:  # dots turn to noise this small: the same quad, solid
+        amber = QColor("#f2a93b")
+        painter.setPen(QPen(amber, 0.1 * s))
+        for x in (0.28, 0.72):
+            painter.drawLine(QPointF(x * s, 0.28 * s), QPointF((1 - x) * s, 0.72 * s))
         painter.setPen(Qt.PenStyle.NoPen)
-    play = QPainterPath()
-    play.moveTo(0.40 * s, 0.30 * s)
-    play.lineTo(0.72 * s, 0.50 * s)
-    play.lineTo(0.40 * s, 0.70 * s)
-    play.closeSubpath()
-    painter.setBrush(QColor("white"))
-    painter.drawPath(play)
+        painter.setBrush(amber)
+        for x, y in ((0.27, 0.27), (0.73, 0.27), (0.27, 0.73), (0.73, 0.73)):
+            painter.drawEllipse(QPointF(x * s, y * s), 0.16 * s, 0.16 * s)
+        painter.end()
+        return pixmap
+    count = len(ICON_DOTS)
+    cell = 0.78 * s / count
+    margin = (s - cell * count) / 2
+    radius = cell * 0.42
+    for y, row in enumerate(ICON_DOTS):
+        for x, bit in enumerate(row):
+            if bit == "#":
+                centre = x == y == count // 2
+                painter.setBrush(QColor("#ededed" if centre else "#f2a93b"))
+                painter.drawEllipse(
+                    QPointF(margin + (x + 0.5) * cell, margin + (y + 0.5) * cell), radius, radius
+                )
     painter.end()
     return pixmap
 
