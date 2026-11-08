@@ -9,6 +9,7 @@ from __future__ import annotations
 import ctypes
 import logging
 import os
+import sqlite3
 import sys
 import threading
 import time
@@ -66,11 +67,13 @@ from fpvedit.app.dialogs import ExportDialog, SettingsDialog, about_text, ask_fo
 from fpvedit.app.logs import start_logging
 from fpvedit.app.look import DotTitle, StatusDot, app_icon, icon_pixmap
 from fpvedit.app.model import ShotList
+from fpvedit.app.pilotpage import PilotPage
 from fpvedit.app.ratepage import RatePage
 from fpvedit.app.review import ReviewPage, describe_music
 from fpvedit.app.settings import AppSettings
 from fpvedit.app.widgets import button, plural, timecode
 from fpvedit.errors import CancelledError, FPVEditError
+from fpvedit.history import FlightHistory
 from fpvedit.media import MediaInfo, Tools, find_tools, run_tool
 from fpvedit.montage import Shot, pick_shots
 from fpvedit.pipeline import (
@@ -90,6 +93,7 @@ from fpvedit.render import (
     resolve_output_path,
     with_fallback,
 )
+from fpvedit.scoring import score_flight
 
 VIDEO_SUFFIXES = (".ts", ".mp4")
 OUTPUT_MARKERS = (MONTAGE_SUFFIX, "_highlight")  # our own renders, skipped in dropped folders
@@ -234,7 +238,7 @@ class Steps(QWidget):
 class MainWindow(QMainWindow):
     """Four screens, one step each: add clips, find shots, review, export."""
 
-    CLIPS, WORK, REVIEW, DONE, RATE = range(5)
+    CLIPS, WORK, REVIEW, DONE, RATE, PILOT = range(6)
 
     def __init__(
         self,
@@ -309,6 +313,10 @@ class MainWindow(QMainWindow):
         row.addStretch(1)
         row.addWidget(self._steps)
         row.addStretch(1)
+        self._pilot_button = QPushButton("PILOT")
+        self._pilot_button.setProperty("flat", True)
+        self._pilot_button.clicked.connect(self._open_pilot)
+        row.addWidget(self._pilot_button)
         row.addWidget(self._theme_button)
         row.addWidget(self._menu_button)
 
@@ -321,6 +329,11 @@ class MainWindow(QMainWindow):
         self._rate.back.connect(lambda: self._show_page(self.CLIPS))
         self._pages.addWidget(self._rate)
         self._rated_clips: set[Path] = set()  # clips whose shots went to the rating screen
+        self._history = open_history()
+        self._pilot = PilotPage(self._history) if self._history else None
+        if self._pilot is not None:
+            self._pilot.back.connect(lambda: self._show_page(self.CLIPS))
+            self._pages.addWidget(self._pilot)
 
         central = QWidget()
         layout = QVBoxLayout(central)
@@ -561,6 +574,7 @@ class MainWindow(QMainWindow):
         self._rate_action = action("Rate shots…", self._open_rating, "Ctrl+R")
         menu.addAction(self._rate_action)
         menu.addAction(action("Show my shot ratings", self._show_my_ratings))
+        menu.addAction(action("Pilot: my scores", self._open_pilot))
         menu.addAction(action("About FPVEdit", self._about))
         menu.addSeparator()
         menu.addAction(action("Quit", self.close, QKeySequence.StandardKey.Quit))
@@ -581,6 +595,25 @@ class MainWindow(QMainWindow):
             self._rate.start()
         self._refresh_steps()
 
+    def _open_pilot(self) -> None:
+        if self._pilot is not None and not self._busy():
+            self._pilot.refresh()
+            self._show_page(self.PILOT)
+
+    def _save_scores(self, plan: MontagePlan) -> None:
+        """Score the analysed recordings and add them to the pilot's history."""
+        if self._history is None or not self._settings.score_flights:
+            return
+        scored = [
+            (clip.info.path, score_flight(clip.cuts.signals, clip.cuts.usable))
+            for clip in plan.clips
+            if clip.cuts is not None
+        ]
+        try:
+            self._history.record(scored)
+        except (OSError, sqlite3.Error) as error:
+            logging.getLogger("fpvedit.app").warning("could not save flight scores: %s", error)
+
     def _go_to_step(self, step: int) -> None:
         """A click on a step in the header."""
         if self._busy():
@@ -599,7 +632,7 @@ class MainWindow(QMainWindow):
         if page == self.WORK:
             current = 3 if self._task_page == self.REVIEW else 1
         else:
-            current = {self.CLIPS: 0, self.REVIEW: 2, self.DONE: 3, self.RATE: -1}[page]
+            current = {self.CLIPS: 0, self.REVIEW: 2, self.DONE: 3}.get(page, -1)
         reachable = {0}
         if self._clips.count():
             reachable.add(1)
@@ -959,6 +992,7 @@ class MainWindow(QMainWindow):
         if not isinstance(result, MontagePlan):
             raise TypeError(f"expected a MontagePlan, got {type(result).__name__}")
         self._plan = result
+        self._save_scores(result)
         durations = {clip.index: clip.analysed_duration for clip in result.clips}
         cuts = {clip.index: clip.cuts for clip in result.clips if clip.cuts is not None}
         self._shots = ShotList(result.shots, result.candidates, durations, cuts)
@@ -1278,6 +1312,19 @@ def videos_folder() -> Path:
     """``FPVEdit`` in the user's Videos folder (made when it is first needed)."""
     base = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.MoviesLocation)
     return (Path(base) if base else Path.home() / "Videos") / "FPVEdit"
+
+
+def open_history() -> FlightHistory | None:
+    """The pilot's saved scores; without a usable data folder the Pilot page is left out."""
+    base = data_folder()
+    if base is None:
+        return None
+    try:
+        base.mkdir(parents=True, exist_ok=True)
+        return FlightHistory(base / "flights.sqlite")
+    except (OSError, sqlite3.Error) as error:
+        logging.getLogger("fpvedit.app").warning("could not open flight scores: %s", error)
+        return None
 
 
 def data_folder(name: str = "FPVEdit") -> Path | None:

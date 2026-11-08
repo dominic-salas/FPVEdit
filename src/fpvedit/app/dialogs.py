@@ -97,6 +97,9 @@ class SettingsDialog(QDialog):
         self._rating = QCheckBox("Colour shots on the timeline by rating (1-5) instead of by clip")
         self._rating.setChecked(settings.colour_by_rating)
         form.addRow("Review", self._rating)
+        self._score = QCheckBox("Score my flights and keep my history on the Pilot page")
+        self._score.setChecked(settings.score_flights)
+        form.addRow("Pilot", self._score)
         self._learn = QCheckBox(
             "Leave out shots I'd likely dislike, as learned from my ratings and edits "
             "(from the next montage on)"
@@ -170,6 +173,7 @@ class SettingsDialog(QDialog):
     def _save(self) -> None:
         self._settings.encoder = str(self._encoder.currentData())
         self._settings.colour_by_rating = self._rating.isChecked()
+        self._settings.score_flights = self._score.isChecked()
         self._settings.learn_taste = self._learn.isChecked()
         self._settings.min_stars = int(self._min_stars.currentData())
         self._settings.output_folder = self._folder

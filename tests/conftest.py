@@ -21,6 +21,17 @@ def _no_image_model(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPa
         monkeypatch.setattr(attitude, "available", lambda: False)
 
 
+@pytest.fixture(autouse=True)
+def _private_data_folder(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tests never read or write the pilot's own ratings, measurements and scores."""
+    try:
+        from fpvedit.app import window
+    except ImportError:  # Qt is optional: nothing to protect without the app
+        return
+
+    monkeypatch.setattr(window, "data_folder", lambda name="FPVEdit": tmp_path / name)
+
+
 def pytest_sessionstart(session: pytest.Session) -> None:
     """On CI (GitHub sets ``CI``), a missing FFmpeg or Qt is a broken runner, not a reason
     to skip: the integration tests would skip and the run would still look green."""
