@@ -102,7 +102,7 @@ def copy_licences(target: Path, ffmpeg_licence: str | None) -> None:
         "- Qt for Python: PySide6 and shiboken6 (LGPL-3.0), used unmodified as shared "
         "libraries; you may replace them with your own build of the same version\n"
         "- NumPy (BSD-3-Clause), OpenCV (Apache-2.0)\n"
-        "- The fonts Space Grotesk and Geist Mono (SIL Open Font License 1.1)\n"
+        "- The fonts Instrument Sans and Geist Mono (SIL Open Font License 1.1)\n"
         f"- {ffmpeg}\n"
         "The licence texts of these packages are in this folder.\n",
         encoding="utf-8",
