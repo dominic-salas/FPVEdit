@@ -144,6 +144,7 @@ def stylesheet(p: Palette, fonts: Fonts) -> str:
     QLabel[role="step-on"] {{ color: {p.text}; font-family: {mono}; font-size: 8pt; }}
     QLabel[role="hero"] {{ color: {p.muted}; font-size: 11pt; }}
     QLabel[role="heading"] {{ color: {p.text}; font-size: 20pt; font-weight: 600; }}
+    QLabel[role="stat"] {{ color: {p.text}; font-family: {mono}; font-size: 22pt; }}
     QLabel[role="big-number"] {{ color: {p.text}; font-family: {mono}; font-size: 40pt; }}
     QPushButton[role="step"] {{ border: none; background: transparent; padding: 6px 4px;
         color: {p.faint}; }}

@@ -109,6 +109,15 @@ class AppSettings:
         self._store.setValue("review/colour_by_rating", "true" if value else "false")
 
     @property
+    def score_flights(self) -> bool:
+        """Give each flight a Freestyle and Flow score and save it on the Pilot page."""
+        return str(self._store.value("pilot/score_flights", "true")).lower() == "true"
+
+    @score_flights.setter
+    def score_flights(self, value: bool) -> None:
+        self._store.setValue("pilot/score_flights", "true" if value else "false")
+
+    @property
     def learn_taste(self) -> bool:
         """Leave out shots predicted below `min_stars` (when shots are next found). Off:
         every shot found is kept. The taste is learned from ratings and edits either way."""
