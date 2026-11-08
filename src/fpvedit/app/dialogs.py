@@ -218,6 +218,7 @@ class ExportChoice:
     vertical: bool = False  # 9:16 for phones
 
 
+SHORT_FORM_LIMIT_S = 180.0
 BAD_NAME_CHARACTERS = '<>:"/\\|?*'
 
 
@@ -230,6 +231,7 @@ class ExportDialog(QDialog):
         settings: AppSettings,
         music: str,
         parent: QWidget,
+        duration: float = 0.0,
         remember: Callable[[Path], bool] = lambda folder: True,
     ) -> None:
         """``remember(folder)`` says whether the chosen folder becomes the next default."""
@@ -256,9 +258,15 @@ class ExportDialog(QDialog):
         self._shape = QComboBox()
         self._shape.addItem("As recorded (landscape)", False)
         self._shape.addItem(
-            "Vertical 9:16 for phones (fills the screen; the sides are cut off)", True
+            "Vertical 1080x1920 for Reels, Shorts, TikTok (the sides are cut off)", True
         )
         self._shape.setCurrentIndex(1 if settings.vertical_export else 0)
+        self._length_note = QLabel(
+            f"{duration / 60:.1f} minutes is over the 3 minutes of a Short or a recommended Reel."
+        )
+        self._length_note.setWordWrap(True)
+        self._too_long = duration > SHORT_FORM_LIMIT_S
+        self._shape.currentIndexChanged.connect(self._show_length_note)
         self._open = QCheckBox("Open the folder when it is done")
         self._open.setChecked(settings.open_folder_after_export)
         music_label = QLabel(music)
@@ -273,10 +281,15 @@ class ExportDialog(QDialog):
         form.addRow("File name", name_row)
         form.addRow("Video", QLabel("H.264 MP4 at the frame rate of your clips"))
         form.addRow("Shape", self._shape)
+        form.addRow("", self._length_note)
+        self._show_length_note()
         form.addRow("Encoding", self._encoder)
         form.addRow("Music", music_label)
         form.addRow("", self._open)
         form.addRow(buttons)
+
+    def _show_length_note(self) -> None:
+        self._length_note.setVisible(self._too_long and bool(self._shape.currentData()))
 
     def _browse(self) -> None:
         name = QFileDialog.getExistingDirectory(self, "Save the montage in", self._folder.text())

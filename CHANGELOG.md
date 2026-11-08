@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **Vertical exports are 1080x1920**, the size Reels, Shorts and TikTok expect, instead of
+  the recording's own height (404x720 from 720p). The Export window says when a vertical
+  montage is longer than 3 minutes.
+- **The montage's sound is levelled** to about -14 LUFS with peaks under -1 dBTP, for music
+  and for the recordings' own sound, by one overall volume change. Very quiet sound is
+  raised by at most 12 dB. Audio is now AAC at 384 kb/s.
+- **H.264 follows YouTube's upload recommendation**: High profile, 2 B-frames, a closed
+  group of pictures of half the frame rate.
 - **Tricks are measured, not guessed.** The motion alone under-counts fast flips in the
   blur (a full flip read 130-380 degrees). With the image tools installed
   (`uv sync --extra ml`), FPVEdit now reads which way is down in the frames just before and

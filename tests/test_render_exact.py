@@ -8,6 +8,8 @@ repeated inside a shot, nothing extra at the joins, shots in the order given.
 
 from __future__ import annotations
 
+import json
+import re
 import subprocess
 from itertools import pairwise
 from pathlib import Path
@@ -16,10 +18,10 @@ import numpy as np
 import pytest
 
 from fpvedit.errors import FPVEditError
-from fpvedit.media import Tools, find_tools, frame_times, probe
+from fpvedit.media import Tools, find_tools, frame_times, probe, probe_audio
 from fpvedit.montage import Shot
 from fpvedit.pipeline import Clip, render_montage
-from fpvedit.render import EncodeConfig
+from fpvedit.render import MAX_BOOST, EncodeConfig, loudness_gain
 from media_fixtures import ffmpeg_available
 
 pytestmark = [
@@ -177,7 +179,7 @@ def test_an_unwritable_output_fails_clearly_and_leaves_nothing(tmp_path: Path) -
     assert blocker.read_text() == "a file where the output folder should be"
 
 
-def test_vertical_export_fills_a_9_by_16_frame_with_the_middle(tmp_path: Path) -> None:
+def test_vertical_export_fills_1080x1920_with_the_middle(tmp_path: Path) -> None:
     tools = find_tools()
     source = numbered_clip(tmp_path / "numbered.mp4", 4, 30)  # 320x240
     output = tmp_path / "vertical.mp4"
@@ -191,18 +193,130 @@ def test_vertical_export_fills_a_9_by_16_frame_with_the_middle(tmp_path: Path) -
         vertical=True,
     )
     info = probe(tools, output, count_frames=True)
-    assert (info.video.width, info.video.height) == (136, 240)  # 9:16, as tall as the clip
+    assert (info.video.width, info.video.height) == (1080, 1920)  # what phone platforms expect
     assert info.video.frame_count == 30
-    frames = gray_frames(output, 136, 240)
+    frames = gray_frames(output, 1080, 1920)
     # Edge to edge: no black bars anywhere (the bottom half of the source is mid grey).
-    assert frames[:, 130:, :].min() > 100
-    # The middle 136 px of the source (x 92-228), not squeezed: bit columns 4-7 of each
-    # frame number sit at their source places, shifted by 92 px.
+    assert frames[:, 1040:, :].min() > 100
+    # Scaled 8x to fill the height and the middle 1080 of 2560 px kept (x 740-1820), not
+    # squeezed: bit columns 4-7 of each frame number sit at their source places.
     expected = list(range(30, 60))
     for bit in range(4, 8):
-        x = 26 * bit + 13 - 92
-        shown = (frames[:, 60, x] > 128).tolist()
+        x = (26 * bit + 13) * 8 - 740
+        shown = (frames[:, 480, x] > 128).tolist()
         assert shown == [bool(n >> bit & 1) for n in expected], bit
+
+
+def test_the_video_has_the_structure_youtube_asks_for(tmp_path: Path) -> None:
+    tools = find_tools()
+    source = numbered_clip(tmp_path / "numbered.mp4", 4, 60)
+    output = tmp_path / "out.mp4"
+    # The default encoder: FAST's preset turns off what High profile adds.
+    render_montage(
+        tools,
+        [clip(tools, 0, source)],
+        [shot(0, 0.5, 3.5)],
+        output,
+        force=False,
+        encode=EncodeConfig(),
+    )
+    stream = subprocess.run(
+        [
+            *("ffprobe", "-v", "error", "-select_streams", "v:0", "-of", "json"),
+            *("-show_entries", "stream=profile,has_b_frames:packet=flags,pts_time"),
+            *("-show_packets", str(output)),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    found = json.loads(stream)
+    assert found["streams"][0]["profile"] == "High"
+    assert found["streams"][0]["has_b_frames"] == 2
+    keys = sorted(float(p["pts_time"]) for p in found["packets"] if "K" in p["flags"])
+    assert len(keys) >= 6
+    assert max(b - a for a, b in pairwise(keys)) <= 0.5 + 1e-3  # half the frame rate
+
+
+def loudness_of(path: Path) -> tuple[float, float]:
+    """Integrated loudness and true peak of a file, read by FFmpeg's EBU R128 meter."""
+    log = subprocess.run(
+        [
+            *("ffmpeg", "-hide_banner", "-nostats", "-i", str(path), "-map", "0:a:0"),
+            *("-af", "ebur128=peak=true", "-f", "null", "-"),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stderr
+    summary = log[log.rindex("Summary:") :]
+    integrated = re.search(r"I:\s+(-?[\d.]+) LUFS", summary)
+    peak = re.search(r"Peak:\s+(-?[\d.]+) dBFS", summary)
+    assert integrated is not None and peak is not None
+    return float(integrated.group(1)), float(peak.group(1))
+
+
+def tone_clip(path: Path, seconds: float, volume_db: float) -> Path:
+    picture = numbered_clip(path.with_name(f"{path.stem}-picture.mp4"), seconds, 60)
+    tone = f"sine=f=440:r=48000:d={seconds},volume={volume_db}dB"
+    subprocess.run(
+        [
+            *("ffmpeg", "-v", "error", "-i", str(picture), "-f", "lavfi", "-i", tone),
+            *("-map", "0:v", "-map", "1:a", "-c:v", "copy", "-c:a", "aac", "-b:a", "320k"),
+            str(path),
+        ],
+        check=True,
+    )
+    return path
+
+
+def test_a_loud_track_is_turned_down_to_the_target(tmp_path: Path) -> None:
+    tools = find_tools()
+    source = numbered_clip(tmp_path / "numbered.mp4", 8, 60)
+    song = tmp_path / "song.wav"
+    subprocess.run(
+        ["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "sine=f=440:d=8,volume=14dB", str(song)],
+        check=True,
+    )
+    assert loudness_of(song)[0] > -12  # louder than the target before
+    output = tmp_path / "out.mp4"
+    render_montage(
+        tools,
+        [clip(tools, 0, source)],
+        [shot(0, 0.5, 7.5)],
+        output,
+        force=False,
+        encode=FAST,
+        music=[probe_audio(tools, song)],
+    )
+    integrated, peak = loudness_of(output)
+    assert integrated == pytest.approx(-14, abs=1)
+    assert peak <= -0.5
+
+
+def test_quiet_recorded_sound_is_raised_but_not_past_the_limit(tmp_path: Path) -> None:
+    tools = find_tools()
+    source = tone_clip(tmp_path / "quiet.mp4", 8, -40)
+    before = loudness_of(source)[0]
+    output = tmp_path / "out.mp4"
+    render_montage(
+        tools, [clip(tools, 0, source)], [shot(0, 0.5, 7.5)], output, force=False, encode=FAST
+    )
+    assert loudness_of(output)[0] == pytest.approx(before + MAX_BOOST, abs=1)
+
+
+@pytest.mark.parametrize(
+    ("integrated", "peak", "gain"),
+    [
+        (-8.0, -0.2, -6.0),  # a loud master comes down to the target
+        (-20.0, -10.0, 6.0),  # a quiet one comes up to it
+        (-20.0, -3.0, 2.0),  # peaks stop it first
+        (-60.0, -50.0, MAX_BOOST),  # hiss is not raised to full level
+        (float("-inf"), float("-inf"), 0.0),  # silence is left alone
+    ],
+)
+def test_loudness_gain(integrated: float, peak: float, gain: float) -> None:
+    assert loudness_gain(integrated, peak) == pytest.approx(gain)
 
 
 def beeping_clip(path: Path, seconds: float, beep: float, audio_late: float) -> Path:

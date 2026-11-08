@@ -1054,7 +1054,12 @@ class MainWindow(QMainWindow):
         fit = describe_music(music, total).capitalize()
         default.parent.mkdir(parents=True, exist_ok=True)  # the Videos\FPVEdit folder
         dialog = ExportDialog(
-            default, self._settings, fit, self, remember=lambda f: not is_removable(f)
+            default,
+            self._settings,
+            fit,
+            self,
+            duration=total,
+            remember=lambda f: not is_removable(f),
         )
         if not dialog.exec() or dialog.choice is None:
             return
