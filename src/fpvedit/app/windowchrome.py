@@ -172,7 +172,7 @@ class _GlyphButton(QAbstractButton):
     def paintEvent(self, event: QPaintEvent) -> None:
         painter = QPainter(self)
         text = self.palette().color(self.foregroundRole())
-        text.setAlphaF(0.72)
+        text.setAlphaF(0.7)
         if self.hovered or self.isDown():
             backdrop = QColor(text)
             backdrop.setAlphaF(0.16 if self.isDown() else 0.10)
@@ -180,7 +180,10 @@ class _GlyphButton(QAbstractButton):
                 backdrop = QColor("#c4554f")
                 backdrop.setAlphaF(0.85 if self.isDown() else 1.0)
                 text = QColor("#ffffff")
-            painter.fillRect(self.rect(), backdrop)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(backdrop)
+            painter.drawRoundedRect(QRectF(self.rect()).adjusted(2, 0, -2, 0), 6, 6)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setPen(QPen(text, 1.0))
         cx, cy = self.width() / 2, self.height() / 2
@@ -252,8 +255,11 @@ def _is_interactive(widget: QWidget | None, stop: QWidget) -> bool:
 class WindowChrome(QObject):
     """The state and the hit test for one main window drawn to its top edge."""
 
-    def __init__(self, window: QMainWindow, header: QWidget, buttons: CaptionButtons) -> None:
+    def __init__(
+        self, window: QMainWindow, header: QWidget, buttons: CaptionButtons, right_margin: int
+    ) -> None:
         super().__init__(window)
+        self.right_margin = right_margin
         self.window = window
         self.header = header
         self.buttons = buttons
@@ -262,8 +268,9 @@ class WindowChrome(QObject):
         self.place()
 
     def place(self) -> None:
-        """Keep the buttons flush against the top right corner of the top bar."""
-        self.buttons.move(self.header.width() - self.buttons.width(), 0)
+        """Centre the buttons on the top bar's own line, at its right padding."""
+        x = self.header.width() - self.right_margin - self.buttons.width()
+        self.buttons.move(x, (self.header.height() - self.buttons.height()) // 2)
         self.buttons.raise_()
 
     def handle(self) -> int:
@@ -452,7 +459,7 @@ def _supported() -> bool:
 
 def attach(window: QMainWindow, header: QWidget) -> WindowChrome | None:
     """Draw ``header`` (the app's top bar, already at the top of the window) as the window's
-    top edge, with the caption buttons flush in its top right corner.
+    top edge, with the caption buttons on the bar's own centre line at its right padding.
 
     Returns None, changing nothing, when this is not Windows.
     """
@@ -460,9 +467,11 @@ def attach(window: QMainWindow, header: QWidget) -> WindowChrome | None:
     if not _supported():
         return None
     layout = header.layout()
+    right = 16
     if isinstance(layout, QBoxLayout):  # room for the buttons after the bar's own content
-        layout.addSpacing(max(0, 3 * BUTTON_WIDTH - layout.contentsMargins().right()) + 8)
-    chrome = WindowChrome(window, header, CaptionButtons(window, header))
+        right = layout.contentsMargins().right()
+        layout.addSpacing(3 * BUTTON_WIDTH)
+    chrome = WindowChrome(window, header, CaptionButtons(window, header), right)
     if _filter is None:
         _filter = _Filter()
         app = QCoreApplication.instance()
