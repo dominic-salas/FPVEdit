@@ -193,6 +193,11 @@ def _flight(row: sqlite3.Row) -> Flight:
     return Flight(**values)
 
 
+def leaderboard(flights: Sequence[Flight], score: str) -> list[Flight]:
+    """The flights that count, best first by ``score`` ("freestyle" or "flow")."""
+    return sorted((f for f in flights if f.counts), key=lambda f: -float(getattr(f, score)))
+
+
 def rolling_level(values: Sequence[float], window: int = LEVEL_FLIGHTS) -> list[float]:
     """At each flight, the median of it and the flights just before it."""
     return [statistics.median(values[max(0, i + 1 - window) : i + 1]) for i in range(len(values))]
