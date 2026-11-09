@@ -146,10 +146,6 @@ def stylesheet(p: Palette, fonts: Fonts) -> str:
     QLabel[role="heading"] {{ color: {p.text}; font-size: 20pt; font-weight: 600; }}
     QLabel[role="stat"] {{ color: {p.text}; font-family: {mono}; font-size: 22pt; }}
     QLabel[role="big-number"] {{ color: {p.text}; font-family: {mono}; font-size: 40pt; }}
-    QPushButton[role="module"] {{ border: none; border-top: 1px solid {p.border};
-        background: transparent; border-radius: 0; padding: 0; }}
-    QPushButton[role="module"]:hover {{ background: {p.surface}; }}
-    QPushButton[role="module"]:focus {{ background: {p.surface}; }}
     QPushButton[role="step"] {{ border: none; background: transparent; padding: 6px 4px;
         color: {p.faint}; }}
     QPushButton[role="step"]:enabled {{ color: {p.muted}; }}

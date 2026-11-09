@@ -66,7 +66,7 @@ from fpvedit.app.cliplist import (
 from fpvedit.app.clips import clock as clock_short
 from fpvedit.app.clips import default_output_folder, describe_clip, is_removable
 from fpvedit.app.dialogs import ExportDialog, SettingsDialog, about_text, ask_for_ffmpeg
-from fpvedit.app.homepage import HomePage
+from fpvedit.app.homepage import MODULES, HomePage, ModuleTab, SandwichButton
 from fpvedit.app.logs import start_logging
 from fpvedit.app.look import DotTitle, StatusDot, app_icon, icon_pixmap
 from fpvedit.app.model import ShotList
@@ -323,15 +323,19 @@ class MainWindow(QMainWindow):
         self._theme_button = QPushButton()
         self._theme_button.setProperty("flat", True)
         self._theme_button.clicked.connect(self._toggle_theme)
-        self._menu_button = QPushButton("MENU")
+        self._menu_button: QPushButton = (
+            SandwichButton() if self._product.modes else QPushButton("MENU")
+        )
         self._menu_button.setProperty("flat", True)
+        self._theme_action = QAction(self)
+        self._theme_action.triggered.connect(self._toggle_theme)
         header = QFrame()
         header.setProperty("role", "header")
-        header.setFixedHeight(56)
+        header.setFixedHeight(44 if self._product.modes else 56)
         row = QHBoxLayout(header)
         row.setContentsMargins(24, 0, 16, 0)
         mark = QLabel()
-        mark.setPixmap(icon_pixmap(28 if self._product.modes else 34))
+        mark.setPixmap(icon_pixmap(26 if self._product.modes else 34))
         if self._product.modes:
             row.addWidget(self._home_link(mark, logo))
         else:
@@ -351,7 +355,9 @@ class MainWindow(QMainWindow):
         self._pilot_button.clicked.connect(self._open_pilot)
         self._pilot_button.setVisible(not self._product.modes)
         row.addWidget(self._pilot_button)
-        row.addWidget(self._theme_button)
+        self._theme_button.setVisible(not self._product.modes)
+        if not self._product.modes:
+            row.addWidget(self._theme_button)
         row.addWidget(self._menu_button)
         windowchrome.attach(self, header)
 
@@ -602,6 +608,9 @@ class MainWindow(QMainWindow):
 
         menu = QMenu(self)
         self._menu_button.setMenu(menu)
+        if self._product.modes:
+            menu.addAction(self._theme_action)
+            menu.addSeparator()
         menu.addAction(action("Add clips…", self._choose_clips, QKeySequence.StandardKey.Open))
         menu.addAction(action("Add a folder of clips…", self._choose_folder))
         menu.addAction(action("Remove all clips", self._clear_clips))
@@ -652,22 +661,21 @@ class MainWindow(QMainWindow):
         inner.addWidget(logo)
         for child in (mark, logo):
             child.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        link.setFixedSize(28 + 10 + logo.width(), 36)
+        link.setFixedSize(26 + 10 + logo.width(), 36)
         return link
 
     def _build_modes(self) -> dict[int, QPushButton]:
-        """Home and the FlowFlight, FPVEdit and AnaHD modules; none in FPVEdit alone."""
+        """FlowFlight, FPVEdit and AnaHD shrunk into the top strip; none in FPVEdit alone."""
         if not self._product.modes:
             return {}
         modes: dict[int, QPushButton] = {}
-        for page, text, slot in (
-            (self.HOME, "HOME", self._open_home),
-            (self.PILOT, "FLOWFLIGHT", self._open_pilot),
-            (self.CLIPS, "FPVEDIT", self._open_edit),
-            (self.ANAHD, "ANAHD", self._open_anahd),
-        ):
-            mode = QPushButton(text)
-            mode.setProperty("role", "step")
+        pages = (
+            (self.PILOT, self._open_pilot),
+            (self.CLIPS, self._open_edit),
+            (self.ANAHD, self._open_anahd),
+        )
+        for (page, slot), module in zip(pages, MODULES, strict=True):
+            mode = ModuleTab(module)
             mode.clicked.connect(slot)
             modes[page] = mode
         return modes
@@ -694,7 +702,9 @@ class MainWindow(QMainWindow):
             return
         self._home.set_status("flowflight", self._flight_status())
         count = len(self.clip_paths())
-        self._home.set_status("fpvedit", plural(count, "clip").upper() if count else "")
+        self._home.set_status(
+            "fpvedit", plural(count, "clip").upper() if count else "ADD CLIPS TO START"
+        )
         self._home.set_status("anahd", self._anahd.status_text())
         self._show_page(self.HOME)
 
@@ -721,8 +731,8 @@ class MainWindow(QMainWindow):
         self._steps.setVisible(current == self.CLIPS)
         for key, mode in self._modes.items():
             mode.setProperty("state", "on" if key == current else "off")
-            mode.style().unpolish(mode)
-            mode.style().polish(mode)
+            mode.setVisible(page != self.HOME)
+            mode.update()
 
     def _open_pilot(self) -> None:
         if self._pilot is not None and not self._busy():
@@ -1311,7 +1321,13 @@ class MainWindow(QMainWindow):
             clips.card.set_theme(palette, self._fonts)
             clips.viewport().update()
         self._logo.set_colour(palette.text, palette.accent)
-        self._home.set_colours(palette.text, palette.accent)
+        self._home.set_palette(palette)
+        for mode in self._modes.values():
+            if isinstance(mode, ModuleTab):
+                mode.set_palette(palette)
+        if isinstance(self._menu_button, SandwichButton):
+            self._menu_button.set_colour(palette.muted)
+        self._theme_action.setText("Light mode" if palette is theme.DARK else "Dark mode")
         self._title.set_colour(palette.text)
         self._done_title.set_colour(palette.text)
         self._dot.set_colours(palette.faint, palette.accent)
