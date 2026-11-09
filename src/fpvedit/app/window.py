@@ -50,8 +50,8 @@ from PySide6.QtWidgets import (
 
 from fpvedit import __version__, scenery
 from fpvedit.app import theme, windowchrome
+from fpvedit.app.anahdpage import AnaHDPage
 from fpvedit.app.analyser import BackgroundAnalysis
-from fpvedit.app.cleanpage import CleanPage
 from fpvedit.app.cliplist import (
     DETAILS,
     PATH,
@@ -66,6 +66,7 @@ from fpvedit.app.cliplist import (
 from fpvedit.app.clips import clock as clock_short
 from fpvedit.app.clips import default_output_folder, describe_clip, is_removable
 from fpvedit.app.dialogs import ExportDialog, SettingsDialog, about_text, ask_for_ffmpeg
+from fpvedit.app.homepage import HomePage
 from fpvedit.app.logs import start_logging
 from fpvedit.app.look import DotTitle, StatusDot, app_icon, icon_pixmap
 from fpvedit.app.model import ShotList
@@ -75,7 +76,7 @@ from fpvedit.app.review import ReviewPage, describe_music
 from fpvedit.app.settings import AppSettings
 from fpvedit.app.widgets import button, plural, timecode
 from fpvedit.errors import CancelledError, FPVEditError
-from fpvedit.history import FlightHistory
+from fpvedit.history import FlightHistory, summarise
 from fpvedit.media import MediaInfo, Tools, find_tools, run_tool
 from fpvedit.montage import Shot, pick_shots
 from fpvedit.pipeline import (
@@ -255,7 +256,7 @@ class Steps(QWidget):
 class MainWindow(QMainWindow):
     """Four screens, one step each: add clips, find shots, review, export."""
 
-    CLIPS, WORK, REVIEW, DONE, RATE, PILOT, CLEAN = range(7)
+    CLIPS, WORK, REVIEW, DONE, RATE, PILOT, ANAHD, HOME = range(8)
 
     def __init__(
         self,
@@ -268,6 +269,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self._product = product or FPVEDIT
         self._edit_page = self.CLIPS  # where the Edit tab returns to
+        self._closing_anahd = False
         self.setWindowTitle(f"{self._product.name} {__version__}")
         self.setWindowIcon(app_icon())
         self.resize(1280, 820)
@@ -307,11 +309,14 @@ class MainWindow(QMainWindow):
         if geometry is not None:
             self.restoreGeometry(geometry)
         self._refresh()
+        if self._product.modes:
+            self._open_home()
 
     # ----- layout -----
 
     def _build(self) -> None:
-        logo = DotTitle(self._product.logo, cell=4, accent_from=self._product.accent_from)
+        cell = 3 if self._product.modes else 4
+        logo = DotTitle(self._product.logo, cell=cell, accent_from=self._product.accent_from)
         self._logo = logo
         self._steps = Steps()
         self._steps.chosen.connect(self._go_to_step)
@@ -326,10 +331,13 @@ class MainWindow(QMainWindow):
         row = QHBoxLayout(header)
         row.setContentsMargins(24, 0, 16, 0)
         mark = QLabel()
-        mark.setPixmap(icon_pixmap(34))
-        row.addWidget(mark)
-        row.addSpacing(10)
-        row.addWidget(logo)
+        mark.setPixmap(icon_pixmap(28 if self._product.modes else 34))
+        if self._product.modes:
+            row.addWidget(self._home_link(mark, logo))
+        else:
+            row.addWidget(mark)
+            row.addSpacing(10)
+            row.addWidget(logo)
         self._modes = self._build_modes()
         if self._modes:
             row.addSpacing(28)
@@ -363,7 +371,8 @@ class MainWindow(QMainWindow):
             self._pages.addWidget(self._pilot)
         else:
             self._pages.addWidget(QWidget())  # keeps the page numbers
-        self._pages.addWidget(self._build_clean_page())
+        self._pages.addWidget(self._build_anahd_page())
+        self._pages.addWidget(self._build_home_page())
 
         central = QWidget()
         layout = QVBoxLayout(central)
@@ -623,20 +632,39 @@ class MainWindow(QMainWindow):
             self._review.activate()
         elif page == self.RATE:
             self._rate.start()
-        if page not in (self.PILOT, self.CLEAN):
+        if page not in (self.HOME, self.PILOT, self.ANAHD):
             self._edit_page = page
         self._refresh_modes()
         self._refresh_steps()
 
+    def _home_link(self, mark: QLabel, logo: DotTitle) -> QPushButton:
+        """The icon and name, which lead back to Home."""
+        link = QPushButton()
+        link.setProperty("flat", True)
+        link.setCursor(Qt.CursorShape.PointingHandCursor)
+        link.setToolTip("Home")
+        link.setAccessibleName("okFPV home")
+        link.clicked.connect(self._open_home)
+        inner = QHBoxLayout(link)
+        inner.setContentsMargins(0, 0, 0, 0)
+        inner.setSpacing(10)
+        inner.addWidget(mark)
+        inner.addWidget(logo)
+        for child in (mark, logo):
+            child.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        link.setFixedSize(28 + 10 + logo.width(), 36)
+        return link
+
     def _build_modes(self) -> dict[int, QPushButton]:
-        """The FlowFlight, FPVEdit and AnaHD modules of okFPV; none in FPVEdit alone."""
+        """Home and the FlowFlight, FPVEdit and AnaHD modules; none in FPVEdit alone."""
         if not self._product.modes:
             return {}
         modes: dict[int, QPushButton] = {}
         for page, text, slot in (
+            (self.HOME, "HOME", self._open_home),
             (self.PILOT, "FLOWFLIGHT", self._open_pilot),
             (self.CLIPS, "FPVEDIT", self._open_edit),
-            (self.CLEAN, "ANAHD", self._open_clean),
+            (self.ANAHD, "ANAHD", self._open_anahd),
         ):
             mode = QPushButton(text)
             mode.setProperty("role", "step")
@@ -644,24 +672,52 @@ class MainWindow(QMainWindow):
             modes[page] = mode
         return modes
 
-    def _build_clean_page(self) -> QWidget:
-        self._clean = CleanPage(self.clip_paths)
-        return self._clean
+    def _build_anahd_page(self) -> QWidget:
+        self._anahd = AnaHDPage(self.clip_paths, lambda: self._settings.theme)
+        return self._anahd
+
+    def _build_home_page(self) -> QWidget:
+        self._home = HomePage()
+        self._home.chosen.connect(self._open_module)
+        return self._home
+
+    def _open_module(self, name: str) -> None:
+        openers = {
+            "flowflight": self._open_pilot,
+            "fpvedit": self._open_edit,
+            "anahd": self._open_anahd,
+        }
+        openers[name]()
+
+    def _open_home(self) -> None:
+        if self._busy():
+            return
+        self._home.set_status("flowflight", self._flight_status())
+        count = len(self.clip_paths())
+        self._home.set_status("fpvedit", plural(count, "clip").upper() if count else "")
+        self._home.set_status("anahd", self._anahd.status_text())
+        self._show_page(self.HOME)
+
+    def _flight_status(self) -> str:
+        summary = summarise(self._history.flights()) if self._history else None
+        if summary is None:
+            return "NO FLIGHTS YET"
+        return f"{summary.freestyle[-1]:.0f} / {summary.flow[-1]:.0f}"
 
     def _open_edit(self) -> None:
         if not self._busy():
             self._show_page(self._edit_page)
 
-    def _open_clean(self) -> None:
+    def _open_anahd(self) -> None:
         if not self._busy():
-            self._clean.refresh()
-            self._show_page(self.CLEAN)
+            self._anahd.refresh()
+            self._show_page(self.ANAHD)
 
     def _refresh_modes(self) -> None:
         if not self._modes:
             return
         page = self._pages.currentIndex()
-        current = page if page in (self.PILOT, self.CLEAN) else self.CLIPS
+        current = page if page in (self.HOME, self.PILOT, self.ANAHD) else self.CLIPS
         self._steps.setVisible(current == self.CLIPS)
         for key, mode in self._modes.items():
             mode.setProperty("state", "on" if key == current else "off")
@@ -1255,6 +1311,7 @@ class MainWindow(QMainWindow):
             clips.card.set_theme(palette, self._fonts)
             clips.viewport().update()
         self._logo.set_colour(palette.text, palette.accent)
+        self._home.set_colours(palette.text, palette.accent)
         self._title.set_colour(palette.text)
         self._done_title.set_colour(palette.text)
         self._dot.set_colours(palette.faint, palette.accent)
@@ -1336,6 +1393,14 @@ class MainWindow(QMainWindow):
             self._work_status.setText("Stopping…")
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        if self._anahd.running:
+            # AnaHD asks first if it is cleaning; this window closes once AnaHD has.
+            if not self._closing_anahd:
+                self._closing_anahd = True
+                self._anahd.on_stopped(self.close)
+            self._anahd.request_close()
+            event.ignore()
+            return
         if self._task is not None:
             answer = QMessageBox.question(
                 self, "Stop and quit?", "FPVEdit is still working. Stop and quit?"
