@@ -30,11 +30,13 @@ def make_window(tmp_path: Path, combined: bool):  # type: ignore[no-untyped-def]
 def test_tabs_switch_pages_and_edit_comes_back(tmp_path: Path) -> None:
     window = make_window(tmp_path, combined=True)
     assert window.windowTitle().startswith("okFPV")
+    assert window._pages.currentIndex() == window.HOME
+    assert window._steps.isHidden()
     window._open_pilot()
     assert window._pages.currentIndex() == window.PILOT
     assert window._steps.isHidden()
-    window._open_clean()
-    assert window._pages.currentIndex() == window.CLEAN
+    window._open_anahd()
+    assert window._pages.currentIndex() == window.ANAHD
     window._open_edit()
     assert window._pages.currentIndex() == window.CLIPS
     assert not window._steps.isHidden()
@@ -43,7 +45,22 @@ def test_tabs_switch_pages_and_edit_comes_back(tmp_path: Path) -> None:
 
 def test_the_modules_are_flowflight_fpvedit_and_anahd(tmp_path: Path) -> None:
     window = make_window(tmp_path, combined=True)
-    assert [mode.text() for mode in window._modes.values()] == ["FLOWFLIGHT", "FPVEDIT", "ANAHD"]
+    assert [mode.text() for mode in window._modes.values()] == [
+        "HOME",
+        "FLOWFLIGHT",
+        "FPVEDIT",
+        "ANAHD",
+    ]
+
+
+def test_home_rows_open_their_modules(tmp_path: Path) -> None:
+    window = make_window(tmp_path, combined=True)
+    window._home.rows["anahd"].click()
+    assert window._pages.currentIndex() == window.ANAHD
+    window._modes[window.HOME].click()
+    window._home.rows["fpvedit"].click()
+    assert window._pages.currentIndex() == window.CLIPS
+    assert window._home.rows["anahd"].status.text() == "NOT INSTALLED"
 
 
 def test_fpvedit_alone_has_no_tabs(tmp_path: Path) -> None:
@@ -56,7 +73,7 @@ def test_fpvedit_alone_has_no_tabs(tmp_path: Path) -> None:
 def test_every_letter_of_both_names_can_be_drawn() -> None:
     from fpvedit.app.look import GLYPHS
 
-    assert set("fpvedit" + "okfpv") <= set(GLYPHS)
+    assert set("fpvedit" + "okfpv" + "flowflight" + "anahd") <= set(GLYPHS)
 
 
 def test_leaderboard_view_and_score_card_stay_on_this_computer(tmp_path: Path) -> None:

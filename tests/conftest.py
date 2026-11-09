@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import sys
 from pathlib import Path
 
@@ -51,3 +52,10 @@ def pytest_sessionstart(session: pytest.Session) -> None:
         ]
         if missing:
             pytest.exit(f"CI is missing {', '.join(missing)}; tests would skip", returncode=1)
+
+
+@pytest.fixture(autouse=True)
+def _no_real_anahd(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No test starts the AnaHD installed on the machine."""
+    if importlib.util.find_spec("PySide6") is not None:
+        monkeypatch.setattr("fpvedit.app.anahdpage.find_anahd", lambda *_: None)
