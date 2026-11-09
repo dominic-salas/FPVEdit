@@ -220,7 +220,7 @@ class Product:
 
 
 FPVEDIT = Product("FPVEdit", "fpvedit", 3, "FPVEdit.App", modes=False)
-FLOWFLIGHT = Product("FlowFlight", "flowflight", 4, "FlowFlight.App", modes=True)
+OKFPV = Product("okFPV", "okfpv", 2, "okFPV.App", modes=True)
 
 
 class Steps(QWidget):
@@ -629,14 +629,14 @@ class MainWindow(QMainWindow):
         self._refresh_steps()
 
     def _build_modes(self) -> dict[int, QPushButton]:
-        """The Score, Edit and Clean tabs of the combined app; none in FPVEdit alone."""
+        """The FlowFlight, FPVEdit and AnaHD modules of okFPV; none in FPVEdit alone."""
         if not self._product.modes:
             return {}
         modes: dict[int, QPushButton] = {}
         for page, text, slot in (
-            (self.PILOT, "SCORE", self._open_pilot),
-            (self.CLIPS, "EDIT", self._open_edit),
-            (self.CLEAN, "CLEAN", self._open_clean),
+            (self.PILOT, "FLOWFLIGHT", self._open_pilot),
+            (self.CLIPS, "FPVEDIT", self._open_edit),
+            (self.CLEAN, "ANAHD", self._open_clean),
         ):
             mode = QPushButton(text)
             mode.setProperty("role", "step")

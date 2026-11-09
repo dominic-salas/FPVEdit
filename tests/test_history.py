@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 
-from fpvedit.history import FlightHistory, summarise
+from fpvedit.history import FlightHistory, leaderboard, summarise
 from fpvedit.scoring import SCORER_VERSION, FlightScore, Status, Turn, disqualify
 
 TURNS = tuple(Turn(float(i), 240.0, "roll+", 1.0) for i in range(10))
@@ -58,3 +58,18 @@ def test_disqualify_rules() -> None:
     past = [30.0, 32.0, 34.0, 36.0, 38.0, 40.0, 31.0, 33.0, 35.0, 37.0]
     assert disqualify(replace(GOOD, freestyle=95.0), past) is not None
     assert disqualify(GOOD, past) is None
+
+
+def test_leaderboard_ranks_only_flights_that_count(tmp_path: Path) -> None:
+    history = FlightHistory(":memory:")
+    spam = replace(GOOD, freestyle=99.0, turns=TURNS, top_share=1.0)
+    history.record(
+        [
+            (clip(tmp_path, "a.mp4", b"1"), GOOD),
+            (clip(tmp_path, "b.mp4", b"2"), replace(GOOD, freestyle=70.0, flow=20.0)),
+            (clip(tmp_path, "c.mp4", b"3"), spam),
+        ]
+    )
+    flights = history.flights()
+    assert [f.name for f in leaderboard(flights, "freestyle")] == ["b.mp4", "a.mp4"]
+    assert [f.name for f in leaderboard(flights, "flow")] == ["a.mp4", "b.mp4"]

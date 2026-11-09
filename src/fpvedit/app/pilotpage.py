@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from pathlib import Path
 
 from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QPaintEvent, QPalette, QPen, QPolygonF
 from PySide6.QtWidgets import (
     QComboBox,
+    QFileDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -19,7 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from fpvedit.app.widgets import button, plural
-from fpvedit.history import Flight, FlightHistory, Summary, insight, summarise
+from fpvedit.history import Flight, FlightHistory, Summary, insight, leaderboard, summarise
 
 CONDITIONS = (("All flights", None), ("Daylight", "daylight"), ("Low light", "low light"))
 LABEL_WIDTH = 96
@@ -29,6 +31,13 @@ def _label(text: str = "", role: str = "eyebrow") -> QLabel:
     widget = QLabel(text)
     widget.setProperty("role", role)
     return widget
+
+
+VIEWS = (
+    ("ALL FLIGHTS, NEWEST FIRST", None),
+    ("LEADERBOARD: FREESTYLE", "freestyle"),
+    ("LEADERBOARD: FLOW", "flow"),
+)
 
 
 class TrendChart(QWidget):
@@ -146,6 +155,7 @@ class PilotPage(QWidget):
         self._history = history
         self._flights: list[Flight] = []
         self._shown: list[Flight] = []
+        self._rows: list[Flight] = []
         self._current: Flight | None = None
 
         self._filter = QComboBox()
@@ -188,6 +198,10 @@ class PilotPage(QWidget):
         )
         note.setWordWrap(True)
 
+        self._view = QComboBox()
+        for text, value in VIEWS:
+            self._view.addItem(text, value)
+        self._view.currentIndexChanged.connect(lambda _: self._fill_list())
         self._list = QListWidget()
         self._list.currentRowChanged.connect(self._select)
 
@@ -211,11 +225,16 @@ class PilotPage(QWidget):
         self._anyway = QPushButton("COUNT IT ANYWAY")
         self._anyway.clicked.connect(self._toggle_anyway)
         self._anyway.hide()
+        self._share = QPushButton("SAVE SCORE CARD")
+        self._share.setToolTip("Saves a picture to post if you want to. Nothing is uploaded.")
+        self._share.clicked.connect(self._choose_card_file)
+        self._share.hide()
 
         card = QFrame()
-        card.setFixedWidth(340)
+        self._card = card
+        card.setFixedWidth(356)
         card_layout = QVBoxLayout(card)
-        card_layout.setContentsMargins(16, 0, 0, 0)
+        card_layout.setContentsMargins(16, 0, 16, 0)
         card_layout.setSpacing(8)
         card_layout.addWidget(self._card_title)
         card_layout.addWidget(self._card_scores)
@@ -224,10 +243,14 @@ class PilotPage(QWidget):
             card_layout.addWidget(bar)
         card_layout.addWidget(self._facts)
         card_layout.addWidget(self._anyway)
+        card_layout.addWidget(self._share)
         card_layout.addStretch(1)
 
+        rows = QVBoxLayout()
+        rows.addWidget(self._view)
+        rows.addWidget(self._list, 1)
         lower = QHBoxLayout()
-        lower.addWidget(self._list, 1)
+        lower.addLayout(rows, 1)
         lower.addWidget(card)
 
         layout = QVBoxLayout(self)
@@ -254,14 +277,20 @@ class PilotPage(QWidget):
             insight(self._shown) if summary else "Find shots in some clips to score your flights."
         )
         self._show_stats(summary)
+        self._fill_list()
+
+    def _fill_list(self) -> None:
+        """The flights newest first, or the leaderboard: the flights that count, best first."""
+        score = self._view.currentData()
+        self._rows = leaderboard(self._shown, score) if score else list(reversed(self._shown))
         self._list.blockSignals(True)
         self._list.clear()
-        for flight in reversed(self._shown):
-            self._list.addItem(QListWidgetItem(self._row_text(flight)))
+        for place, flight in enumerate(self._rows, 1):
+            text = self._row_text(flight)
+            self._list.addItem(QListWidgetItem(f"{place}.  {text}" if score else text))
         self._list.blockSignals(False)
-        if self._shown:
-            newest_first = list(reversed(self._shown))
-            scored = (i for i, f in enumerate(newest_first) if f.status == "scored")
+        if self._rows:
+            scored = (i for i, f in enumerate(self._rows) if f.status == "scored")
             self._list.setCurrentRow(next(scored, 0))
         else:
             self._clear_card()
@@ -297,10 +326,10 @@ class PilotPage(QWidget):
         return f"{flight.name}   {scores}"
 
     def _select(self, row: int) -> None:
-        if not 0 <= row < len(self._shown):
+        if not 0 <= row < len(self._rows):
             self._clear_card()
             return
-        flight = list(reversed(self._shown))[row]
+        flight = self._rows[row]
         self._current = flight
         self._card_title.setText(flight.name)
         scored = flight.status == "scored"
@@ -324,6 +353,7 @@ class PilotPage(QWidget):
             else f"{minutes}:{seconds:02d} of flying, {flight.conditions}."
         )
         self._anyway.setVisible(bool(flight.disqualified))
+        self._share.setVisible(flight.counts)
         self._anyway.setText("STOP COUNTING IT" if flight.count_anyway else "COUNT IT ANYWAY")
 
     def _clear_card(self) -> None:
@@ -333,8 +363,27 @@ class PilotPage(QWidget):
         self._reason.setText("")
         self._facts.setText("")
         self._anyway.hide()
+        self._share.hide()
         for bar in self._bars.values():
             bar.hide()
+
+    def _choose_card_file(self) -> None:
+        name = self._current.name if self._current else "flight"
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save score card", f"{Path(name).stem} score.png", "PNG image (*.png)"
+        )
+        if path:
+            self.save_card(Path(path))
+
+    def save_card(self, path: Path) -> bool:
+        """The selected flight's card as a picture, without the buttons on it."""
+        buttons = [b for b in (self._anyway, self._share) if b.isVisible()]
+        for item in buttons:
+            item.hide()
+        saved = self._card.grab().save(str(path))
+        for item in buttons:
+            item.show()
+        return saved
 
     def _toggle_anyway(self) -> None:
         if self._current is not None:

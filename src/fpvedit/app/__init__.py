@@ -21,11 +21,11 @@ def main(combined: bool = False) -> int:
         )
         print(message, file=sys.stderr)
         return 1
-    from fpvedit.app.window import FLOWFLIGHT, FPVEDIT, run
+    from fpvedit.app.window import FPVEDIT, OKFPV, run
 
-    return run(sys.argv, FLOWFLIGHT if combined else FPVEDIT)
+    return run(sys.argv, OKFPV if combined else FPVEDIT)
 
 
-def flowflight() -> int:
-    """The combined app: the same window with the Score, Edit and Clean tabs."""
+def okfpv() -> int:
+    """The combined app: the same window with the FlowFlight, FPVEdit and AnaHD modules."""
     return main(combined=True)
