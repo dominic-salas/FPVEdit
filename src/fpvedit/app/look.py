@@ -99,6 +99,9 @@ GLYPHS: dict[str, tuple[str, ...]] = {
 }
 
 
+SOLID_CELL = 4
+
+
 class DotTitle(QWidget):
     """Lowercase text drawn as a grid of dots, in the accent colour from ``accent_from`` on."""
 
@@ -118,6 +121,12 @@ class DotTitle(QWidget):
         columns = sum(6 for _ in self._text) - 1
         self.setFixedSize(columns * cell, ROWS * cell)
 
+    def set_cell(self, cell: int) -> None:
+        if cell != self._cell:
+            self._cell = cell
+            self.setFixedSize((sum(6 for _ in self._text) - 1) * cell, ROWS * cell)
+            self.update()
+
     def set_colour(self, colour: str, accent: str | None = None) -> None:
         self._colour = QColor(colour)
         self._accent = QColor(accent or colour)
@@ -125,7 +134,8 @@ class DotTitle(QWidget):
 
     def paintEvent(self, event: QPaintEvent) -> None:
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        solid = self._cell <= SOLID_CELL  # separate dots this small read as an optical illusion
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, not solid)
         painter.setPen(Qt.PenStyle.NoPen)
         radius = self._cell * 0.36
         for index, letter in enumerate(self._text):
@@ -135,7 +145,10 @@ class DotTitle(QWidget):
             painter.setBrush(self._accent if index >= self._accent_from else self._colour)
             for y, row in enumerate(rows):
                 for x, bit in enumerate(row):
-                    if bit == "#":
+                    if bit == "#" and solid:
+                        left = (index * 6 + x) * self._cell
+                        painter.drawRect(left, y * self._cell, self._cell, self._cell)
+                    elif bit == "#":
                         centre = QPointF((index * 6 + x + 0.5) * self._cell, (y + 0.5) * self._cell)
                         painter.drawEllipse(centre, radius, radius)
         painter.end()
