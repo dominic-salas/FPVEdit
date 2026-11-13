@@ -124,8 +124,7 @@ longest unbroken runs of flying instead of short shots. A line is a stretch wher
 keeps happening: flips and spins, close passes, or fast flying, with no more than 8 s of
 nothing between them. It ends at a landing, after 8 s of calm flying, at the end of the
 recording, or at a crash: a crash does not erase the run before it, only the impact is cut,
-and the failed move just before it stays in. A line needs 10 s or more, at least half of it
-active.
+and the failed move just before it stays in. A line needs 10 s or more.
 
 Each recording gives its longest line and any other line at least 80% as long (at most 3).
 Every line plays whole, with its own sound, in input order. Recordings may be 4:3 or 16:9

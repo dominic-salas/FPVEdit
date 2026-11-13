@@ -69,8 +69,7 @@ class Line:
 @dataclass(frozen=True)
 class LinesConfig:
     gap_s: float = 8.0  # more than this with nothing happening ends a line
-    min_s: float = 10.0  # the shortest line ...
-    active_share: float = 0.5  # ... and the share of it that must be active
+    min_s: float = 10.0  # the shortest line
     close_ratio: float = 0.8  # a runner-up is kept when this long compared to the best line
     per_recording: int = 3  # most lines kept from one recording
     lead_s: float = 1.0  # a line starts this long before its first active frame
@@ -175,7 +174,7 @@ def find_lines(
             floor = end
             length = (end - start) / fps
             seconds = float(active[start:end].sum()) / fps
-            if length < config.min_s or seconds < config.active_share * length:
+            if length < config.min_s:
                 continue
             shown = tuple(m for m in moments if start <= m.time * fps < end)
             found.append(Line(clip, start / fps, end / fps, len(shown), seconds, ended_by, shown))
