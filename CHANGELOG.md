@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Best line on the Pilot page.** The longest line found in your counted flights, as m:ss next
+  to your scores, once a longest-lines run has measured one.
 - **Longest lines (command line).** `fpvedit --lines a.ts b.mp4` makes one montage of each
   recording's longest unbroken runs of flying: tricks, close passes or fast flying with at
   most 8 s of nothing between them, 10 s or more. A run that ends in a crash is kept up to

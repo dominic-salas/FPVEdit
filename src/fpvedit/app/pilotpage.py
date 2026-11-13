@@ -21,7 +21,15 @@ from PySide6.QtWidgets import (
 )
 
 from fpvedit.app.widgets import button, plural
-from fpvedit.history import Flight, FlightHistory, Summary, insight, leaderboard, summarise
+from fpvedit.history import (
+    Flight,
+    FlightHistory,
+    Summary,
+    best_line,
+    insight,
+    leaderboard,
+    summarise,
+)
 
 CONDITIONS = (("All flights", None), ("Daylight", "daylight"), ("Low light", "low light"))
 LABEL_WIDTH = 96
@@ -172,20 +180,25 @@ class PilotPage(QWidget):
         stats.setSpacing(32)
         self._stats: dict[str, QLabel] = {}
         self._changes: dict[str, QLabel] = {}
+        self._columns: dict[str, QWidget] = {}
         for key, title in (
             ("freestyle", "FREESTYLE"),
             ("flow", "FLOW"),
             ("best", "BEST FREESTYLE / FLOW"),
+            ("line", "BEST LINE"),
             ("flights", "FLIGHTS COUNTED"),
         ):
-            column = QVBoxLayout()
+            holder = QWidget()
+            self._columns[key] = holder
+            column = QVBoxLayout(holder)
+            column.setContentsMargins(0, 0, 0, 0)
             column.setSpacing(2)
             column.addWidget(_label(title))
             self._stats[key] = _label("-", "stat")
             column.addWidget(self._stats[key])
             self._changes[key] = _label("", "hint")
             column.addWidget(self._changes[key])
-            stats.addLayout(column)
+            stats.addWidget(holder)
         stats.addStretch(1)
 
         self._chart = TrendChart()
@@ -297,6 +310,7 @@ class PilotPage(QWidget):
 
     def _show_stats(self, summary: Summary | None) -> None:
         if summary is None:
+            self._columns["line"].hide()
             for label in self._stats.values():
                 label.setText("-")
             for label in self._changes.values():
@@ -306,6 +320,11 @@ class PilotPage(QWidget):
         self._stats["flow"].setText(f"{summary.flow[-1]:.0f}")
         self._stats["best"].setText(f"{summary.best_freestyle:.0f} / {summary.best_flow:.0f}")
         self._stats["flights"].setText(str(summary.flights))
+        line = best_line(self._shown)
+        self._columns["line"].setVisible(line is not None)
+        if line is not None:
+            minutes, seconds = divmod(round(line), 60)
+            self._stats["line"].setText(f"{minutes}:{seconds:02d}")
         beyond = summary.flights > summary.baseline
         for key, level, start in (
             ("freestyle", summary.freestyle[-1], summary.start_freestyle),

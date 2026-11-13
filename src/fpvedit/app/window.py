@@ -750,6 +750,10 @@ class MainWindow(QMainWindow):
         ]
         try:
             self._history.record(scored)
+            for clip in plan.clips:
+                if clip.cuts is not None and clip.lines:
+                    longest = max(line.duration for line in clip.lines)
+                    self._history.set_longest_line(clip.info.path, longest)
         except (OSError, sqlite3.Error) as error:
             logging.getLogger("fpvedit.app").warning("could not save flight scores: %s", error)
 
