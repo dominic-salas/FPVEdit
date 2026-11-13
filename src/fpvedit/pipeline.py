@@ -36,6 +36,7 @@ from fpvedit.errors import (
 )
 from fpvedit.flight import FlightConfig
 from fpvedit.highlights import Interval, Selection, SelectionConfig
+from fpvedit.lines import Line, LinesConfig, find_lines, no_lines_message, pick_lines
 from fpvedit.measure import MeasureConfig
 from fpvedit.media import (
     AudioFile,
@@ -57,6 +58,7 @@ from fpvedit.montage import (
     Shot,
     candidate_shots,
     cut_map,
+    find_moments,
     pick_shots,
 )
 from fpvedit.picture import PictureConfig, decoded_size
@@ -89,6 +91,7 @@ class PipelineConfig:
     flight: FlightConfig = field(default_factory=FlightConfig)
     selection: SelectionConfig = field(default_factory=SelectionConfig)
     montage: MontageConfig = field(default_factory=MontageConfig)
+    lines: LinesConfig = field(default_factory=LinesConfig)
     encode: EncodeConfig = field(default_factory=EncodeConfig)
 
     @property
@@ -115,6 +118,7 @@ class Result:
 
 
 MONTAGE_SUFFIX = "_montage"
+LINES_SUFFIX = "_lines"
 
 
 @dataclass(frozen=True)
@@ -132,6 +136,7 @@ class Clip:
     times: NDArray[np.float64] | None
     analysed_duration: float
     cuts: CutMap | None = field(default=None, compare=False, repr=False)
+    lines: tuple[Line, ...] = ()  # the longest-lines mode's lines of this recording
 
 
 @dataclass(frozen=True)
@@ -145,6 +150,7 @@ class MontageResult:
     elapsed: float
     warnings: tuple[str, ...]
     encoder: str | None = None  # the video codec used; None when no video was written
+    lines: tuple[Line, ...] = ()  # with `run_lines`: the lines, which are the shots
 
 
 def analysis_path(video: Path) -> Path:
@@ -324,6 +330,106 @@ def run_montage(
         elapsed=time.monotonic() - started,
         warnings=tuple(warnings),
         encoder=encoder,
+    )
+
+
+def lines_as_shots(lines: Sequence[Line]) -> tuple[Shot, ...]:
+    """Each line as one whole shot, in montage order (recording order, then time)."""
+    ordered = sorted(lines, key=lambda line: (line.clip, line.start))
+    return tuple(Shot(line.clip, line.start, line.end, 0.0, line.moments) for line in ordered)
+
+
+def run_lines(
+    sources: Sequence[Path],
+    *,
+    output: Path | None = None,
+    force: bool = False,
+    keep_intermediates: bool = False,
+    analyze_only: bool = False,
+    cache_dir: Path | None = None,
+    config: PipelineConfig | None = None,
+    device: str = "cpu",
+    music: Sequence[Path] = (),
+    vertical: bool = False,
+) -> MontageResult:
+    """One montage of each recording's longest lines, every line played whole."""
+    config = config or PipelineConfig()
+    started = time.monotonic()
+    if not sources:
+        raise InvalidInputError("no input recordings given")
+    tools = find_tools()
+    infos = [probe(tools, source) for source in sources]  # fail early on a bad path
+    tracks = [probe_audio(tools, track) for track in music]
+    final = resolve_output_path(
+        [info.path for info in infos], output, force or analyze_only, suffix=LINES_SUFFIX
+    )
+    plan_file = plan_path(final) if analyze_only or keep_intermediates else None
+    if analyze_only and plan_file is not None and plan_file.exists() and not force:
+        raise OutputExistsError(f"{plan_file} already exists; use --force to replace it")
+
+    plan = plan_montage(tools, infos, cache_dir=cache_dir, config=config)
+    modified = {clip.index: clip.info.path.stat().st_mtime for clip in plan.clips}
+    lines = pick_lines([line for clip in plan.clips for line in clip.lines], config.lines, modified)
+    if not lines:
+        raise NoFlightContentError(no_lines_message(config.lines))
+    shots = lines_as_shots(lines)
+    warnings = [note for note in plan.warnings if "no flip, spin or close pass" not in note]
+    for clip in plan.clips:
+        if not any(line.clip == clip.index for line in lines):
+            warnings.append(
+                f"{clip.info.path.name}: no line found, so it has no part in the montage"
+            )
+    fit = montage_fit(plan.clips, shots, vertical=vertical)
+    encoder = None
+    if analyze_only:
+        parts = montage_parts(plan.clips, shots)
+        edited_duration = sum(_fitted_frames(c, s, fit) for c, s in parts) / float(fit.rate)
+    else:
+        edited_duration, used = with_fallback(
+            encoders(tools, device, config.encode),
+            lambda encode: render_montage(
+                tools,
+                plan.clips,
+                shots,
+                final,
+                force=force,
+                encode=encode,
+                music=tracks,
+                vertical=vertical,
+            ),
+        )
+        encoder = used.video_codec
+    if plan_file is not None:
+        if plan_file.exists() and not force and not analyze_only:
+            warnings.append(f"{plan_file.name} already exists; not replacing it (use --force)")
+            plan_file = None
+        else:
+            document = montage_document(plan.infos, plan.clips, shots, fit, plan.config, warnings)
+            document["lines"] = [
+                {
+                    "clip": line.clip,
+                    "source": plan.infos[line.clip].path.name,
+                    "start": round(line.start, 3),
+                    "end": round(line.end, 3),
+                    "events": line.events,
+                    "active": round(line.active_s, 2),
+                    "ended_by": line.ended_by.value,
+                }
+                for line in lines
+            ]
+            plan_file.write_text(json.dumps(document, indent=1), encoding="utf-8")
+
+    return MontageResult(
+        output=plan_file if analyze_only and plan_file is not None else final,
+        plan_file=plan_file,
+        clips=tuple(info.path for info in plan.infos),
+        shots=shots,
+        footage_duration=plan.footage_duration,
+        edited_duration=edited_duration,
+        elapsed=time.monotonic() - started,
+        warnings=tuple(warnings),
+        encoder=encoder,
+        lines=lines,
     )
 
 
@@ -634,7 +740,13 @@ class ClipResult:
         """The same result for the clip at ``index`` of a montage's clip list."""
         return ClipResult(
             index,
-            dataclasses.replace(self.clip, index=index) if self.clip is not None else None,
+            dataclasses.replace(
+                self.clip,
+                index=index,
+                lines=tuple(dataclasses.replace(line, clip=index) for line in self.clip.lines),
+            )
+            if self.clip is not None
+            else None,
             tuple(dataclasses.replace(shot, clip=index) for shot in self.candidates),
             self.warnings,
         )
@@ -693,6 +805,7 @@ def _plan_clip(job: ClipJob, step: Callable[[float], None]) -> ClipResult:
     cuts = cut_map(
         analysis.measurements, analysis.selection, job.montage, job.config.selection, throttle
     )
+    moments = find_moments(analysis.measurements, cuts.usable, job.montage)
     found = candidate_shots(
         job.index,
         analysis.measurements,
@@ -700,10 +813,12 @@ def _plan_clip(job: ClipJob, step: Callable[[float], None]) -> ClipResult:
         job.montage,
         job.config.selection,
         cuts,
+        moments,
     )
     if not found:
         warnings.append(f"{name}: no flip, spin or close pass to build a shot around")
-    clip = Clip(job.index, info, times, analysis.analysed_duration, cuts)
+    lines = find_lines(job.index, cuts, moments, job.config.lines, job.montage)
+    clip = Clip(job.index, info, times, analysis.analysed_duration, cuts, lines)
     return ClipResult(job.index, clip, tuple(found), tuple(warnings))
 
 
