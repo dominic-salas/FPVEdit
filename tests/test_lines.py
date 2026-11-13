@@ -198,11 +198,25 @@ def test_a_re_arm_churn_stretch_ends_a_line() -> None:
 # ---- what makes a line -----------------------------------------------------------------
 
 
-def test_a_line_needs_10_s_and_half_of_it_active() -> None:
+def test_a_line_needs_10_s() -> None:
     assert lines_of(cuts_for(60), every(10, 16)) == ()  # 9 s long
     assert len(lines_of(cuts_for(60), every(10, 17))) == 1  # 10 s: enough
-    sparse = [flip(10), flip(16), flip(22)]  # 3 x 1 s of activity in a 15 s line
-    assert lines_of(cuts_for(60), sparse) == ()
+
+
+def test_pauses_up_to_the_gap_keep_one_line_however_calm_it_is_between() -> None:
+    # Flips 7 s apart over a long flight: mostly calm flying, but never 8 s of nothing,
+    # so it is one line (a real street flight read 86 s active in a 193 s line).
+    sparse = [flip(t) for t in range(5, 200, 7)]
+    (found,) = lines_of(cuts_for(210), sparse)
+    assert found.start < 5 and found.end > 194 and found.events == len(sparse)
+
+
+def test_a_longer_gap_never_loses_a_line() -> None:
+    moments = [flip(10), flip(16), flip(22), flip(40), flip(47), flip(52)]
+    short = find_lines(0, cuts_for(60), moments, LinesConfig(), NO_SNAP)
+    long = find_lines(0, cuts_for(60), moments, LinesConfig(gap_s=20.0), NO_SNAP)
+    covered = sum(line.duration for line in short)
+    assert long and sum(line.duration for line in long) >= covered
 
 
 def test_fast_flying_alone_makes_a_line_unless_it_is_switched_off() -> None:
