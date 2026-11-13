@@ -103,6 +103,9 @@ writes `flight1_montage.mp4` next to the first recording. Options:
 - `--music FILE` (repeatable): background music, cut and faded at the end.
 - `--trim`: edit one recording as a whole flight instead (cut downtime, crashes and dull
   stretches, keep the rest), written as `<name>_highlight.mp4`.
+- `--lines`: a montage of each recording's longest lines instead of its best shots (see
+  below), written as `<first recording>_lines.mp4`. It works with `--vertical`, `--music`
+  and `--analyze-only`; `--length`, `--min-stars` and `--trim` do not apply to it.
 - `--force`: replace an existing output (never done otherwise).
 - `--device auto|cpu|cuda`: NVIDIA GPU encoding when available (default), or force CPU/GPU.
 - `--keep-intermediates`, `--analyze-only`, `--cache-dir DIR`: write the chosen shots or
@@ -113,6 +116,22 @@ stretched) at the frame rate of the clip that fills most of the montage. The rec
 own sound is kept, cut with the picture (AAC stereo); music you add replaces it. Either way
 the montage's sound is set to about -14 LUFS with peaks under -1 dBTP, by one overall volume
 change, so it plays at a normal level on YouTube.
+
+### Longest lines
+
+`fpvedit --lines flight1.ts flight2.mp4` makes the same kind of montage from each recording's
+longest unbroken runs of flying instead of short shots. A line is a stretch where something
+keeps happening: flips and spins, close passes, or fast flying, with no more than 8 s of
+nothing between them. It ends at a landing, after 8 s of calm flying, at the end of the
+recording, or at a crash: a crash does not erase the run before it, only the impact is cut,
+and the failed move just before it stays in. A line needs 10 s or more, at least half of it
+active.
+
+Each recording gives its longest line and any other line at least 80% as long (at most 3).
+Every line plays whole, with its own sound, in input order. Recordings may be 4:3 or 16:9
+and with or without sound, as in a normal montage. If two recordings hold the same flight
+(for example an AnaHD-cleaned copy and its original), the newer file's line is used once.
+The command prints each line's recording, length, number of tricks and how it ended.
 
 ## Running from source (Windows or Linux)
 

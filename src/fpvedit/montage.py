@@ -317,20 +317,24 @@ def candidate_shots(
     config: MontageConfig | None = None,
     selection_config: SelectionConfig | None = None,
     cuts: CutMap | None = None,
+    moments: Sequence[Moment] | None = None,
 ) -> list[Shot]:
-    """Every shot worth considering in one clip (they overlap; `pick_shots` chooses)."""
+    """Every shot worth considering in one clip (they overlap; `pick_shots` chooses).
+
+    ``moments`` are the clip's `find_moments` result when the caller has it already;
+    they are found here otherwise."""
     config = config or MontageConfig()
     cuts = cuts or cut_map(measurements, selection, config, selection_config)
     fps = measurements.fps
     usable = cuts.usable
-    moments = find_moments(measurements, usable, config)
+    if moments is None:
+        moments = find_moments(measurements, usable, config)
     if not moments:
         return []
     motion = MotionSummary(measurements)
-    calm, turning, signals = cuts.calm, cuts.turning, cuts.signals
+    turning, signals = cuts.turning, cuts.signals
     shortest = round(config.shot_min_s * fps)
     longest = round(config.shot_max_s * fps)
-    reach = round(config.snap_s * fps)
     lengths = {shortest, round((shortest + longest) / 2), longest}
     shots: dict[tuple[int, int], Shot] = {}
     for low, high in runs(usable):
@@ -350,8 +354,8 @@ def candidate_shots(
                 # is shorter), rather than having no shot.
                 lead = round(moment.time * fps) - round(config.lead_s * fps)
                 start = max(low, min(lead, high - length))
-                start = _calmest(calm, start, reach, low, high)
-                end = _calmest(calm, start + length, reach, low, high)
+                start = snap_cut(cuts, start, low, high, config)
+                end = snap_cut(cuts, start + length, low, high, config)
                 end = min(max(end, start + shortest), start + longest, high)
                 edges = _clear_of_turns(turning, start, end, shortest, longest, low, high)
                 if edges is None:
@@ -395,9 +399,8 @@ def shot_at(
     longest = min(round(config.shot_max_s * fps), high - low)
     length = round((shortest + longest) / 2)
     start = min(max(at - length // 2, low), high - length)
-    reach = round(config.snap_s * fps)
-    start = _calmest(cuts.calm, start, reach, low, high)
-    end = _calmest(cuts.calm, start + length, reach, low, high)
+    start = snap_cut(cuts, start, low, high, config)
+    end = snap_cut(cuts, start + length, low, high, config)
     end = min(max(end, start + shortest), start + longest, high)
     # Each end out of any turn: past it where there is room (the whole turn shows),
     # otherwise back before it. A mark is the pilot's choice, so the length may give.
@@ -458,11 +461,38 @@ def _turn_end(turning: BoolArray, index: int) -> int:
     return index
 
 
-def _calmest(calm: FloatArray, index: int, reach: int, low: int, high: int) -> int:
+def snap_cut(
+    cuts: CutMap,
+    index: int,
+    low: int,
+    high: int,
+    config: MontageConfig | None = None,
+    *,
+    out_of_turns: bool = False,
+) -> int:
+    """The frame to cut at near ``index``: the calmest within ``snap_s``, between ``low``
+    and ``high`` (frames).
+
+    With ``out_of_turns`` the cut also never falls in a turn (`CutMap.turning`): the
+    calmest frame that is not turning, or when the whole reach is turning the nearest
+    frame outside it (``index`` itself when there is none). Shots leave the turns to
+    `_clear_of_turns`, which can move an end past a turn; a line cannot.
+    """
+    config = config or MontageConfig()
+    reach = round(config.snap_s * cuts.fps)
     first, last = max(low, index - reach), min(high, index + reach + 1)
     if last <= first:
         return index
-    return first + int(np.argmin(calm[first:last]))
+    calm = cuts.calm[first:last]
+    if not out_of_turns:
+        return first + int(np.argmin(calm))
+    still = ~cuts.turning[first:last]
+    if still.any():
+        return first + int(np.argmin(np.where(still, calm, np.inf)))
+    free = np.flatnonzero(~cuts.turning[low:high]) + low
+    if free.size == 0:
+        return index
+    return int(free[np.argmin(np.abs(free - index))])
 
 
 def _score(

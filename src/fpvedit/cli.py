@@ -1,4 +1,5 @@
-"""Command line: `fpvedit a.ts b.ts ...` makes a montage, `--trim` edits one recording."""
+"""Command line: `fpvedit a.ts b.ts ...` makes a montage, `--lines` a montage of each
+recording's longest lines, `--trim` edits one recording."""
 
 from __future__ import annotations
 
@@ -16,6 +17,7 @@ from fpvedit.pipeline import (
     DEFAULT_MIN_STARS,
     MontageResult,
     Result,
+    run_lines,
     run_montage,
     run_trim,
 )
@@ -45,8 +47,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--output",
         type=Path,
         help=(
-            "output .mp4 (default: <first input>_montage.mp4, or <input>_highlight.mp4 "
-            "with --trim, beside the first input)"
+            "output .mp4 (default: <first input>_montage.mp4, <first input>_lines.mp4 with "
+            "--lines, or <input>_highlight.mp4 with --trim, beside the first input)"
         ),
     )
     parser.add_argument(
@@ -61,6 +63,13 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="edit one recording as a whole flight (cut downtime, crashes, dull stretches) "
         "instead of making a montage",
+    )
+    parser.add_argument(
+        "--lines",
+        action="store_true",
+        help="make a montage of each recording's longest lines (unbroken runs of tricks, "
+        "close passes or fast flying, up to a crash) instead of its best shots; every line "
+        "plays whole",
     )
     parser.add_argument(
         "--vertical",
@@ -81,7 +90,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--min-stars",
         type=int,
         choices=range(1, 6),
-        default=DEFAULT_MIN_STARS,
+        default=None,
         metavar="1-5",
         help=f"keep shots rated at least this many stars (default {DEFAULT_MIN_STARS}; 1 keeps "
         "every shot found)",
@@ -138,7 +147,27 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.error("--music is for montages")
     if args.trim and args.length is not None:
         parser.error("--length is for montages; --trim keeps all good flying")
+    if args.lines and args.trim:
+        parser.error("--lines makes a montage of several recordings; --trim edits one whole flight")
+    if args.lines and args.length is not None:
+        parser.error("--length would shorten the lines; a line always plays whole")
+    if args.lines and args.min_stars is not None:
+        parser.error("--min-stars rates shots; lines are not rated")
     try:
+        if args.lines:
+            return _report_lines(
+                run_lines(
+                    args.inputs,
+                    output=args.output,
+                    force=args.force,
+                    keep_intermediates=args.keep_intermediates,
+                    analyze_only=args.analyze_only,
+                    cache_dir=args.cache_dir,
+                    device=args.device,
+                    music=args.music,
+                    vertical=args.vertical,
+                )
+            )
         if not args.trim:
             return _report_montage(
                 run_montage(
@@ -152,7 +181,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     device=args.device,
                     music=args.music,
                     scenery=not args.no_scenery,
-                    min_stars=args.min_stars,
+                    min_stars=DEFAULT_MIN_STARS if args.min_stars is None else args.min_stars,
                     vertical=args.vertical,
                 )
             )
@@ -199,6 +228,24 @@ def _report_montage(result: MontageResult) -> int:
     print(f"Clips:     {len(result.clips)} given, shots from {used}")
     print(f"Footage:   {format_duration(result.footage_duration)} of usable recordings")
     print(f"Montage:   {format_duration(result.edited_duration)} in {len(result.shots)} shots")
+    if result.encoder is not None:
+        print(f"Encoder:   {_encoder_name(result.encoder)}")
+    print(f"Time:      {result.elapsed:.1f} s")
+    for warning in result.warnings:
+        print(f"Warning:   {warning}", file=sys.stderr)
+    return 0
+
+
+def _report_lines(result: MontageResult) -> int:
+    print(f"Output:    {result.output}")
+    for line in result.lines:
+        name = result.clips[line.clip].name
+        events = f"{line.events} event{'s' if line.events != 1 else ''}"
+        print(
+            f"Line:      {name}, {format_duration(line.duration)} ({line.duration:.1f} s), "
+            f"{events}, {line.ended_by.description.lower()}"
+        )
+    print(f"Montage:   {format_duration(result.edited_duration)} in {len(result.lines)} lines")
     if result.encoder is not None:
         print(f"Encoder:   {_encoder_name(result.encoder)}")
     print(f"Time:      {result.elapsed:.1f} s")

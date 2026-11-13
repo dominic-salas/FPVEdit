@@ -12,14 +12,17 @@ from fpvedit.flight import detect_flight
 from fpvedit.highlights import Selection, select_highlights
 from fpvedit.measure import Measurements
 from fpvedit.montage import (
+    CutMap,
     Moment,
     MomentKind,
     MontageConfig,
     Shot,
     _clear_of_turns,
     candidate_shots,
+    cut_map,
     find_moments,
     pick_shots,
+    snap_cut,
     usable_footage,
 )
 from fpvedit.motion import CONFIDENCE, DIVERGENCE, PITCH
@@ -278,3 +281,52 @@ def test_a_blurred_turn_counts_as_a_flip_only_when_tracking_collapses() -> None:
     ]
     assert any(abs(t - 40.5) < 1 for t in flips)
     assert not any(abs(t - 70.5) < 1 for t in flips)
+
+
+def snap_map(calm: list[float], turning: list[bool]) -> CutMap:
+    from fpvedit.rating import ClipSignals
+
+    count = len(calm)
+    zeros = np.zeros(count)
+    signals = ClipSignals(
+        fps=10.0,
+        rate=zeros,
+        rotation=np.zeros((count, 3)),
+        speed=zeros,
+        approach=zeros,
+        confidence=zeros,
+        brightness=zeros,
+        crashes=(),
+    )
+    return CutMap(np.ones(count, dtype=bool), np.array(calm), np.array(turning), signals)
+
+
+def test_a_cut_goes_to_the_calmest_frame_within_the_snap_distance() -> None:
+    calm = [5.0] * 40
+    calm[24] = 1.0  # 0.4 s from frame 20
+    calm[30] = 0.0  # 1.0 s away: out of reach (snap_s is 0.75 s)
+    cuts = snap_map(calm, [False] * 40)
+    assert snap_cut(cuts, 20, 0, 40, CONFIG) == 24
+    assert snap_cut(cuts, 20, 0, 22, CONFIG) == 12  # the reach stops at ``high``: first minimum
+
+
+def test_a_cut_can_be_kept_out_of_turns() -> None:
+    calm = [5.0] * 40
+    calm[22] = 0.0  # the calmest frame, but inside a turn
+    calm[18] = 2.0
+    turning = [False] * 40
+    turning[21:24] = [True] * 3
+    cuts = snap_map(calm, turning)
+    assert snap_cut(cuts, 20, 0, 40, CONFIG) == 22  # shots leave turns to _clear_of_turns
+    assert snap_cut(cuts, 20, 0, 40, CONFIG, out_of_turns=True) == 18
+    # A turn that fills the whole reach: the nearest frame outside it.
+    wide = snap_map([1.0] * 40, [False] * 10 + [True] * 20 + [False] * 10)
+    assert snap_cut(wide, 20, 0, 40, CONFIG, out_of_turns=True) in (9, 30)
+
+
+def test_moments_found_once_by_the_caller_change_nothing() -> None:
+    measurements, selection = analyse(flight().flip(40).flip(80))
+    cuts = cut_map(measurements, selection)
+    moments = find_moments(measurements, cuts.usable)
+    given = candidate_shots(0, measurements, selection, cuts=cuts, moments=moments)
+    assert given == candidate_shots(0, measurements, selection)

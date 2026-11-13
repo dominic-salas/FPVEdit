@@ -104,3 +104,20 @@ def ground_truth(spans: Sequence[Span]) -> list[tuple[SpanKind, float, float]]:
         result.append((span.kind, start, start + span.seconds))
         start += span.seconds
     return result
+
+
+def make_line_clips(folder: Path) -> tuple[Path, Path]:
+    """Two recordings that each hold one long run of flying, in different shapes: a 4:3 clip
+    with sound (idle at both ends) and a 16:9 clip without sound."""
+    four_three = make_flight(
+        folder / "four_three.ts",
+        [Span("idle", 4), Span("active", 8), Span("flip", 10), Span("active", 8), Span("idle", 4)],
+        width=320,
+        height=240,
+    )
+    sixteen_nine = make_flight(
+        folder / "sixteen_nine.mp4",
+        [Span("active", 12), Span("flip", 14), Span("active", 6)],
+        audio=False,
+    )
+    return four_three, sixteen_nine
