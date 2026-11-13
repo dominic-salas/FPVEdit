@@ -22,7 +22,7 @@ from fpvedit.pipeline import (
     render_montage,
 )
 from fpvedit.render import EncodeConfig
-from media_fixtures import Span, ffmpeg_available, make_flight
+from media_fixtures import Span, ffmpeg_available, make_flight, make_line_clips
 
 pytestmark = [
     pytest.mark.integration,
@@ -363,3 +363,31 @@ def test_window_analyses_clips_in_the_background(clips: tuple[Path, Path], tmp_p
     finally:
         window.close()
         app.processEvents()
+
+
+def test_lines_cross_the_worker_process_and_follow_their_clip(tmp_path: Path) -> None:
+    """The lines found in the worker reach the plan's clips, also when a clip is analysed
+    on its own and moved to its place in the montage."""
+    tools = find_tools()
+    infos = [probe(tools, clip) for clip in make_line_clips(tmp_path)]
+    alone = plan_montage(tools, infos, config=FAST, workers=1)
+    pooled = plan_montage(tools, infos, config=FAST, workers=2)  # real processes: pickled
+    lines = [clip.lines for clip in alone.clips]
+    assert all(lines) and [clip.lines for clip in pooled.clips] == lines
+
+    class Never:
+        def is_set(self) -> bool:
+            return False
+
+    class Drop:
+        def put(self, item: object) -> None:
+            pass
+
+    results = [
+        plan_in_worker(ClipJob(tools, info, 5 + i, FAST, FAST.montage, None), Drop(), Never())
+        for i, info in enumerate(reversed(infos))
+    ]
+    moved = [result.moved_to(len(infos) - 1 - i) for i, result in enumerate(results)]
+    combined = combine_clips(infos, moved, FAST.montage)
+    assert [clip.lines for clip in combined.clips] == lines
+    assert [line.clip for clip in combined.clips for line in clip.lines] == [0, 1]

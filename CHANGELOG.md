@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Longest lines (command line).** `fpvedit --lines a.ts b.mp4` makes one montage of each
+  recording's longest unbroken runs of flying: tricks, close passes or fast flying with at
+  most 8 s of nothing between them, 10 s or more. A run that ends in a crash is kept up to
+  the impact, failed move included. Each recording gives its longest line and any other line
+  at least 80% as long (3 at most); every line plays whole, in input order, with sound,
+  vertical and music as in a normal montage.
 - **A new text font.** The app's text is set in Instrument Sans (SIL Open Font License,
   bundled) instead of the previous face.
 - **Blurred flips are found.** Where the picture smears so badly that motion tracking gives
