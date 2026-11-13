@@ -69,7 +69,7 @@ from fpvedit.app.dialogs import ExportDialog, SettingsDialog, about_text, ask_fo
 from fpvedit.app.homepage import MODULES, HomePage, ModuleTab, SandwichButton
 from fpvedit.app.logs import start_logging
 from fpvedit.app.look import DotTitle, StatusDot, app_icon, icon_pixmap
-from fpvedit.app.model import ShotList
+from fpvedit.app.model import ShotList, lines_montage
 from fpvedit.app.pilotpage import PilotPage
 from fpvedit.app.ratepage import RatePage
 from fpvedit.app.review import ReviewPage, describe_music
@@ -77,9 +77,11 @@ from fpvedit.app.settings import AppSettings
 from fpvedit.app.widgets import button, plural, timecode
 from fpvedit.errors import CancelledError, FPVEditError
 from fpvedit.history import FlightHistory, summarise
+from fpvedit.lines import Line, no_lines_message
 from fpvedit.media import MediaInfo, Tools, find_tools, run_tool
 from fpvedit.montage import Shot, pick_shots
 from fpvedit.pipeline import (
+    LINES_SUFFIX,
     MONTAGE_SUFFIX,
     MontagePlan,
     PipelineConfig,
@@ -99,7 +101,11 @@ from fpvedit.render import (
 from fpvedit.scoring import score_flight
 
 VIDEO_SUFFIXES = (".ts", ".mp4")
-OUTPUT_MARKERS = (MONTAGE_SUFFIX, "_highlight")  # our own renders, skipped in dropped folders
+OUTPUT_MARKERS = (
+    MONTAGE_SUFFIX,
+    LINES_SUFFIX,
+    "_highlight",
+)  # our own renders, skipped in dropped folders
 log = logging.getLogger("fpvedit.app")
 
 
@@ -280,7 +286,11 @@ class MainWindow(QMainWindow):
         self._log_file = log_file
         self._notes: tuple[str, ...] = ()
         self._plan: MontagePlan | None = None
-        self._shots: ShotList | None = None
+        self._shots: ShotList | None = None  # what the review shows: the montage or the lines
+        self._montage_shots: ShotList | None = None
+        self._line_shots: ShotList | None = None
+        self._lines: tuple[Line, ...] = ()
+        self._lines_mode = False
         self._task: Task | None = None
         self._task_page = self.CLIPS  # where to return if the work fails or is cancelled
         self._output: Path | None = None  # chosen by the user; None = automatic name
@@ -534,6 +544,7 @@ class MainWindow(QMainWindow):
         mine = base / "my-ratings.jsonl" if base is not None else None
         self._review = ReviewPage(self._tools, self._settings, ratings_file=mine)
         self._review.changed.connect(self._review_changed)
+        self._review.modeChosen.connect(self._choose_mode)
 
         self._notes_button = button("", self._show_notes)
         self._notes_button.setProperty("flat", True)
@@ -937,7 +948,8 @@ class MainWindow(QMainWindow):
         self._say_on_clips("")  # it was about the clips as they were
         if self._plan is not None:
             self._plan = None
-            self._shots = None
+            self._shots = self._montage_shots = self._line_shots = None
+            self._lines, self._lines_mode = (), False
             self._set_notes(())
             self._clip_notes.clear()
             self._review.set_montage((), None)
@@ -1138,7 +1150,10 @@ class MainWindow(QMainWindow):
         self._save_scores(result)
         durations = {clip.index: clip.analysed_duration for clip in result.clips}
         cuts = {clip.index: clip.cuts for clip in result.clips if clip.cuts is not None}
-        self._shots = ShotList(result.shots, result.candidates, durations, cuts)
+        self._montage_shots = ShotList(result.shots, result.candidates, durations, cuts)
+        self._shots = self._montage_shots
+        self._lines_mode = False
+        self._lines, self._line_shots = lines_montage(result.clips, PipelineConfig().lines)
         self._output, self._force = None, False
         self._annotate_clips(result)
         self._set_notes(result.warnings)
@@ -1163,9 +1178,30 @@ class MainWindow(QMainWindow):
 
     # ----- shots -----
 
+    def _choose_mode(self, lines: bool) -> None:
+        """The Montage | Longest lines tabs: show the other list of the same analysis."""
+        if self._plan is None or self._busy() or lines == self._lines_mode:
+            return
+        self._lines_mode = lines
+        self._shots = self._line_shots if lines else self._montage_shots
+        self._output, self._force = None, False  # the automatic name differs by mode
+        if lines:
+            recordings = len({line.clip for line in self._lines})
+            summary = f"From {plural(recordings, 'recording')}, each line played whole."
+            self._review.set_montage(
+                self._plan.infos,
+                self._shots,
+                summary,
+                lines=self._lines,
+                no_lines=no_lines_message(PipelineConfig().lines),
+            )
+        else:
+            self._review.set_montage(self._plan.infos, self._shots, self._last_summary)
+        self._refresh()
+
     def _refresh(self) -> None:
         """Bring every screen up to date."""
-        if not self._current_shots() and self._on_review():
+        if not self._current_shots() and self._on_review() and not self._lines_mode:
             self._show_page(self.CLIPS)
         clips = self._clips.count()
         self._clip_stack.setCurrentIndex(1 if clips else 0)
@@ -1204,6 +1240,10 @@ class MainWindow(QMainWindow):
 
     # ----- export -----
 
+    def _suffix(self) -> str:
+        """The mark on the file name: a montage of lines is named differently."""
+        return LINES_SUFFIX if self._lines_mode else MONTAGE_SUFFIX
+
     def _default_output(self) -> Path | None:
         if self._plan is None or not self._plan.infos:
             return None
@@ -1211,7 +1251,7 @@ class MainWindow(QMainWindow):
         sources = [info.path for info in self._plan.infos]
         folder = default_output_folder(self._settings.output_folder, sources, videos_folder())
         try:
-            return default_output_path(folder / first.name, MONTAGE_SUFFIX)
+            return default_output_path(folder / first.name, self._suffix())
         except FPVEditError:
             return None
 
@@ -1256,7 +1296,7 @@ class MainWindow(QMainWindow):
                 [info.path for info in plan.infos],
                 self._output or self._default_output(),
                 force,
-                suffix=MONTAGE_SUFFIX,
+                suffix=self._suffix(),
             )
         except FPVEditError as exc:
             QMessageBox.warning(self, "Cannot export", str(exc))
@@ -1297,7 +1337,7 @@ class MainWindow(QMainWindow):
         self._review.note_exported()
         self._done_text.setText(
             f"Your montage is ready: {timecode(length)} long, "
-            f"{plural(len(self._current_shots()), 'shot')}. "
+            f"{plural(len(self._current_shots()), 'line' if self._lines_mode else 'shot')}. "
             f"Made on {where} in {elapsed:.0f} s and checked frame by frame."
         )
         self._done_path.setText(f"SAVED TO  {final}")

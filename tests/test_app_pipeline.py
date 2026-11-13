@@ -391,3 +391,66 @@ def test_lines_cross_the_worker_process_and_follow_their_clip(tmp_path: Path) ->
     combined = combine_clips(infos, moved, FAST.montage)
     assert [clip.lines for clip in combined.clips] == lines
     assert [line.clip for clip in combined.clips for line in clip.lines] == [0, 1]
+
+
+def test_window_switches_between_the_montage_and_the_lines_without_new_analysis(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("PySide6")
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    import time
+
+    from PySide6.QtCore import QSettings
+    from PySide6.QtWidgets import QApplication
+
+    from fpvedit.app.settings import AppSettings
+    from fpvedit.app.window import MainWindow
+
+    app = QApplication.instance() or QApplication([])
+    tools = find_tools()
+    settings = AppSettings(QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat))
+    window = MainWindow(tools, tmp_path / "cache", settings)
+    folder = tmp_path / "footage"
+    folder.mkdir()
+    line_clips = make_line_clips(folder)
+
+    def wait(done: object, seconds: float = 120) -> None:
+        end = time.monotonic() + seconds
+        while not done() and time.monotonic() < end:  # type: ignore[operator]
+            app.processEvents()
+            time.sleep(0.05)
+        assert done(), "timed out"  # type: ignore[operator]
+
+    def default_stem() -> str:
+        output = window._default_output()
+        assert output is not None
+        return output.stem
+
+    try:
+        window.add_paths(list(line_clips))
+        paths = window.clip_paths()
+        wait(lambda: all((s := window._analysis.state(p)) and s.finished for p in paths))
+        window._find_shots()
+        wait(lambda: not window._busy() and window._plan is not None, 30)
+        montage = window._current_shots()
+        assert montage and not window._lines_mode
+        assert default_stem().endswith("_montage")
+
+        def no_analysis(*args: object, **kwargs: object) -> None:
+            raise AssertionError("switching modes must not analyse again")
+
+        monkeypatch.setattr("fpvedit.app.window.combine_clips", no_analysis)
+        monkeypatch.setattr(window._analysis, "add", no_analysis)
+        window._choose_mode(True)
+        lines = window._current_shots()
+        assert window._lines_mode and window._review.lines_mode
+        assert len(lines) == 2  # one line in each recording
+        assert all(s.duration > 10 for s in lines)
+        assert default_stem().endswith("_lines")
+        assert window._pages.currentIndex() == window.REVIEW
+        window._choose_mode(False)
+        assert window._current_shots() == montage
+        assert not window._review.lines_mode
+        assert default_stem().endswith("_montage")
+    finally:
+        window.close()

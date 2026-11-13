@@ -20,6 +20,7 @@ from PySide6.QtGui import QCloseEvent, QIcon, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QListWidget,
@@ -34,6 +35,7 @@ from PySide6.QtWidgets import (
 
 from fpvedit.app import theme
 from fpvedit.app.frames import grab_frame
+from fpvedit.app.homepage import FPVEDIT
 from fpvedit.app.model import (
     ShotList,
     drop_position,
@@ -49,6 +51,7 @@ from fpvedit.app.settings import AppSettings
 from fpvedit.app.timeline import Block, Timeline, clip_colour, rating_colour, stars_text
 from fpvedit.app.widgets import button, plural, timecode
 from fpvedit.errors import FPVEditError
+from fpvedit.lines import Line, LineEnd
 from fpvedit.media import MUSIC_SUFFIXES, AudioFile, MediaInfo, Tools, probe_audio
 from fpvedit.montage import Moment, MomentKind, Shot
 
@@ -74,25 +77,113 @@ FULL_SCREEN_COLOUR = HINTS[3][2]
 log = logging.getLogger("fpvedit.app")
 
 
-def hint_bar() -> QWidget:
+class HintBar(QWidget):
     """Key chips with their action, e.g. [SPACE] PLAY / PAUSE."""
-    bar = QWidget()
-    row = QHBoxLayout(bar)
-    row.setContentsMargins(0, 0, 0, 0)
-    row.setSpacing(6)
-    for key, action, colour in HINTS:
-        chip = QLabel(key)
-        chip.setStyleSheet(
-            f"background: {colour}; color: #0a0a0a; border-radius: 4px; padding: 1px 6px;"
-            "font-weight: 600; border: 1px solid rgba(0, 0, 0, 0.35);"
-        )
-        chip.setProperty("role", "caption")
-        row.addWidget(chip)
-        text = QLabel(action)  # in the theme's own text colour, readable on both
-        text.setProperty("role", "caption")
-        row.addWidget(text)
-        row.addSpacing(10)
-    return bar
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._actions: list[tuple[QLabel, str]] = []
+        self._rating: list[QWidget] = []
+        row = QHBoxLayout(self)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(6)
+        for key, action, colour in HINTS:
+            chip = QLabel(key)
+            chip.setStyleSheet(
+                f"background: {colour}; color: #0a0a0a; border-radius: 4px; padding: 1px 6px;"
+                "font-weight: 600; border: 1px solid rgba(0, 0, 0, 0.35);"
+            )
+            chip.setProperty("role", "caption")
+            row.addWidget(chip)
+            text = QLabel(action)  # in the theme's own text colour, readable on both
+            text.setProperty("role", "caption")
+            row.addWidget(text)
+            row.addSpacing(10)
+            self._actions.append((text, action))
+            if key == "1-5":
+                self._rating += [chip, text]
+
+    def use_lines(self, lines: bool) -> None:
+        """Longest lines: the hints say "line", and lines are not rated."""
+        for text, action in self._actions:
+            text.setText(action.replace("SHOT", "LINE") if lines else action)
+        for widget in self._rating:
+            widget.setVisible(not lines)
+
+
+class ModeTabs(QWidget):
+    """MONTAGE | LONGEST LINES as text tabs; the chosen one is underlined in the module colour."""
+
+    chosen = Signal(bool)  # True: Longest lines
+
+    def __init__(self) -> None:
+        super().__init__()
+        row = QHBoxLayout(self)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(22)
+        self._tabs: list[QPushButton] = []
+        for lines, text in ((False, "MONTAGE"), (True, "LONGEST LINES")):
+            tab = QPushButton(text)
+            tab.setFlat(True)
+            tab.setCursor(Qt.CursorShape.PointingHandCursor)
+            tab.setToolTip(
+                "The best shots of every recording"
+                if not lines
+                else "The longest runs of flying in every recording, each played whole"
+            )
+            tab.clicked.connect(functools.partial(self.chosen.emit, lines))
+            row.addWidget(tab)
+            self._tabs.append(tab)
+        row.addStretch(1)
+        self._lines = False
+        self._palette = theme.DARK
+        self._style()
+
+    def set_lines(self, lines: bool) -> None:
+        self._lines = lines
+        self._style()
+
+    def set_palette(self, palette: theme.Palette) -> None:
+        self._palette = palette
+        self._style()
+
+    def _style(self) -> None:
+        green = FPVEDIT.colour(self._palette)
+        for lines, tab in enumerate(self._tabs):
+            on = bool(lines) == self._lines
+            tab.setStyleSheet(
+                "QPushButton { background: transparent; border: none; padding: 4px 0;"
+                f" border-bottom: 2px solid {green if on else 'transparent'};"
+                f" color: {green if on else self._palette.muted}; font-weight: 600;"
+                " letter-spacing: 1px; }"
+                f"QPushButton:hover {{ color: {green}; }}"
+            )
+
+
+# How a line ended, tinted for the dark and the light theme.
+END_COLOURS = {
+    LineEnd.CRASH: ("#ff6b5e", "#c0392b"),
+    LineEnd.LANDED: (FPVEDIT.on_dark, FPVEDIT.on_light),
+    LineEnd.LULL: ("#ffd166", "#a86500"),
+    LineEnd.RECORDING_END: ("#9a9a9a", "#6e6e6e"),
+}
+
+
+def line_for(shot: Shot, lines: Sequence[Line]) -> Line | None:
+    """The line a shot of the lines montage shows (the one it overlaps most)."""
+    best, most = None, 0.0
+    for line in lines:
+        overlap = min(shot.end, line.end) - max(shot.start, line.start)
+        if line.clip == shot.clip and overlap > most:
+            best, most = line, overlap
+    return best
+
+
+def line_events(shot: Shot, line: Line) -> int:
+    """Flips, spins and close passes inside the shot (a trimmed line has fewer)."""
+    if not line.moments:
+        return line.events
+    return sum(1 for m in line.moments if shot.start <= m.time <= shot.end)
 
 
 def tint(widget: QPushButton, colour: str) -> None:
@@ -212,6 +303,7 @@ class ReviewPage(QWidget):
     """The review step. ``changed`` fires after every edit of the shots."""
 
     changed = Signal()
+    modeChosen = Signal(bool)  # a tab was clicked: True for Longest lines
 
     def __init__(
         self,
@@ -234,6 +326,9 @@ class ReviewPage(QWidget):
         self._position = 0.0  # seconds into the montage
         self._mode = "montage"  # or "shot" (one shot looping) or "preview" (a candidate)
         self._alts: list[Shot] = []
+        self._lines: tuple[Line, ...] = ()
+        self._lines_mode = False
+        self._no_lines = ""
         self._choosing: str | None = None  # "swap", "add" or "find" (a missed shot)
         self._find_clips: list[int] = []  # the clips a shot can be marked in
         self._find_at = 0.0  # seconds into the recording being searched
@@ -278,13 +373,17 @@ class ReviewPage(QWidget):
         self._legend.setTextFormat(Qt.TextFormat.RichText)
         self._legend.setWordWrap(True)
         legend_row = QHBoxLayout()
-        legend_row.addWidget(hint_bar())
+        self._hints = HintBar()
+        legend_row.addWidget(self._hints)
         legend_row.addStretch(1)
         stage = QWidget()
         self._stage = stage
         stage_column = QVBoxLayout(stage)
         stage_column.setContentsMargins(0, 0, 0, 0)
         stage_column.setSpacing(10)
+        self._tabs = ModeTabs()
+        self._tabs.chosen.connect(self.modeChosen)
+        stage_column.addWidget(self._tabs)
         stage_column.addWidget(self._video, 1)
         stage_column.addLayout(transport)
         stage_column.addWidget(self._timeline)
@@ -309,7 +408,8 @@ class ReviewPage(QWidget):
         column.setContentsMargins(40, 28, 40, 16)
         column.setSpacing(6)
         column.addWidget(label("STEP 3 OF 4"))
-        column.addWidget(label("Review your montage", "heading"))
+        self._heading = label("Review your montage", "heading")
+        column.addWidget(self._heading)
         column.addWidget(self._heading_summary)
         column.addSpacing(14)
         column.addLayout(body, 1)
@@ -367,7 +467,8 @@ class ReviewPage(QWidget):
         self._legend_hint = label(role="hint")
         column.addWidget(self._legend_hint)
         column.addWidget(self._legend)
-        column.addWidget(button("+  ADD A SHOT", lambda: self._open_chooser("add")))
+        self._add_button = button("+  ADD A SHOT", lambda: self._open_chooser("add"))
+        column.addWidget(self._add_button)
         self._find_button = button("+  FIND A MISSED SHOT", self._open_finder)
         self._find_button.setToolTip(
             "Play a whole recording and mark the moment you want: a shot is built around it"
@@ -410,9 +511,8 @@ class ReviewPage(QWidget):
         actions = QHBoxLayout()
         actions.setSpacing(6)
         actions.addWidget(self._loop_button)
-        swap = button("SWAP", lambda: self._open_chooser("swap"))
-        swap.setToolTip("Pick another shot from the same recording instead")
-        actions.addWidget(swap)
+        self._swap_button = button("SWAP", lambda: self._open_chooser("swap"))
+        actions.addWidget(self._swap_button)
         actions.addWidget(button("REMOVE", self.remove_selected))
         actions.addStretch(1)
         steps = QHBoxLayout()
@@ -451,12 +551,32 @@ class ReviewPage(QWidget):
         naming.addStretch(1)
         column.addWidget(self._name_row)
         column.addWidget(self._shot_source)
+        self._line_facts = QWidget()
+        facts = QHBoxLayout(self._line_facts)
+        facts.setContentsMargins(0, 0, 0, 0)
+        facts.setSpacing(8)
+        self._fact_values: list[QLabel] = []
+        self._fact_cards: list[QFrame] = []
+        for caption in ("LENGTH", "EVENTS", "ACTIVE"):
+            card = QFrame()
+            inside = QVBoxLayout(card)
+            inside.setContentsMargins(12, 8, 12, 8)
+            inside.setSpacing(0)
+            value = QLabel()
+            inside.addWidget(value)
+            inside.addWidget(label(caption))
+            facts.addWidget(card)
+            self._fact_values.append(value)
+            self._fact_cards.append(card)
+        facts.addStretch(1)
+        column.addWidget(self._line_facts)
         self._shot_reasons = label(role="muted")
         self._shot_reasons.setWordWrap(True)
         column.addWidget(self._shot_reasons)
         mine = QHBoxLayout()
         mine.setSpacing(4)
-        mine.addWidget(label("YOUR RATING"))
+        self._rating_widgets: list[QWidget] = [label("YOUR RATING")]
+        mine.addWidget(self._rating_widgets[0])
         self._my_star_buttons: list[QPushButton] = []
         for stars in range(1, 6):
             star = button("☆", functools.partial(self.rate_current, stars))
@@ -464,6 +584,7 @@ class ReviewPage(QWidget):
             star.setFixedWidth(34)
             mine.addWidget(star)
             self._my_star_buttons.append(star)
+            self._rating_widgets.append(star)
         mine.addStretch(1)
         column.addLayout(mine)
         column.addSpacing(6)
@@ -539,16 +660,52 @@ class ReviewPage(QWidget):
     # ----- the window's side -----
 
     def set_montage(
-        self, infos: Sequence[MediaInfo], shots: ShotList | None, summary: str = ""
+        self,
+        infos: Sequence[MediaInfo],
+        shots: ShotList | None,
+        summary: str = "",
+        lines: Sequence[Line] | None = None,
+        no_lines: str = "",
     ) -> None:
-        """Show a new montage (or none); playback starts over. The music stays."""
+        """Show a new montage (or none); playback starts over. The music stays.
+
+        With ``lines`` the shots are the longest lines (``no_lines`` says why there are
+        none), and each panel shows its line's length, events and ending."""
         self._pause_all()
         self._infos, self._shots, self._summary = tuple(infos), shots, summary
+        self._lines_mode = lines is not None
+        self._lines = tuple(lines or ())
+        self._no_lines = no_lines
+        self._use_mode_texts()
         self._selected, self._position, self._mode = None, 0.0, "montage"
         self._choosing = None
         self._side.setCurrentIndex(0)
         self._video.clear_picture()
         self.refresh()
+
+    @property
+    def lines_mode(self) -> bool:
+        return self._lines_mode
+
+    def _noun(self) -> str:
+        return "line" if self._lines_mode else "shot"
+
+    def _use_mode_texts(self) -> None:
+        lines = self._lines_mode
+        self._tabs.set_lines(lines)
+        self._hints.use_lines(lines)
+        self._heading.setText("Review your longest lines" if lines else "Review your montage")
+        self._add_button.setText("+  ADD A LINE" if lines else "+  ADD A SHOT")
+        self._loop_button.setText("↻  LOOP THIS LINE" if lines else "↻  LOOP THIS SHOT")
+        self._swap_button.setToolTip(
+            f"Pick another {'line' if lines else 'shot'} from the same recording instead"
+        )
+        self._find_button.setVisible(not lines)
+        for widget in self._rating_widgets:
+            widget.setVisible(not lines)
+        self._line_facts.setVisible(lines)
+        self._shot_reasons.setVisible(not lines)
+        self._shot_title.setStyleSheet("")
 
     def activate(self) -> None:
         """The page is shown: play the montage from where it was."""
@@ -705,6 +862,7 @@ class ReviewPage(QWidget):
 
     def set_theme(self, palette: theme.Palette, fonts: theme.Fonts) -> None:
         self._palette = palette
+        self._tabs.set_palette(palette)
         self._timeline.set_theme(palette, fonts)
         self.refresh()
 
@@ -721,13 +879,14 @@ class ReviewPage(QWidget):
         start = shot_starts(self._current())[index]
         self._shots.remove(index)
         self._selected = None
-        self._say("Shot removed. Ctrl+Z brings it back.")
+        noun = "Line" if self._lines_mode else "Shot"
+        self._say(f"{noun} removed. Ctrl+Z brings it back.")
         self._edited(start)
 
     def note_exported(self) -> None:
         """The montage was exported: remember what the edit said about its shots."""
-        if self._shots is None:
-            return
+        if self._shots is None or self._lines_mode:
+            return  # lines are not rated, so what was done to them teaches nothing
         outcome = [(self._info(shot).path, shot, what) for shot, what in self._shots.outcome()]
         try:
             self._mine.note_edits(outcome)
@@ -758,9 +917,27 @@ class ReviewPage(QWidget):
         """Bring the timeline, the panels and the texts up to date."""
         shots = self._current()
         total = self._total()
-        by_rating = self._settings.colour_by_rating
+        by_rating = self._settings.colour_by_rating and not self._lines_mode
         blocks = []
         for number, shot in enumerate(shots, start=1):
+            if self._lines_mode:
+                line = line_for(shot, self._lines)
+                ending = f", {line.ended_by.description.lower()}" if line else ""
+                blocks.append(
+                    Block(
+                        duration=shot.duration,
+                        clip=shot.clip,
+                        label=f"{number:02d}  {shot.duration:.0f} s",
+                        short=f"{number}",
+                        tooltip=(
+                            f"Line {number}: {shot.duration:.1f} s{ending}\n"
+                            f"{self._name(shot)}, {timecode(shot.start)} to {timecode(shot.end)}"
+                        ),
+                        thumbnail=self._thumbnail(shot),
+                        colour=None,
+                    )
+                )
+                continue
             stars = rating(shot, shots)
             blocks.append(
                 Block(
@@ -800,11 +977,16 @@ class ReviewPage(QWidget):
                     for clip in used
                 )
             )
-        self._overview_total.setText(f"{plural(len(shots), 'shot')}, {timecode(total)}")
+        noun = self._noun()
+        self._overview_total.setText(f"{plural(len(shots), noun)}, {timecode(total)}")
         self._refresh_music()
         self._heading_summary.setText(
-            f"{plural(len(shots), 'shot')}, {timecode(total)} long. {self._summary}"
+            self._no_lines
+            if self._lines_mode and not shots
+            else f"{plural(len(shots), noun)}, {timecode(total)} long. {self._summary}"
         )
+        if self._lines_mode and not shots:
+            self._say(self._no_lines)
         self._show_time()
         self._show_editor()
 
@@ -818,6 +1000,9 @@ class ReviewPage(QWidget):
             return
         shot = shots[index]
         self._side.setCurrentIndex(1)
+        if self._lines_mode:
+            self._show_line(index, shots)
+            return
         stars = rating(shot, shots)
         self._shot_number.setText(
             f"SHOT {index + 1:02d} OF {len(shots):02d}   "
@@ -854,10 +1039,47 @@ class ReviewPage(QWidget):
         looping = self._mode == "shot" and self._video.playing
         self._loop_button.setText("▶  PLAY THE MONTAGE" if looping else "↻  LOOP THIS SHOT")
 
+    def _show_line(self, index: int, shots: Sequence[Shot]) -> None:
+        """The panel of a line: how it ended, its length, its events and its active time."""
+        shot = shots[index]
+        line = line_for(shot, self._lines)
+        dark = self._palette.name == theme.DARK.name
+        self._shot_number.setText(f"LINE {index + 1:02d} OF {len(shots):02d}")
+        self._name_row.setVisible(False)
+        if line is None:
+            self._shot_title.setText("Line")
+            self._shot_title.setStyleSheet("")
+            events, active = len(shot.moments), "-"
+        else:
+            tint_pair = END_COLOURS[line.ended_by]
+            self._shot_title.setText(line.ended_by.description)
+            self._shot_title.setStyleSheet(f"color: {tint_pair[0] if dark else tint_pair[1]};")
+            events = line_events(shot, line)
+            active = f"{min(line.active_s, shot.duration):.0f} s"
+        self._shot_source.setText(
+            f"<span style='color:{clip_colour(shot.clip)}'>■</span> "
+            f"{self._name(shot).upper()}<br>{timecode(shot.start)} TO {timecode(shot.end)}"
+        )
+        for value, text in zip(
+            self._fact_values, (f"{shot.duration:.1f} s", str(events), active), strict=True
+        ):
+            value.setText(text)
+            value.setStyleSheet("font-size: 20px; font-weight: 600; border: none;")
+        for card in self._fact_cards:
+            card.setStyleSheet(
+                f"QFrame {{ background: {self._palette.surface};"
+                f" border: 1px solid {self._palette.border}; border-radius: 6px; }}"
+                " QLabel { border: none; background: transparent; }"
+            )
+        self._previous.setEnabled(index > 0)
+        self._next.setEnabled(index < len(shots) - 1)
+        looping = self._mode == "shot" and self._video.playing
+        self._loop_button.setText("▶  PLAY THE MONTAGE" if looping else "↻  LOOP THIS LINE")
+
     def rate_current(self, stars: int) -> None:
         """The pilot's own stars for the shot open in the panel, else the one playing."""
         shots = self._current()
-        if not shots or self._choosing is not None:
+        if self._lines_mode or not shots or self._choosing is not None:
             return
         index = self._selected if self._selected is not None else locate(shots, self._position)[0]
         shot = shots[index]
@@ -1110,25 +1332,30 @@ class ReviewPage(QWidget):
             if index is None:
                 return
             self._alts = self._shots.alternatives(index)
-            title = f"SWAP SHOT {index + 1} FOR ONE OF THESE (SAME RECORDING)"
+            title = f"SWAP {self._noun().upper()} {index + 1} FOR ONE OF THESE (SAME RECORDING)"
         else:
             self._alts = self._shots.alternatives(limit=40)
-            title = "ADD ONE OF THESE SHOTS (ALL RECORDINGS)"
+            title = f"ADD ONE OF THESE {self._noun().upper()}S (ALL RECORDINGS)"
         self._choosing = mode
-        self._chooser_title.setText(title if self._alts else "NO OTHER SHOTS TO OFFER")
+        self._chooser_title.setText(
+            title if self._alts else f"NO OTHER {self._noun().upper()}S TO OFFER"
+        )
         self._alternatives.blockSignals(True)
         self._alternatives.clear()
         for shot in self._alts:
             pixmap = self._thumbnail(shot)
             icon = QIcon(pixmap) if pixmap is not None else QIcon()
-            stars = rating(shot, [*self._current(), shot])
+            if self._lines_mode:
+                lead = f"{shot.duration:.0f} s"
+            else:
+                lead = stars_text(rating(shot, [*self._current(), shot]))
             text = (
-                f"{stars_text(stars)}  {describe(shot)}\n{self._name(shot)}   "
+                f"{lead}  {describe(shot)}\n{self._name(shot)}   "
                 f"{timecode(shot.start)}  ·  {shot.duration:.1f} s"
             )
             self._alternatives.addItem(QListWidgetItem(icon, text))
         self._alternatives.blockSignals(False)
-        self._use.setText("Use instead" if mode == "swap" else "Add to montage")
+        self._use.setText("Use instead" if mode == "swap" else f"Add this {self._noun()}")
         self._use.setEnabled(bool(self._alts))
         self._side.setCurrentIndex(2)
         if self._alts:

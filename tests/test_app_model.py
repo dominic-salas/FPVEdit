@@ -130,3 +130,24 @@ def test_ratings_are_relative_to_the_montage() -> None:
     stars = [rating(s, shots) for s in shots]
     assert stars == sorted(stars) and stars[0] == 1 and stars[-1] == 5
     assert rating(shots[0], shots[:1]) == 3  # nothing to compare with
+
+
+def test_lines_montage_picks_whole_lines_and_offers_the_others_as_candidates() -> None:
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    from fpvedit.app.model import lines_montage
+    from fpvedit.lines import Line, LineEnd, LinesConfig
+
+    best = Line(0, 5.0, 25.0, 4, 15.0, LineEnd.CRASH)
+    runner_up = Line(0, 40.0, 58.0, 2, 10.0, LineEnd.LANDED)
+    short = Line(0, 70.0, 80.0, 1, 6.0, LineEnd.LULL)
+    info = SimpleNamespace(path=Path("gone.ts"))  # a moved file only loses its copy check
+    lines = (best, runner_up, short)
+    clip = SimpleNamespace(index=0, info=info, analysed_duration=100.0, lines=lines)
+    picked, shots = lines_montage([clip], LinesConfig())  # type: ignore[list-item]
+    assert picked == (best, runner_up)
+    assert [(s.start, s.end) for s in shots.shots] == [(5.0, 25.0), (40.0, 58.0)]
+    assert any(s.start == 70.0 for s in shots.alternatives(0))  # a swap can bring it in
+    none, empty = lines_montage([], LinesConfig())
+    assert none == () and empty.shots == ()
