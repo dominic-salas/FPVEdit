@@ -73,3 +73,52 @@ def test_leaderboard_ranks_only_flights_that_count(tmp_path: Path) -> None:
     flights = history.flights()
     assert [f.name for f in leaderboard(flights, "freestyle")] == ["b.mp4", "a.mp4"]
     assert [f.name for f in leaderboard(flights, "flow")] == ["a.mp4", "b.mp4"]
+
+
+def test_an_old_database_gains_the_longest_line_column_and_keeps_its_rows(tmp_path: Path) -> None:
+    import sqlite3
+
+    from fpvedit.history import SCHEMA
+
+    database = tmp_path / "old.db"
+    old = sqlite3.connect(str(database))
+    old.execute(SCHEMA.replace(",\n    longest_line_s REAL", ""))
+    old.execute(
+        "INSERT INTO flights (key, name, batch, version, status, conditions, flying_s, freestyle, "
+        "flow, difficulty, variety, linking, continuity, smoothness, crashes, turns, disqualified) "
+        "VALUES ('k', 'old.mp4', 1, 1, 'scored', 'daylight', 60, 40, 50, 1, 1, 1, 1, 1, 0, 3, '')"
+    )
+    old.commit()
+    old.close()
+    history = FlightHistory(database)
+    (flight,) = history.flights()
+    assert flight.name == "old.mp4" and flight.freestyle == 40.0
+    assert flight.longest_line_s is None
+
+
+def test_a_longest_line_changes_nothing_else_about_the_flight(tmp_path: Path) -> None:
+    history = FlightHistory(":memory:")
+    spam = replace(GOOD, freestyle=99.0, turns=TURNS, top_share=1.0)
+    paths = [clip(tmp_path, "a.mp4", b"1"), clip(tmp_path, "b.mp4", b"2")]
+    history.record([(paths[0], GOOD), (paths[1], spam)])
+    before = history.flights()
+    history.set_longest_line(paths[0], 42.5)
+    history.set_longest_line(paths[1], 80.0)
+    history.set_longest_line(clip(tmp_path, "never.mp4", b"3"), 5.0)
+    after = history.flights()
+    assert [f.longest_line_s for f in after] == [42.5, 80.0]
+    assert [replace(f, longest_line_s=None) for f in after] == before
+    assert [f.counts for f in after] == [True, False]
+
+
+def test_best_line_skips_disqualified_flights_and_is_none_without_values(tmp_path: Path) -> None:
+    from fpvedit.history import best_line
+
+    history = FlightHistory(":memory:")
+    spam = replace(GOOD, turns=TURNS, top_share=1.0)
+    paths = [clip(tmp_path, "a.mp4", b"1"), clip(tmp_path, "b.mp4", b"2")]
+    history.record([(paths[0], GOOD), (paths[1], spam)])
+    assert best_line(history.flights()) is None
+    history.set_longest_line(paths[0], 30.0)
+    history.set_longest_line(paths[1], 90.0)
+    assert best_line(history.flights()) == 30.0

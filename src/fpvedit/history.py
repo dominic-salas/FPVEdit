@@ -55,7 +55,8 @@ CREATE TABLE IF NOT EXISTS flights (
     crashes INTEGER NOT NULL,
     turns INTEGER NOT NULL,
     disqualified TEXT NOT NULL,
-    count_anyway INTEGER NOT NULL DEFAULT 0
+    count_anyway INTEGER NOT NULL DEFAULT 0,
+    longest_line_s REAL
 )
 """
 
@@ -81,6 +82,7 @@ class Flight:
     turns: int
     disqualified: str
     count_anyway: bool
+    longest_line_s: float | None = None  # the longest line found in this recording
 
     @property
     def counts(self) -> bool:
@@ -106,6 +108,13 @@ class FlightHistory:
         self._config = config or ScoringConfig()
         with self._db:
             self._db.execute(SCHEMA)
+            self._migrate()
+
+    def _migrate(self) -> None:
+        """Add the columns a database made by an older version lacks."""
+        columns = {row["name"] for row in self._db.execute("PRAGMA table_info(flights)")}
+        if "longest_line_s" not in columns:
+            self._db.execute("ALTER TABLE flights ADD COLUMN longest_line_s REAL")
 
     def close(self) -> None:
         self._db.close()
@@ -144,6 +153,16 @@ class FlightHistory:
         with self._db:
             self._db.execute(
                 "UPDATE flights SET count_anyway = ? WHERE id = ?", (int(counted), flight_id)
+            )
+
+    def set_longest_line(self, path: Path, seconds: float) -> None:
+        """Note the longest line found in a recording; nothing happens if it was never scored.
+
+        Scores, and whether the flight counts, are left as they are.
+        """
+        with self._db:
+            self._db.execute(
+                "UPDATE flights SET longest_line_s = ? WHERE key = ?", (seconds, flight_key(path))
             )
 
     def _earlier(self, before: int | None) -> list[float]:
@@ -185,6 +204,12 @@ class FlightHistory:
 
 
 _FIELDS = tuple(Flight.__dataclass_fields__)
+
+
+def best_line(flights: Sequence[Flight]) -> float | None:
+    """The longest line, in seconds, among the flights that count; None when there is none."""
+    lengths = [f.longest_line_s for f in flights if f.counts and f.longest_line_s is not None]
+    return max(lengths) if lengths else None
 
 
 def _flight(row: sqlite3.Row) -> Flight:

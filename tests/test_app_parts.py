@@ -332,3 +332,24 @@ def test_steps_light_none_on_a_side_page() -> None:
     steps = Steps()
     steps.show_state(-1, {0})
     assert [b.property("state") for b in steps._buttons] == ["off"] * 4
+
+
+def test_pilot_page_shows_the_best_line_only_when_there_is_one(tmp_path: Path) -> None:
+    from fpvedit.app.pilotpage import PilotPage
+    from fpvedit.history import FlightHistory
+    from fpvedit.scoring import SCORER_VERSION, FlightScore, Status
+
+    _ = QApplication.instance() or QApplication([])
+    good = FlightScore(Status.SCORED, SCORER_VERSION, 60.0, "daylight", freestyle=40.0, flow=50.0)
+    history = FlightHistory(":memory:")
+    flight = tmp_path / "a.mp4"
+    flight.write_bytes(b"1")
+    history.record([(flight, good)])
+    page = PilotPage(history, show_back=False)
+    page.show()
+    page.refresh()
+    assert not page._columns["line"].isVisible()
+    history.set_longest_line(flight, 83.0)
+    page.refresh()
+    assert page._columns["line"].isVisible()
+    assert page._stats["line"].text() == "1:23"
