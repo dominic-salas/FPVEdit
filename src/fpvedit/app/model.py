@@ -10,9 +10,28 @@ from __future__ import annotations
 import dataclasses
 from collections.abc import Iterable, Sequence
 
+from fpvedit.lines import Line, LinesConfig, pick_lines
 from fpvedit.montage import CutMap, Shot, shot_at, strength
+from fpvedit.pipeline import Clip, lines_as_shots
 
 MIN_SHOT_S = 1.0  # a trim never makes a shot shorter than this
+
+
+def lines_montage(clips: Sequence[Clip], config: LinesConfig) -> tuple[tuple[Line, ...], ShotList]:
+    """The picked lines of already analysed clips, as an editable list of whole shots.
+
+    Nothing is analysed again: the lines were found with the clips. The other lines of
+    the clips are the candidates a swap or an added line chooses from."""
+    found = [line for clip in clips for line in clip.lines]
+    modified: dict[int, float] = {}
+    for clip in clips:
+        try:
+            modified[clip.index] = clip.info.path.stat().st_mtime
+        except OSError:
+            continue  # the file moved: its copies cannot be told apart by age
+    picked = pick_lines(found, config, modified)
+    durations = {clip.index: clip.analysed_duration for clip in clips}
+    return picked, ShotList(lines_as_shots(picked), lines_as_shots(found), durations)
 
 
 def overlaps(a: Shot, b: Shot) -> bool:

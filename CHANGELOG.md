@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Longest lines in the Edit tab.** A Montage | Longest lines switch above the preview shows
+  the same analysis as each recording's longest lines. Each line's panel shows its length, its
+  events and how it ended; trim, swap, remove, loop, music and vertical export work as for
+  shots, and the file is named `_lines`.
 - **Best line on the Pilot page.** The longest line found in your counted flights, as m:ss next
   to your scores, once a longest-lines run has measured one.
 - **Longest lines (command line).** `fpvedit --lines a.ts b.mp4` makes one montage of each

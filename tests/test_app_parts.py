@@ -353,3 +353,80 @@ def test_pilot_page_shows_the_best_line_only_when_there_is_one(tmp_path: Path) -
     page.refresh()
     assert page._columns["line"].isVisible()
     assert page._stats["line"].text() == "1:23"
+
+
+def lines_page(tmp_path: Path):  # type: ignore[no-untyped-def]
+    from fpvedit.app.model import ShotList
+    from fpvedit.app.review import ReviewPage
+    from fpvedit.lines import Line, LineEnd
+    from fpvedit.media import Tools
+    from fpvedit.montage import Moment, MomentKind
+    from fpvedit.pipeline import lines_as_shots
+
+    QApplication.instance() or QApplication([])
+    info = type("Info", (), {"path": tmp_path / "a.ts", "duration": 60.0})()
+    moments = tuple(Moment(t, MomentKind.FLIP, 3.0, "roll") for t in (6.0, 9.0, 12.0))
+    crash = Line(0, 4.0, 20.0, 3, 12.0, LineEnd.CRASH, moments)
+    landed = Line(0, 30.0, 44.0, 0, 9.0, LineEnd.LANDED)
+    shots = lines_as_shots([crash, landed])
+    page = ReviewPage(Tools("ffmpeg", "ffprobe", 7), ratings_file=tmp_path / "my-ratings.jsonl")
+    return page, info, ShotList(shots, shots, {0: 60.0}), (crash, landed)
+
+
+def test_a_line_panel_shows_length_events_and_how_it_ended(tmp_path: Path) -> None:
+    page, info, shots, lines = lines_page(tmp_path)
+    try:
+        page.set_montage([info], shots, "", lines=lines)
+        assert page.lines_mode
+        page._picked(0, 0.0)
+        assert page._shot_number.text() == "LINE 01 OF 02"
+        assert page._shot_title.text() == "Ended in a crash"
+        assert [v.text() for v in page._fact_values] == ["16.0 s", "3", "12 s"]
+        assert page._loop_button.text() == "↻  LOOP THIS LINE"
+        assert page._line_facts.isVisibleTo(page) and not page._name_row.isVisibleTo(page)
+        page._picked(1, 0.0)
+        assert page._shot_title.text() == "Landed"
+        assert page._fact_values[1].text() == "0"
+        page.remove_selected()  # a line goes like a shot, and comes back with undo
+        assert len(page._current()) == 1
+        page.undo()
+        assert len(page._current()) == 2
+    finally:
+        page.shutdown()
+
+
+def test_the_tabs_and_hints_follow_the_mode_and_back(tmp_path: Path) -> None:
+    page, info, shots, lines = lines_page(tmp_path)
+    try:
+        heard: list[bool] = []
+        page.modeChosen.connect(heard.append)
+        page._tabs._tabs[1].click()
+        page._tabs._tabs[0].click()
+        assert heard == [True, False]
+        page.set_montage([info], shots, "", lines=lines)
+        assert page._heading.text() == "Review your longest lines"
+        assert page._add_button.text() == "+  ADD A LINE"
+        assert any(t.text() == "EDIT A LINE" for t, _ in page._hints._actions)
+        assert not page._find_button.isVisibleTo(page)
+        page.set_montage([info], shots, "")
+        assert not page.lines_mode
+        assert page._heading.text() == "Review your montage"
+        assert page._loop_button.text() == "↻  LOOP THIS SHOT"
+        assert any(t.text() == "EDIT A SHOT" for t, _ in page._hints._actions)
+    finally:
+        page.shutdown()
+
+
+def test_no_lines_shows_the_reason(tmp_path: Path) -> None:
+    from fpvedit.app.model import ShotList
+    from fpvedit.lines import LinesConfig, no_lines_message
+
+    page, info, _, _ = lines_page(tmp_path)
+    try:
+        message = no_lines_message(LinesConfig(fast_flying=False))
+        page.set_montage([info], ShotList((), (), {0: 60.0}), "", lines=(), no_lines=message)
+        assert page._heading_summary.text() == message
+        assert message.upper() in page._message.text()
+        assert "fast flying" not in message
+    finally:
+        page.shutdown()
