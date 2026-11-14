@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **Analog, HDZero and action-camera recordings.** FPVEdit now tells which kind each recording
+  is (analog goggles, HDZero digital goggles or an action camera such as a RunCam Thumb 2) from
+  its size, frame rate, the maker named in the file, a `.gcsv` file beside it and its picture,
+  and the command line shows it. An action cam is edited by its motion alone, never by an OSD.
+  Name the kind yourself with `--source analog|hdzero|action` if it guesses wrong. Recordings
+  of any size and rate (540p to 4K, 25 to 120 fps) are accepted, and 4K ones are analysed
+  faster: smaller sample frames, a skipped loop filter and, where an NVIDIA GPU can decode the
+  file, GPU decoding with a fall back to the CPU (`FPVEDIT_NO_HWDECODE=1` turns it off).
+  Analog results are unchanged.
 - **Longest lines in the Edit tab.** A Montage | Longest lines switch above the preview shows
   the same analysis as each recording's longest lines. Each line's panel shows its length, its
   events and how it ended; trim, swap, remove, loop, music and vertical export work as for

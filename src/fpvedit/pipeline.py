@@ -78,6 +78,7 @@ from fpvedit.render import (
     validate_output,
     with_fallback,
 )
+from fpvedit.source import AUTO, Source
 from fpvedit.taste import RatedShot, Ratings, Taste
 from fpvedit.tricks import name_measured
 
@@ -93,6 +94,7 @@ class PipelineConfig:
     montage: MontageConfig = field(default_factory=MontageConfig)
     lines: LinesConfig = field(default_factory=LinesConfig)
     encode: EncodeConfig = field(default_factory=EncodeConfig)
+    source: str = AUTO  # "auto", or the kind of recording to assume: analog, hdzero, action
 
     @property
     def analysis(self) -> AnalysisConfig:
@@ -101,6 +103,7 @@ class PipelineConfig:
             measure=self.measure,
             flight=self.flight,
             selection=self.selection,
+            source=self.source,
         )
 
 
@@ -115,6 +118,7 @@ class Result:
     selection: Selection
     warnings: tuple[str, ...]
     encoder: str | None = None  # the video codec used; None when no video was written
+    source: Source | None = None  # the kind of recording that was edited
 
 
 MONTAGE_SUFFIX = "_montage"
@@ -137,6 +141,7 @@ class Clip:
     analysed_duration: float
     cuts: CutMap | None = field(default=None, compare=False, repr=False)
     lines: tuple[Line, ...] = ()  # the longest-lines mode's lines of this recording
+    source: Source | None = None  # what kind of recording it is
 
 
 @dataclass(frozen=True)
@@ -151,6 +156,7 @@ class MontageResult:
     warnings: tuple[str, ...]
     encoder: str | None = None  # the video codec used; None when no video was written
     lines: tuple[Line, ...] = ()  # with `run_lines`: the lines, which are the shots
+    sources: tuple[Source | None, ...] = ()  # per input, in order; None if it had no footage
 
 
 def analysis_path(video: Path) -> Path:
@@ -227,6 +233,7 @@ def run_trim(
         selection=analysis.selection,
         warnings=tuple(warnings),
         encoder=encoder,
+        source=analysis.source,
     )
 
 
@@ -249,6 +256,12 @@ class MontagePlan:
     @property
     def footage_duration(self) -> float:
         return sum(clip.analysed_duration for clip in self.clips)
+
+    @property
+    def sources(self) -> tuple[Source | None, ...]:
+        """The kind of each input, in the order given; None for one without usable footage."""
+        found = {clip.index: clip.source for clip in self.clips}
+        return tuple(found.get(index) for index in range(len(self.infos)))
 
 
 def run_montage(
@@ -330,6 +343,7 @@ def run_montage(
         elapsed=time.monotonic() - started,
         warnings=tuple(warnings),
         encoder=encoder,
+        sources=plan.sources,
     )
 
 
@@ -430,6 +444,7 @@ def run_lines(
         warnings=tuple(warnings),
         encoder=encoder,
         lines=lines,
+        sources=plan.sources,
     )
 
 
@@ -801,7 +816,11 @@ def _plan_clip(job: ClipJob, step: Callable[[float], None]) -> ClipResult:
     except NoFlightContentError as exc:
         return ClipResult(job.index, None, (), (f"{name}: nothing usable ({exc})",))
     warnings = [f"{name}: {note}" for note in (*_gap_warnings(info, times), *analysis.warnings)]
-    throttle = _throttle(tools, info, analysis, job.cache_dir, job.config.analysis)
+    throttle = (
+        _throttle(tools, info, analysis, job.cache_dir, job.config.analysis)
+        if analysis.source.kind.has_osd
+        else None  # an action camera has no OSD to read it from
+    )
     cuts = cut_map(
         analysis.measurements, analysis.selection, job.montage, job.config.selection, throttle
     )
@@ -818,7 +837,7 @@ def _plan_clip(job: ClipJob, step: Callable[[float], None]) -> ClipResult:
     if not found:
         warnings.append(f"{name}: no flip, spin or close pass to build a shot around")
     lines = find_lines(job.index, cuts, moments, job.config.lines, job.montage)
-    clip = Clip(job.index, info, times, analysis.analysed_duration, cuts, lines)
+    clip = Clip(job.index, info, times, analysis.analysed_duration, cuts, lines, analysis.source)
     return ClipResult(job.index, clip, tuple(found), tuple(warnings))
 
 
@@ -1050,6 +1069,7 @@ def montage_document(
         for clip in clips
         if clip.cuts is not None and clip.cuts.signals.attitude is not None
     }
+    kinds = {clip.index: clip.source for clip in clips if clip.source is not None}
     return {
         "fpvedit_version": __version__,
         "config": dataclasses.asdict(config),
@@ -1059,6 +1079,11 @@ def montage_document(
                 "path": str(info.path),
                 "duration": info.duration,
                 "usable": index in usable,
+                **(
+                    {"source": {"kind": kinds[index].kind.label, "reason": kinds[index].reason}}
+                    if index in kinds
+                    else {}
+                ),
                 **({"turns": measured[index]} if index in measured else {}),
             }
             for index, info in enumerate(infos)

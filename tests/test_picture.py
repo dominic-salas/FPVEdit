@@ -1,9 +1,23 @@
 from __future__ import annotations
 
+from fractions import Fraction
+from pathlib import Path
+
 import numpy as np
 import pytest
 
-from fpvedit.picture import Area, detect_active_area, detect_overlay, fit_frames
+from fpvedit.media import MediaInfo, VideoStream, find_tools, probe
+from fpvedit.picture import (
+    Area,
+    decoded_size,
+    detect_active_area,
+    detect_overlay,
+    fit_frames,
+    sample_frames,
+    sample_size,
+    scale_area,
+)
+from media_fixtures import ffmpeg_available, make_clip
 
 WIDTH, HEIGHT = 320, 180
 BAR = 40  # 4:3 picture (240 px) between two 40 px bars
@@ -87,3 +101,47 @@ def test_fit_frames_crops_then_scales() -> None:
     (fitted,) = fit_frames([frame], Area(BAR, 0, WIDTH - 2 * BAR, HEIGHT), (120, 90))
     assert fitted.shape == (90, 120)
     assert int(np.min(fitted)) > 4  # no bar pixels left
+
+
+@pytest.mark.parametrize(
+    ("size", "expected"),
+    [
+        ((1280, 720), (1280, 720)),
+        ((1920, 1080), (1920, 1080)),
+        ((2704, 1520), (1920, 1080)),
+        ((3840, 2160), (1920, 1080)),
+        ((4000, 3000), (1920, 1440)),  # 4:3 keeps its shape
+    ],
+)
+def test_samples_of_large_recordings_are_at_most_1920_wide(
+    size: tuple[int, int], expected: tuple[int, int]
+) -> None:
+    video = VideoStream(0, "hevc", *size, Fraction(1), 30.0)
+    info = MediaInfo(Path("x.mp4"), "mov", 1.0, 0.0, video, None)
+    assert sample_size(info) == expected
+    assert sample_size(info, None) == size
+
+
+def test_an_area_found_in_small_samples_is_scaled_back_to_the_recording() -> None:
+    whole = Area(0, 0, 1920, 1080)
+    assert scale_area(whole, (1920, 1080), (3840, 2160)) == Area(0, 0, 3840, 2160)
+    bars = scale_area(Area(240, 0, 1440, 1080), (1920, 1080), (3840, 2160))
+    assert bars == Area(480, 0, 2880, 2160)
+    odd = scale_area(Area(241, 1, 1439, 1079), (1920, 1080), (2704, 1520))
+    assert odd.x % 2 == odd.y % 2 == odd.width % 2 == odd.height % 2 == 0
+    assert odd.x + odd.width <= 2704 and odd.y + odd.height <= 1520
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(not ffmpeg_available(), reason="ffmpeg/ffprobe not on PATH")
+def test_bars_of_a_large_pillarboxed_recording_are_found_in_its_own_pixels(tmp_path: Path) -> None:
+    clip = make_clip(
+        tmp_path / "big.mp4", width=2704, height=1520, fps=24, seconds=3, pillarbox=True
+    )
+    tools, info = find_tools(), probe(find_tools(), clip)
+    frames = sample_frames(tools, info)
+    assert frames and frames[0].shape == (1080, 1920), "samples are scaled down while decoding"
+    sample = detect_active_area(frames, sample_size(info))
+    area = scale_area(sample, sample_size(info), decoded_size(info))
+    assert area.height == 1520
+    assert abs(area.x - 339) <= 12 and abs(area.width - 2026) <= 24  # 4:3 of 1520 rows
