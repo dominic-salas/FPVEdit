@@ -23,6 +23,7 @@ from fpvedit.osd import (
 )
 from fpvedit.picture import Area
 from fpvedit.rating import throttle_notes
+from osd_fixtures import HdClip
 
 PITCH = 32  # analog OSD: 30 characters across the 960 px picture
 
@@ -67,10 +68,10 @@ def osd_frames(
 
 
 def throttle_of(frames: list[np.ndarray]) -> np.ndarray | None:
-    """`read_throttle` without FFmpeg: elements from samples, strips, the throttle."""
-    elements = find_elements(frames[:: max(1, len(frames) // 150)])
-    strips = {box: np.stack([strip_of(f, box) for f in frames]) for box in elements}
-    found = find_throttle(elements, strips, int(FPS))
+    """`read_throttle` without FFmpeg: metrics and elements from samples, strips, the throttle."""
+    metrics, elements = osd.plan(frames[:: max(1, len(frames) // 150)])
+    strips = {box: np.stack([strip_of(f, box, metrics) for f in frames]) for box in elements}
+    found = find_throttle(elements, strips, int(FPS), metrics=metrics)
     return None if found is None else found[1]
 
 
@@ -172,3 +173,71 @@ def test_the_throttle_is_cached_beside_the_measurements(
     assert first is None and again is None  # no OSD in this recording
     assert len(calls) == 1  # the second answer came from the cache
     assert list(tmp_path.glob(f"*.throttle-v{osd.VERSION}.npz"))
+
+
+# --- digital (HD) OSD: 16:9, a wider and narrower grid, clean picture ---
+
+HD_MODES = [(1280, 720, 60), (1280, 720, 90), (1920, 1080, 30)]
+
+
+def test_a_picture_is_read_at_its_own_aspect() -> None:
+    assert osd.read_size(Area(0, 0, 960, 720)) == (WIDTH, HEIGHT)
+    assert osd.read_size(Area(160, 0, 954, 720)) == (WIDTH, HEIGHT)
+    assert osd.read_size(Area(0, 0, 1280, 720)) == (1280, 720)
+    assert osd.read_size(Area(0, 0, 1920, 1080)) == (1280, 720)
+
+
+def test_the_analog_layout_is_kept_exactly() -> None:
+    frames, _ = osd_frames()
+    metrics, elements = osd.plan(frames[::8])
+    assert metrics == osd.Metrics.analog()
+    assert elements == find_elements(frames[::8])
+
+
+@pytest.mark.parametrize("pitch", [20, 24, 28])
+def test_the_character_pitch_is_measured_from_the_elements(pitch: int) -> None:
+    clip = HdClip(fps=int(FPS), pitch=pitch)
+    frames = list(clip.frames())
+    metrics, elements = osd.plan(frames[:: len(frames) // 150])
+    assert (metrics.width, metrics.height) == (1280, 720)
+    assert abs(metrics.pitch - pitch) <= 1
+    assert len(elements) >= 5  # throttle, timer, voltage, RSSI and LQ
+
+
+@pytest.mark.parametrize("pitch", [20, 24, 28])
+def test_the_hd_throttle_is_found_and_read(pitch: int) -> None:
+    # A 24 s flight: the timer's tens digit only reaches 2, so numbering the digits
+    # by the tens digit alone is ambiguous; the first rollover is a 0.
+    clip = HdClip(fps=int(FPS), pitch=pitch)
+    values = throttle_of(list(clip.frames()))
+    assert values is not None
+    read = np.isfinite(values)
+    truth = clip.throttle_series(len(values))
+    assert read.mean() >= 0.8
+    assert np.mean(values[read] == truth[read]) >= 0.97
+
+
+def test_hd_without_a_running_timer_nothing_is_guessed() -> None:
+    clip = HdClip(fps=int(FPS), arm=40.0, disarm=50.0, seconds=30.0)  # never armed
+    assert throttle_of(list(clip.frames())) is None
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(("width", "height", "fps"), HD_MODES)
+def test_read_throttle_on_an_encoded_hd_recording(
+    tmp_path: Path, width: int, height: int, fps: int
+) -> None:
+    from fpvedit.media import find_tools, probe
+    from media_fixtures import ffmpeg_available
+
+    if not ffmpeg_available():
+        pytest.skip("ffmpeg/ffprobe not on PATH")
+    clip = HdClip(width=width, height=height, fps=fps)
+    path = clip.write(tmp_path / "hd.mp4")
+    tools = find_tools()
+    throttle = read_throttle(tools, probe(tools, path), Area(0, 0, width, height))
+    assert throttle is not None
+    truth = clip.throttle_series(len(throttle.values))
+    read = np.isfinite(throttle.values)
+    assert read.mean() >= 0.8
+    assert np.mean(throttle.values[read] == truth[read]) >= 0.95
