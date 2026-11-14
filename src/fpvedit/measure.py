@@ -57,6 +57,14 @@ class MeasureConfig:
     motion: MotionConfig = field(default_factory=MotionConfig)
 
 
+# Items of the layout that stay on screen while the rest of it is gone (the goggles' own
+# status text, drawn on top of the flight controller's) are left out of the layout share
+# when they make up at least this share of the layout; below it they change nothing.
+PERSISTENT_SHARE = 0.1
+GONE = 0.15  # an item is gone when its glyph share is below this much of its usual level
+MOSTLY = 0.5  # the layout is gone when this share of its pixels is
+
+
 @dataclass(frozen=True)
 class Measurements:
     fps: float
@@ -83,6 +91,7 @@ class Layout:
     glyphs: Mask | None  # pixels that usually show OSD glyphs (the normal layout)
     usable: Mask  # pixels at flow size whose motion can be trusted
     text_area: Mask  # where text other than the layout (stats, logo, messages) is counted
+    items: NDArray[np.int32] | None = None  # the layout item of each layout pixel (0, 1, ...)
 
 
 def analysis_frame_size(info: MediaInfo, area: Area, height: int) -> tuple[int, int]:
@@ -131,7 +140,24 @@ def plan_layout(
     border = max(3, round(3 * flow_size[0] / 240))
     usable[:border] = usable[-border:] = False
     usable[:, :border] = usable[:, -border:] = False
-    return Layout(size=size, overlay=overlay, glyphs=glyphs, usable=usable, text_area=text_area)
+    return Layout(
+        size=size,
+        overlay=overlay,
+        glyphs=glyphs,
+        usable=usable,
+        text_area=text_area,
+        items=_layout_items(glyphs),
+    )
+
+
+def _layout_items(glyphs: Mask | None) -> NDArray[np.int32] | None:
+    """The item (a run of characters) each layout glyph pixel belongs to, numbered from 0."""
+    if glyphs is None:
+        return None
+    joined = cv2.dilate(glyphs.astype(np.uint8), cv2.getStructuringElement(cv2.MORPH_RECT, (15, 5)))
+    _, labels = cv2.connectedComponents(joined, connectivity=8)
+    _, items = np.unique(labels[glyphs], return_inverse=True)
+    return np.asarray(items, dtype=np.int32)
 
 
 def _stats_screen(
@@ -214,6 +240,7 @@ def measure_frames(
     rows: dict[str, list[float]] = {k: [] for k in ("brightness", "contrast", "noise", "change")}
     motion: list[FloatArray] = []
     layout_share: list[float] = []
+    item_counts: list[FloatArray] = []
     text: list[FloatArray] = []
     thumbnails: list[GrayFrame] = []
     previous: GrayFrame | None = None
@@ -234,7 +261,10 @@ def measure_frames(
         previous = small
         glyphs = _glyph_pixels(frame, config)
         if layout.glyphs is not None:
-            layout_share.append(float(glyphs[layout.glyphs].sum()) / glyph_count)
+            showing = glyphs[layout.glyphs]
+            layout_share.append(float(showing.sum()) / glyph_count)
+            if layout.items is not None:
+                item_counts.append(np.bincount(layout.items, weights=showing))
         else:
             layout_share.append(np.nan)
         loose = glyphs & outside
@@ -251,12 +281,40 @@ def measure_frames(
         noise=np.array(rows["noise"]),
         change=np.array(rows["change"]),
         motion=np.array(motion).reshape(count, FIELDS),
-        layout=np.array(layout_share),
+        layout=_without_persistent_items(np.array(layout_share), item_counts, layout),
         text=np.array(text, dtype=np.float32).reshape(count, config.text_bands),
         thumbnails=np.array(thumbnails, dtype=np.uint8).reshape(
             -1, config.thumbnail[1], config.thumbnail[0]
         ),
         thumbnail_every=config.thumbnail_every,
+    )
+
+
+def _without_persistent_items(
+    share: FloatArray, counts: list[FloatArray], layout: Layout
+) -> FloatArray:
+    """The layout share without the items that stay on screen when the rest is gone.
+
+    Betaflight clears its whole layout for the ARMED message, the statistics and the boot
+    logo, but anything else drawn into the picture (the goggles' status text) stays, and
+    would keep the share too high to see the layout go. An item that is still showing in
+    most of the frames where most of the layout is gone is not part of the layout.
+    """
+    if layout.items is None or len(counts) != len(share):
+        return share
+    sizes = np.bincount(layout.items).astype(np.float64)
+    shown = np.stack(counts)[:, : len(sizes)] / sizes
+    usual = np.percentile(shown, 75, axis=0)
+    gone = shown < GONE * usual
+    weight = sizes / sizes.sum()
+    layout_gone = gone @ weight >= MOSTLY
+    if not layout_gone.any():
+        return share
+    stays = gone[layout_gone].mean(axis=0) < MOSTLY
+    if stays.all() or weight[stays].sum() < PERSISTENT_SHARE:
+        return share
+    return np.asarray(
+        np.stack(counts)[:, ~stays].sum(axis=1) / sizes[~stays].sum(), dtype=np.float64
     )
 
 

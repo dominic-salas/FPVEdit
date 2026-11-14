@@ -4,6 +4,11 @@ The OSD font is not known in advance (and Betaflight's fonts cannot ship with FP
 the digits are learned from the recording itself: the flight timer's last digit counts
 0-9 once a second. Steps:
 
+The picture is read in the recording's own active area at its own aspect (4:3 analog,
+16:9 digital), 720 rows high. How big the characters are comes from the recording: the
+spacing of the characters in the wide elements (the timer above all), which `Metrics`
+turns into the strip and cell sizes. Analog's 32 px characters are the fixed case.
+
 1. Glyph pixels (bright strokes with a dark outline) present in most sampled frames mark
    the OSD elements: the throttle, the timers, the voltage...
 2. One pass at `FPS` keeps only a narrow strip around each element, as stroke strength.
@@ -38,13 +43,56 @@ Strip = NDArray[np.float32]
 
 VERSION = 1  # bump when the readings change (it names the throttle cache)
 FPS = 12.0  # throttle samples per second
-WIDTH, HEIGHT = 960, 720  # the 4:3 picture is read at this size (analog OSD: 32 px a character)
-STRIP_H = 36  # rows of a glyph strip, centred on its element
-STRIP_LEFT = 110  # columns kept left of an element's right edge ...
-STRIP_RIGHT = 4  # ... and right of it
-CELL = 22  # width of a centred character cut
-SLACK = 6  # pixels a character may sit off its expected place
+WIDTH, HEIGHT = 960, 720  # a 4:3 picture is read at this size (analog OSD: 32 px a character)
 SAMPLES = 150  # frames sampled to find the OSD elements
+HD_COLUMNS = 50  # character columns of the digital (MSP DisplayPort) OSD, for a first guess
+SQUARE_ENOUGH = 0.04  # aspect within this of 4:3 is read at WIDTH x HEIGHT
+NUMBERING_MARGIN = 0.15  # a numbering of the digits other than the first must fit this much better
+
+
+@dataclass(frozen=True)
+class Metrics:
+    """Sizes in the picture that is read, all following from the character pitch."""
+
+    width: int  # picture size that is read
+    height: int
+    pitch: int  # distance between character centres
+    strip_h: int  # rows of a glyph strip, centred on its element
+    left: int  # columns kept left of an element's right edge ...
+    right: int  # ... and right of it
+    cell: int  # width of a centred character cut (even)
+    slack: int  # pixels a character may sit off its expected place
+    trim: int  # columns cut from each side of a digit template
+    gap: int  # pixels a character's cell is wider than its ink, for counting characters
+    apart: int  # least distance between two character centres
+    join: tuple[int, int]  # glyphs this close (across, down) belong to one element
+
+    @staticmethod
+    def analog() -> Metrics:
+        """The fixed layout of an analog OSD in a 4:3 picture: 30 characters across."""
+        return Metrics(WIDTH, HEIGHT, 32, 36, 110, 4, 22, 6, 3, 18, 18, (40, 9))
+
+    @staticmethod
+    def scaled(width: int, height: int, pitch: int, glyph_h: int = 0) -> Metrics:
+        """Sizes for characters ``pitch`` apart (and glyphs ``glyph_h`` tall, if known)."""
+
+        def of(analog: float) -> int:
+            return round(analog * pitch / 32)
+
+        return Metrics(
+            width,
+            height,
+            pitch,
+            strip_h=max(36, 2 * round(0.7 * glyph_h)),
+            left=of(110),
+            right=max(2, of(4)),
+            cell=2 * round(0.375 * pitch),
+            slack=max(3, of(6)),
+            trim=max(2, of(3)),
+            gap=of(18),
+            apart=max(6, of(18)),
+            join=(round(1.25 * pitch), max(3, round(0.2 * pitch))),
+        )
 
 
 @dataclass(frozen=True)
@@ -74,7 +122,7 @@ class Throttle:
         return float(np.isfinite(self.values).mean()) if len(self.values) else 0.0
 
 
-Box = tuple[int, int, int, int]  # x, y, width, height in the 960x720 picture
+Box = tuple[int, int, int, int]  # x, y, width, height in the picture that is read
 
 
 def glyph_pixels(frame: NDArray[np.uint8], config: OsdConfig | None = None) -> NDArray[np.bool_]:
@@ -91,15 +139,15 @@ def strokes(img: NDArray[np.uint8]) -> Strip:
     return np.asarray(cv2.GaussianBlur(s, (5, 5), 1.2), dtype=np.float32)
 
 
-def find_elements(frames: list[NDArray[np.uint8]], config: OsdConfig | None = None) -> list[Box]:
-    """Boxes of the OSD elements (runs of glyphs on one line) in sampled frames."""
-    config = config or OsdConfig()
-    if not frames:
-        return []
-    presence = np.mean([glyph_pixels(f, config) for f in frames], axis=0)
+def _presence(frames: list[NDArray[np.uint8]], config: OsdConfig) -> FloatArray:
+    """The share of the frames each pixel shows a glyph stroke in."""
+    return np.asarray(np.mean([glyph_pixels(f, config) for f in frames], axis=0))
+
+
+def _elements(presence: FloatArray, config: OsdConfig, metrics: Metrics) -> list[Box]:
     mask = (presence >= config.presence).astype(np.uint8)
     joined = cv2.morphologyEx(
-        mask, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (40, 9))
+        mask, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, metrics.join)
     )
     count, _, stats, _ = cv2.connectedComponentsWithStats(joined, connectivity=8)
     boxes = []
@@ -110,19 +158,83 @@ def find_elements(frames: list[NDArray[np.uint8]], config: OsdConfig | None = No
     return sorted(boxes, key=lambda b: (b[1], b[0]))
 
 
-def characters(width: int) -> int:
+def find_elements(
+    frames: list[NDArray[np.uint8]],
+    config: OsdConfig | None = None,
+    metrics: Metrics | None = None,
+) -> list[Box]:
+    """Boxes of the OSD elements (runs of glyphs on one line) in sampled frames."""
+    if not frames:
+        return []
+    config = config or OsdConfig()
+    return _elements(_presence(frames, config), config, metrics or Metrics.analog())
+
+
+def read_size(area: Area) -> tuple[int, int]:
+    """The size an area is read at: 720 rows, as wide as its own aspect (WIDTH for 4:3)."""
+    aspect = area.width / max(1, area.height)
+    if abs(aspect - WIDTH / HEIGHT) < SQUARE_ENOUGH:
+        return WIDTH, HEIGHT
+    return max(2, 2 * round(HEIGHT * aspect / 2)), HEIGHT
+
+
+def _first_guess(width: int, height: int) -> Metrics:
+    """Metrics before anything is measured: the analog layout, or the digital 50-column grid."""
+    if (width, height) == (WIDTH, HEIGHT):
+        return Metrics.analog()
+    return Metrics.scaled(width, height, round(width / HD_COLUMNS))
+
+
+def _estimate_pitch(presence: FloatArray, elements: list[Box], guess: Metrics) -> int:
+    """The character pitch the wide elements repeat at (the guess if nothing repeats)."""
+    low, high = round(0.75 * guess.pitch), round(1.35 * guess.pitch)
+    score = np.zeros(high + 1)
+    for x, y, w, h in elements:
+        if w < 3 * low or w <= high + low:
+            continue  # too few characters to repeat
+        profile = presence[y : y + h, x : x + w].sum(axis=0)
+        profile = profile - profile.mean()
+        auto = np.correlate(profile, profile, mode="full")[len(profile) - 1 :]
+        if auto[0] > 0:
+            score[low : high + 1] += auto[low : high + 1] / auto[0]
+    if not score.max() > 0:
+        return guess.pitch
+    return int(np.argmax(score))
+
+
+def plan(
+    frames: list[NDArray[np.uint8]], config: OsdConfig | None = None
+) -> tuple[Metrics, list[Box]]:
+    """The metrics and the OSD elements of a recording, from frames spread over it."""
+    config = config or OsdConfig()
+    if not frames:
+        return Metrics.analog(), []
+    height, width = frames[0].shape
+    guess = _first_guess(width, height)
+    presence = _presence(frames, config)
+    elements = _elements(presence, config, guess)
+    pitch = _estimate_pitch(presence, elements, guess)
+    if guess == Metrics.analog() and abs(pitch - guess.pitch) <= 0.12 * guess.pitch:
+        return guess, elements  # the analog OSD, exactly
+    glyph_h = int(np.median([h for _, _, _, h in elements])) if elements else 0
+    return Metrics.scaled(width, height, pitch, glyph_h), elements
+
+
+def characters(width: int, metrics: Metrics | None = None) -> int:
     """Characters in an element this many pixels wide."""
-    return max(1, round((width + 18) / 32))
+    metrics = metrics or Metrics.analog()
+    return max(1, round((width + metrics.gap) / metrics.pitch))
 
 
-def strip_of(frame: NDArray[np.uint8], box: Box) -> Strip:
-    """The stroke strip of one element: STRIP_H rows around its middle, STRIP_LEFT columns
+def strip_of(frame: NDArray[np.uint8], box: Box, metrics: Metrics | None = None) -> Strip:
+    """The stroke strip of one element: ``strip_h`` rows around its middle, ``left`` columns
     left of its right edge (zero beyond the picture)."""
+    m = metrics or Metrics.analog()
     x, y, w, h = box
     mid, right = y + h // 2, x + w
-    pad = np.pad(frame, ((STRIP_H, STRIP_H), (STRIP_LEFT, STRIP_RIGHT)))
-    rows = slice(mid + STRIP_H - STRIP_H // 2, mid + STRIP_H + STRIP_H // 2)
-    cols = slice(right, right + STRIP_LEFT + STRIP_RIGHT)
+    pad = np.pad(frame, ((m.strip_h, m.strip_h), (m.left, m.right)))
+    rows = slice(mid + m.strip_h - m.strip_h // 2, mid + m.strip_h + m.strip_h // 2)
+    cols = slice(right, right + m.left + m.right)
     return strokes(np.ascontiguousarray(pad[rows, cols]))
 
 
@@ -131,7 +243,7 @@ def _norm(a: NDArray[np.float32]) -> NDArray[np.float32]:
     return np.asarray(v / (np.linalg.norm(v, axis=(-2, -1), keepdims=True) + 1e-6), np.float32)
 
 
-def _centres(profile: FloatArray, apart: int = 18) -> list[int]:
+def _centres(profile: FloatArray, apart: int) -> list[int]:
     """Column peaks of a smoothed ink profile, at least ``apart`` apart."""
     p = np.convolve(profile, np.ones(9) / 9, mode="same")
     if not p.max() > 0:
@@ -145,10 +257,11 @@ def _centres(profile: FloatArray, apart: int = 18) -> list[int]:
     return sorted(picked)
 
 
-def _cut(s: Strip, centre: int, slack: int = 0) -> Strip:
-    pad = np.pad(s, ((slack, slack), (CELL + slack, CELL + slack)))
-    c = centre + CELL + slack
-    return pad[:, c - CELL // 2 - slack : c + CELL // 2 + slack]
+def _cut(s: Strip, centre: int, m: Metrics, slack: int = 0) -> Strip:
+    cell = m.cell
+    pad = np.pad(s, ((slack, slack), (cell + slack, cell + slack)))
+    c = centre + cell + slack
+    return pad[:, c - cell // 2 - slack : c + cell // 2 + slack]
 
 
 def _per_second(cells: NDArray[np.float32], fps: int) -> NDArray[np.float32]:
@@ -170,12 +283,12 @@ class _Timer:
     pitch: int
 
 
-def _timer(strips: NDArray[np.float32], fps: int) -> _Timer | None:
-    cs = _centres(strips.mean(axis=0).sum(axis=0).astype(np.float64))
+def _timer(strips: NDArray[np.float32], fps: int, m: Metrics) -> _Timer | None:
+    cs = _centres(strips.mean(axis=0).sum(axis=0).astype(np.float64), m.apart)
     if len(cs) < 2:
         return None
-    last = _per_second(np.stack([_cut(s, cs[-1]) for s in strips]), fps)
-    tens = _per_second(np.stack([_cut(s, cs[-2]) for s in strips]), fps)
+    last = _per_second(np.stack([_cut(s, cs[-1], m) for s in strips]), fps)
+    tens = _per_second(np.stack([_cut(s, cs[-2], m) for s in strips]), fps)
     if len(tens) < 12:
         return None
     nt = _norm(tens)
@@ -192,7 +305,9 @@ def _regular(rollovers: NDArray[np.int64]) -> list[int]:
 
 
 def learn_digits(timer: _Timer) -> NDArray[np.float32] | None:
-    """Templates for 0-9 from a running timer, numbered by tens-digit consistency."""
+    """Templates for 0-9 from a running timer. The tens digit rolling over means the last
+    digit is 0, so that numbering stands unless another fits clearly better (a short flight,
+    with tens digits 0-2 only, cannot tell the numberings apart by itself)."""
     regular = _regular(timer.rollovers)
     if not regular:
         return None
@@ -213,7 +328,7 @@ def learn_digits(timer: _Timer) -> NDArray[np.float32] | None:
         read = (tens @ _norm(temps).reshape(10, -1).T).argmax(axis=1)
         steps = np.diff(read)
         fit = float(np.where(rolled, steps % 6 == 1, steps == 0).mean() + (read <= 5).mean())
-        if best is None or fit > best[0]:
+        if best is None or fit > best[0] + NUMBERING_MARGIN:
             best = (fit, temps)
     return best[1] if best is not None else None
 
@@ -222,29 +337,30 @@ def read_values(
     strips: NDArray[np.float32],
     digits: NDArray[np.float32],
     pitch: int,
+    m: Metrics,
     config: OsdConfig | None = None,
 ) -> FloatArray:
     """Read a right-aligned number of 1-3 digits in every strip; NaN where unclear."""
     config = config or OsdConfig()
-    cs = _centres(strips.mean(axis=0).sum(axis=0).astype(np.float64))
+    cs = _centres(strips.mean(axis=0).sum(axis=0).astype(np.float64), m.apart)
     out = np.full(len(strips), np.nan)
     if not cs:
         return out
     right = cs[-1]
     places = [c for c in (right - 2 * pitch, right - pitch, right) if c >= 0]
-    core = digits[:, SLACK : digits.shape[1] - SLACK, 3 : CELL - 3]
-    usual = float(np.median([_cut(s, right).sum() for s in strips]))
+    core = digits[:, m.slack : digits.shape[1] - m.slack, m.trim : m.cell - m.trim]
+    usual = float(np.median([_cut(s, right, m).sum() for s in strips]))
     for i, s in enumerate(strips):
-        if _cut(s, right).sum() < config.blank_ink * usual:
+        if _cut(s, right, m).sum() < config.blank_ink * usual:
             continue  # right-aligned: the last character always has ink
         text, ok = "", True
         for c in places:
-            cell = _cut(s, c)
+            cell = _cut(s, c, m)
             if cell.sum() < config.blank_ink * usual:
                 if text:
                     ok = False  # a gap inside the number
                 continue
-            big = _cut(s, c, SLACK)
+            big = _cut(s, c, m, m.slack)
             scores = np.array([cv2.matchTemplate(big, t, cv2.TM_CCOEFF_NORMED).max() for t in core])
             top = np.sort(scores)
             if top[-1] < config.min_score or top[-1] - top[-2] < config.min_margin:
@@ -274,12 +390,14 @@ def find_throttle(
     strips: dict[Box, NDArray[np.float32]],
     fps: int,
     config: OsdConfig | None = None,
+    metrics: Metrics | None = None,
 ) -> tuple[Box, FloatArray] | None:
     """The throttle element and its readings, given every element's strips."""
+    m = metrics or Metrics.analog()
     timers = []
     for box in elements:
-        if characters(box[2]) in (5, 6):
-            t = _timer(strips[box], fps)
+        if characters(box[2], m) in (5, 6):
+            t = _timer(strips[box], fps, m)
             if t is not None:
                 timers.append((len(_regular(t.rollovers)), box, t))
     timers.sort(key=lambda item: -item[0])
@@ -291,9 +409,9 @@ def find_throttle(
         return None
     best: tuple[float, Box, FloatArray] | None = None
     for box in elements:
-        if box == timer_box or not 1 <= characters(box[2]) <= 3:
+        if box == timer_box or not 1 <= characters(box[2], m) <= 3:
             continue
-        values = read_values(strips[box], digits, timer.pitch, config)
+        values = read_values(strips[box], digits, timer.pitch, m, config)
         read = np.isfinite(values)
         if read.mean() < 0.2 or float(np.nanstd(values)) <= 5:
             continue
@@ -304,15 +422,18 @@ def find_throttle(
     return (best[1], best[2]) if best is not None else None
 
 
-def _decode(tools: Tools, info: MediaInfo, area: Area, rate: str) -> Iterator[NDArray[np.uint8]]:
-    """Gray frames of the active picture at WIDTH x HEIGHT, at the FFmpeg ``fps`` rate."""
+def _decode(
+    tools: Tools, info: MediaInfo, area: Area, rate: str, size: tuple[int, int]
+) -> Iterator[NDArray[np.uint8]]:
+    """Gray frames of the active picture at ``size``, at the FFmpeg ``fps`` rate."""
+    width, height = size
     args = [
         *(tools.ffmpeg, "-nostdin", "-hide_banner", "-v", "error"),
         *("-i", str(info.path), "-map", f"0:{info.video.index}", "-an", "-sn", "-dn"),
-        *("-vf", f"{area.crop_filter},scale={WIDTH}:{HEIGHT},fps={rate},format=gray"),
+        *("-vf", f"{area.crop_filter},scale={width}:{height},fps={rate},format=gray"),
         *("-f", "rawvideo", "-pix_fmt", "gray", "-"),
     ]
-    size = WIDTH * HEIGHT
+    frame_bytes = width * height
     with subprocess.Popen(
         args, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, creationflags=NO_WINDOW
     ) as process:
@@ -320,10 +441,10 @@ def _decode(tools: Tools, info: MediaInfo, area: Area, rate: str) -> Iterator[ND
         if stdout is None:
             return
         while True:
-            raw = stdout.read(size)
-            if len(raw) < size:
+            raw = stdout.read(frame_bytes)
+            if len(raw) < frame_bytes:
                 break
-            yield np.frombuffer(raw, np.uint8).reshape(HEIGHT, WIDTH)
+            yield np.frombuffer(raw, np.uint8).reshape(height, width)
 
 
 def read_throttle(
@@ -338,21 +459,22 @@ def read_throttle(
     duration = info.duration or 0.0
     if duration <= 0:
         return None
+    size = read_size(area)
     sample_rate = f"{min(FPS, SAMPLES / duration):.4f}"
-    elements = find_elements(list(_decode(tools, info, area, sample_rate)), config)
+    metrics, elements = plan(list(_decode(tools, info, area, sample_rate, size)), config)
     if not elements:
         return None
     strips: dict[Box, list[Strip]] = {box: [] for box in elements}
     expected = max(1, int(duration * FPS))
-    for count, frame in enumerate(_decode(tools, info, area, f"{FPS:g}")):
+    for count, frame in enumerate(_decode(tools, info, area, f"{FPS:g}", size)):
         for box in elements:
-            strips[box].append(strip_of(frame, box))
+            strips[box].append(strip_of(frame, box, metrics))
         if progress is not None and count % 60 == 0:
             progress(min(1.0, count / expected))
     stacked = {box: np.stack(s) for box, s in strips.items() if s}
     if len(stacked) != len(elements):
         return None
-    found = find_throttle(elements, stacked, int(FPS), config)
+    found = find_throttle(elements, stacked, int(FPS), config, metrics)
     if found is None:
         return None
     return Throttle(FPS, found[1])
