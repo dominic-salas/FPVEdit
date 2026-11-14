@@ -80,6 +80,9 @@ class MediaInfo:
     start_time: float
     video: VideoStream
     audio: AudioStream | None
+    tags: tuple[
+        tuple[str, str], ...
+    ] = ()  # maker, model, encoder and handler tags (lower-case keys)
 
     @property
     def display_aspect(self) -> float:
@@ -248,7 +251,35 @@ def parse_probe(path: Path, data: dict[str, Any]) -> MediaInfo:
             channels=_int(audio.get("channels")),
             start_time=_float(audio.get("start_time")),
         ),
+        tags=_camera_tags(fmt, video, audio),
     )
+
+
+# Tags that can name the device or software that wrote a recording.
+CAMERA_TAG_KEYS = frozenset(
+    {
+        "make", "model", "encoder", "handler_name", "firmware", "manufacturer",
+        "com.apple.quicktime.make", "com.apple.quicktime.model", "com.android.manufacturer",
+        "com.android.model", "major_brand", "title",
+    }
+)  # fmt: skip
+MAX_TAG_LENGTH = 120
+
+
+def _camera_tags(*sections: dict[str, Any] | None) -> tuple[tuple[str, str], ...]:
+    """The device-naming tags of the container and its streams, as (lower-case key, value)."""
+    found: list[tuple[str, str]] = []
+    for section in sections:
+        tags = (section or {}).get("tags", {})
+        if not isinstance(tags, dict):
+            continue
+        for key, value in tags.items():
+            name = str(key).lower()
+            if name in CAMERA_TAG_KEYS and isinstance(value, str) and value.strip():
+                pair = (name, value.strip()[:MAX_TAG_LENGTH])
+                if pair not in found:
+                    found.append(pair)
+    return tuple(found)
 
 
 def _nominal_rate(stream: dict[str, Any]) -> Fraction | None:

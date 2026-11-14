@@ -18,18 +18,20 @@ which rendering also uses).
 
 from __future__ import annotations
 
+import os
 import subprocess
 import tempfile
 from collections.abc import Generator, Iterator
 from dataclasses import dataclass, field
+from functools import lru_cache
 from itertools import pairwise
 
 import cv2
 import numpy as np
 from numpy.typing import NDArray
 
-from fpvedit.errors import MediaToolError
-from fpvedit.media import NO_WINDOW, MediaInfo, Tools
+from fpvedit.errors import MediaToolError, ToolNotFoundError
+from fpvedit.media import NO_WINDOW, MediaInfo, Tools, run_tool
 from fpvedit.motion import FIELDS, MotionConfig, MotionEstimator
 from fpvedit.picture import Area, PictureConfig, decoded_size, detect_overlay, fit_frames
 
@@ -324,6 +326,77 @@ class DecodeReport:
     warnings: list[str] = field(default_factory=list)
 
 
+FULL_HD = 1920 * 1080  # pixels; larger recordings are decoded the fast way
+HARDWARE_CODECS = ("h264", "hevc")
+HARDWARE_OFF = "FPVEDIT_NO_HWDECODE"  # set (to anything) to always decode on the CPU
+SHORT_RUN = 0.9  # a GPU run with fewer frames than this share of the expected count is redone
+
+
+def decode_args(
+    tools: Tools, info: MediaInfo, area: Area, size: tuple[int, int], fps: float
+) -> list[str]:
+    """The FFmpeg command that writes every frame of ``area`` at ``fps``, grey, at ``size``."""
+    width, height = size
+    # Larger than 1080p, the decoder's loop filter is skipped: it is a fifth of the decoding
+    # work, and the 360 px analysis picture does not show what it smooths.
+    fast = ("-skip_loop_filter", "all") if info.video.width * info.video.height > FULL_HD else ()
+    return [
+        *(tools.ffmpeg, "-nostdin", "-hide_banner", "-v", "error", *fast, "-i", str(info.path)),
+        *("-map", f"0:{info.video.index}", "-an", "-sn", "-dn"),
+        "-vf",
+        f"{area.crop_filter},fps={fps}:round=near,scale={width}:{height}:flags=area,format=gray",
+        *("-f", "rawvideo", "-pix_fmt", "gray", "-"),
+    ]
+
+
+@lru_cache(maxsize=4)
+def nvidia_decoding(ffmpeg: str) -> bool:
+    """Whether this FFmpeg can decode on an NVIDIA GPU and scale there (CUDA and scale_cuda).
+
+    Only says the build has them; a machine without the GPU still fails when it starts,
+    which `decode_frames` answers by decoding on the CPU instead.
+    """
+    if os.environ.get(HARDWARE_OFF):
+        return False
+    try:
+        hwaccels = run_tool([ffmpeg, "-hide_banner", "-hwaccels"], action="ffmpeg -hwaccels")
+        filters = run_tool([ffmpeg, "-hide_banner", "-filters"], action="ffmpeg -filters")
+    except (MediaToolError, ToolNotFoundError):
+        return False
+    return "cuda" in hwaccels.stdout.split() and " scale_cuda " in filters.stdout
+
+
+def hardware_decode_args(
+    tools: Tools, info: MediaInfo, area: Area, size: tuple[int, int], fps: float
+) -> list[str] | None:
+    """`decode_args` with the decoding and the first, coarse scaling done on an NVIDIA GPU
+    (4K H.265 decodes about three times faster than on the CPU). None unless the recording
+    is larger than 1080p, a codec the GPU decodes, upright, and shown whole (the GPU's
+    scaler cannot crop)."""
+    video = info.video
+    whole = (area.x, area.y, area.width, area.height) == (0, 0, *decoded_size(info))
+    if (
+        video.width * video.height <= FULL_HD
+        or video.codec not in HARDWARE_CODECS
+        or video.rotation != 0
+        or not whole
+        or not nvidia_decoding(tools.ffmpeg)
+    ):
+        return None
+    width, height = size
+    # Down to twice the analysis size on the GPU, then the exact, area-averaged size here.
+    coarse = f"scale_cuda={2 * width}:{2 * height}:interp_algo=bilinear:format=nv12"
+    return [
+        *(tools.ffmpeg, "-nostdin", "-hide_banner", "-v", "error"),
+        *("-hwaccel", "cuda", "-hwaccel_output_format", "cuda", "-i", str(info.path)),
+        *("-map", f"0:{video.index}", "-an", "-sn", "-dn"),
+        "-vf",
+        f"{coarse},hwdownload,format=nv12,fps={fps}:round=near,"
+        f"scale={width}:{height}:flags=area,format=gray",
+        *("-f", "rawvideo", "-pix_fmt", "gray", "-"),
+    ]
+
+
 def decode_frames(
     tools: Tools,
     info: MediaInfo,
@@ -332,16 +405,40 @@ def decode_frames(
     fps: float,
     report: DecodeReport,
 ) -> Generator[GrayFrame, None, None]:
-    """Every frame of the active picture at ``fps``, grey, at ``size``."""
+    """Every frame of the active picture at ``fps``, grey, at ``size``.
+
+    A large recording is decoded on the GPU when it can be. If that run fails (no GPU, no
+    driver, a stream it cannot decode, an error part way) or ends well short of the
+    expected frame count, the CPU decodes the recording and carries on after the frames
+    already delivered, so the result is the same frames either way.
+    """
+    cpu = decode_args(tools, info, area, size, fps)
+    hardware = hardware_decode_args(tools, info, area, size, fps)
+    if hardware is not None:
+        returncode, stderr = yield from _decode_process(hardware, size, report)
+        expected = round(fps * info.duration) if info.duration else 0
+        if returncode == 0 and report.frames >= SHORT_RUN * expected and report.frames > 0:
+            return
+    else:
+        returncode, stderr = 0, ""
+    done = report.frames
+    returncode, stderr = yield from _decode_process(cpu, size, report, skip=done)
+    if report.frames == 0:
+        raise MediaToolError(f"decoding {info.path.name}", returncode or 1, stderr)
+    if returncode != 0 or stderr.strip():
+        first = stderr.strip().splitlines()[0] if stderr.strip() else f"exit code {returncode}"
+        report.warnings.append(
+            f"decoder reported problems (damaged or truncated recording?): {first}"
+        )
+
+
+def _decode_process(
+    args: list[str], size: tuple[int, int], report: DecodeReport, skip: int = 0
+) -> Generator[GrayFrame, None, tuple[int, str]]:
+    """Run one decoding command, yielding its frames after the first ``skip`` (which an
+    earlier command already delivered); returns its exit code and messages."""
     width, height = size
     frame_bytes = width * height
-    args = [
-        *(tools.ffmpeg, "-nostdin", "-hide_banner", "-v", "error", "-i", str(info.path)),
-        *("-map", f"0:{info.video.index}", "-an", "-sn", "-dn"),
-        "-vf",
-        f"{area.crop_filter},fps={fps}:round=near,scale={width}:{height}:flags=area,format=gray",
-        *("-f", "rawvideo", "-pix_fmt", "gray", "-"),
-    ]
     with tempfile.TemporaryFile() as stderr_file:
         process = subprocess.Popen(
             args, stdout=subprocess.PIPE, stderr=stderr_file, creationflags=NO_WINDOW
@@ -349,10 +446,14 @@ def decode_frames(
         if process.stdout is None:  # pragma: no cover - guaranteed by stdout=PIPE
             raise RuntimeError("ffmpeg stdout pipe was not created")
         try:
+            seen = 0
             while True:
                 chunk = process.stdout.read(frame_bytes)
                 if len(chunk) < frame_bytes:
                     break
+                seen += 1
+                if seen <= skip:
+                    continue
                 report.frames += 1
                 yield np.frombuffer(chunk, dtype=np.uint8).reshape(height, width)
         finally:
@@ -362,10 +463,4 @@ def decode_frames(
             returncode = process.wait()
             stderr_file.seek(0)
             stderr = stderr_file.read().decode("utf-8", errors="replace")
-    if report.frames == 0:
-        raise MediaToolError(f"decoding {info.path.name}", returncode or 1, stderr)
-    if returncode != 0 or stderr.strip():
-        first = stderr.strip().splitlines()[0] if stderr.strip() else f"exit code {returncode}"
-        report.warnings.append(
-            f"decoder reported problems (damaged or truncated recording?): {first}"
-        )
+    return returncode, stderr

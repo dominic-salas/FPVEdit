@@ -121,3 +121,53 @@ def make_line_clips(folder: Path) -> tuple[Path, Path]:
         audio=False,
     )
     return four_three, sixteen_nine
+
+
+def make_clip(
+    path: Path,
+    *,
+    width: int = 1280,
+    height: int = 720,
+    fps: int = 60,
+    seconds: float = 4.0,
+    pillarbox: bool = False,
+    grain: int = 0,
+    osd: bool = False,
+    handler: str | None = None,
+    audio: bool = False,
+) -> Path:
+    """A short H.264 MP4 of any size and rate, built cheaply: a smooth, slowly moving
+    picture made small and scaled up, so 4K and 90 fps clips cost little to write.
+
+    ``pillarbox`` puts a 4:3 picture between black bars, ``grain`` adds analog-like noise
+    (to the picture, not the bars), ``osd`` burns in static white-on-black boxes like an
+    OSD, and ``handler`` names the video stream's handler (a camera writes its own name).
+    There is a keyframe every half second, which a clip this short needs for its OSD layout.
+    """
+    inner = (height * 4 // 3 // 2 * 2) if pillarbox else width
+    picture = (
+        "geq=lum='128+70*sin(X/W*25+T*3)*cos(Y/H*14-T*2)':cb=128:cr=128,"
+        f"scale={inner}:{height}:flags=bicubic,"
+    )
+    if grain:
+        picture += f"noise=alls={grain}:allf=t+u,"
+    if osd:
+        boxes = [(0.05, 0.05), (0.75, 0.05), (0.05, 0.85), (0.70, 0.85), (0.40, 0.08)]
+        picture += "".join(
+            f"drawbox=x=iw*{x}:y=ih*{y}:w=iw*0.18:h=ih*0.07:color=black:t=fill,"
+            f"drawbox=x=iw*{x}+2:y=ih*{y}+2:w=iw*0.18-4:h=ih*0.07-4:color=white:t=fill,"
+            for x, y in boxes
+        )
+    bars = f"pad={width}:{height}:(ow-iw)/2:0:black," if pillarbox else ""
+    args = ["ffmpeg", "-nostdin", "-hide_banner", "-v", "error", "-y"]
+    args += ["-f", "lavfi", "-i", f"color=c=gray:s=320x180:r={fps}:d={seconds}"]
+    if audio:
+        args += ["-f", "lavfi", "-i", f"sine=frequency=440:sample_rate=48000:d={seconds}"]
+    args += ["-vf", f"{picture}{bars}format=yuv420p", "-map", "0:v"]
+    if audio:
+        args += ["-map", "1:a", "-c:a", "aac", "-b:a", "96k"]
+    if handler:
+        args += ["-metadata:s:v:0", f"handler_name={handler}"]
+    args += ["-c:v", "libx264", "-preset", "ultrafast", "-g", str(max(1, fps // 2)), str(path)]
+    subprocess.run(args, check=True, capture_output=True)
+    return path

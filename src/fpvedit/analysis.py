@@ -18,7 +18,7 @@ import zipfile
 import zlib
 from collections.abc import Callable, Iterator
 from contextlib import closing
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -40,7 +40,25 @@ from fpvedit.measure import (
 )
 from fpvedit.media import MediaInfo, Tools, output_rate
 from fpvedit.motion import SPEED
-from fpvedit.picture import Area, PictureConfig, decoded_size, detect_active_area, sample_frames
+from fpvedit.picture import (
+    Area,
+    PictureConfig,
+    decoded_size,
+    detect_active_area,
+    sample_frames,
+    sample_size,
+    scale_area,
+)
+from fpvedit.source import (
+    AUTO,
+    PictureEvidence,
+    Source,
+    SourceConfig,
+    active_aspect,
+    classify,
+    median_noise,
+    parse_choice,
+)
 
 CACHE_FORMAT = 3
 # Bump when a change to the measuring code (MEASUREMENT_MODULES) changes what it measures:
@@ -60,6 +78,10 @@ class AnalysisConfig:
     measure: MeasureConfig = field(default_factory=MeasureConfig)
     flight: FlightConfig = field(default_factory=FlightConfig)
     selection: SelectionConfig = field(default_factory=SelectionConfig)
+    # "auto" finds the kind of recording out; "analog", "hdzero" or "action" forces it. It
+    # does not change the measurements, so it is not part of their cache key.
+    source: str = AUTO
+    source_rules: SourceConfig = field(default_factory=SourceConfig)
 
 
 @dataclass(frozen=True)
@@ -73,6 +95,7 @@ class Analysis:
     analysed_duration: float
     from_cache: bool
     warnings: tuple[str, ...]
+    source: Source
 
 
 def analyze(
@@ -104,7 +127,8 @@ def analyze(
             except OSError as exc:
                 notes = (f"could not write the measurement cache ({exc}); continuing without it",)
 
-    flight = detect_flight(measurements, config.flight)
+    source = find_source(info, area, measurements, config)
+    flight = detect_flight(_as_seen_by(source, measurements), config.flight)
     selection = select_highlights(measurements, flight, config.selection)
     return Analysis(
         info=info,
@@ -116,7 +140,36 @@ def analyze(
         analysed_duration=len(measurements) / measurements.fps,
         from_cache=from_cache,
         warnings=(*warnings, *notes, *selection.warnings),
+        source=source,
     )
+
+
+def find_source(
+    info: MediaInfo, area: Area, measurements: Measurements, config: AnalysisConfig
+) -> Source:
+    """The kind of recording: the user's choice, else found out from the file and picture."""
+    forced = parse_choice(config.source)
+    if forced is not None:
+        return Source(forced, "chosen by the user", forced=True)
+    full = decoded_size(info)
+    evidence = PictureEvidence(
+        active_aspect=active_aspect(info, area.width, area.height, full),
+        bars_share=max(0.0, 1.0 - area.width * area.height / (full[0] * full[1])),
+        noise=median_noise(measurements.noise),
+        osd_found=bool(np.isfinite(measurements.layout).any()),
+    )
+    return classify(info, evidence, config.source_rules)
+
+
+def _as_seen_by(source: Source, measurements: Measurements) -> Measurements:
+    """The measurements an action camera's flight is judged by: without an OSD layout.
+
+    Bright static detail in an action camera's picture is scenery or a prop guard, not an
+    OSD, so no layout is taken as found and the rules for recordings without one apply.
+    """
+    if source.kind.has_osd:
+        return measurements
+    return replace(measurements, layout=np.full(len(measurements), np.nan))
 
 
 def _measure(
@@ -126,9 +179,11 @@ def _measure(
     progress: Callable[[float], None] | None = None,
 ) -> tuple[Area, float, Measurements, tuple[str, ...]]:
     samples = sample_frames(tools, info, count=config.measure.layout_samples)
-    area = detect_active_area(samples, decoded_size(info), config.picture)
+    shown = sample_size(info)  # the samples may be smaller than the recording
+    sample_area = detect_active_area(samples, shown, config.picture)
+    area = scale_area(sample_area, shown, decoded_size(info))
     size = analysis_frame_size(info, area, config.measure.height)
-    layout = plan_layout(samples, area, size, config.measure, config.picture)
+    layout = plan_layout(samples, sample_area, size, config.measure, config.picture)
     fps = float(output_rate(info))
     report = DecodeReport()
     with closing(decode_frames(tools, info, area, size, fps, report)) as decoded:
@@ -247,6 +302,12 @@ def analysis_document(analysis: Analysis, tools: Tools, config: AnalysisConfig) 
         "picture": {
             "active_area": [area.x, area.y, area.width, area.height],
             "overlay_fraction": round(analysis.overlay_fraction, 4),
+        },
+        "source_kind": {
+            "kind": analysis.source.kind.value,
+            "label": analysis.source.kind.label,
+            "reason": analysis.source.reason,
+            "chosen": analysis.source.forced,
         },
         "fps": m.fps,
         "flight": {

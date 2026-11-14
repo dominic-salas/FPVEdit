@@ -66,6 +66,22 @@ you are editing.
   patterns, and its star ratings are estimates, not judgements. You always have the final
   say in the montage page.
 
+## Supported recordings
+
+FPVEdit reads recordings of any size and frame rate (540p to 4K, 25 to 120 fps, 16:9 or 4:3,
+with or without sound) and works out for itself what made each one:
+
+- **Analog**: goggle recordings with analog grain, usually with the picture inside black bars. The Betaflight OSD burned
+  into the picture marks arming, disarming and crashes.
+- **HDZero**: digital goggle recordings: a clean picture, filling the frame or, in 4:3, inside bars.
+- **Action cam** (for example a RunCam Thumb 2): recognised by a frame size or rate the goggles
+  never record, by the maker named in the file, or by a `.gcsv` gyro file with the same name
+  beside it (the file is not read). An action cam has no OSD, so it is edited by its motion
+  alone: stretches on the ground or in the hand are cut, flying is kept.
+
+The kind is shown for each recording when the command line finishes. If it guesses wrong, name
+it yourself with `--source analog|hdzero|action`.
+
 ## Privacy
 
 Everything runs on your computer. Nothing is uploaded and there is no account or telemetry.
@@ -106,6 +122,8 @@ writes `flight1_montage.mp4` next to the first recording. Options:
 - `--lines`: a montage of each recording's longest lines instead of its best shots (see
   below), written as `<first recording>_lines.mp4`. It works with `--vertical`, `--music`
   and `--analyze-only`; `--length`, `--min-stars` and `--trim` do not apply to it.
+- `--source auto|analog|hdzero|action`: what made the recordings (default `auto`; see
+  Supported recordings).
 - `--force`: replace an existing output (never done otherwise).
 - `--device auto|cpu|cuda`: NVIDIA GPU encoding when available (default), or force CPU/GPU.
 - `--keep-intermediates`, `--analyze-only`, `--cache-dir DIR`: write the chosen shots or

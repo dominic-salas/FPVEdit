@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **Analog, HDZero and action-camera recordings.** FPVEdit now tells which kind each recording
+  is (analog goggles, HDZero digital goggles or an action camera such as a RunCam Thumb 2) from
+  its size, frame rate, the maker named in the file, a `.gcsv` file beside it and its picture,
+  and the command line shows it. An action cam is edited by its motion alone, never by an OSD.
+  Name the kind yourself with `--source analog|hdzero|action` if it guesses wrong. Recordings
+  of any size and rate (540p to 4K, 25 to 120 fps) are accepted, and 4K ones are analysed
+  faster: smaller sample frames, a skipped loop filter and, where an NVIDIA GPU can decode the
+  file, GPU decoding with a fall back to the CPU (`FPVEDIT_NO_HWDECODE=1` turns it off).
+  Analog results are unchanged. Black bars alone no longer mean analog: a clean picture with bars (HDZero in 4:3) is HDZero.
 - **HD on-screen display.** The throttle, arming and disarming are read from recordings whose
   Betaflight display is drawn in the wide 16:9 digital layout (HD goggle recordings at 720p60,
   720p90 or 1080p30), as they are from analog ones. The character size is measured from the

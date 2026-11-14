@@ -16,6 +16,7 @@ from fpvedit.errors import (
 from fpvedit.pipeline import (
     DEFAULT_MIN_STARS,
     MontageResult,
+    PipelineConfig,
     Result,
     run_lines,
     run_montage,
@@ -25,6 +26,7 @@ from fpvedit.render import (
     DEVICES,
     NVENC,
 )
+from fpvedit.source import AUTO, CHOICES, Source
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -122,6 +124,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="write only the analysis or montage file and no video",
     )
     parser.add_argument(
+        "--source",
+        choices=CHOICES,
+        default=AUTO,
+        help="what kind of recording the inputs are: analog goggles, hdzero (digital goggles) "
+        "or action (an action camera, which has no OSD); auto finds it out from each file "
+        "(the default)",
+    )
+    parser.add_argument(
         "--cache-dir",
         type=Path,
         help="reuse per-frame measurements stored in this folder (created if missing)",
@@ -153,6 +163,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.error("--length would shorten the lines; a line always plays whole")
     if args.lines and args.min_stars is not None:
         parser.error("--min-stars rates shots; lines are not rated")
+    config = PipelineConfig(source=args.source)
     try:
         if args.lines:
             return _report_lines(
@@ -166,6 +177,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     device=args.device,
                     music=args.music,
                     vertical=args.vertical,
+                    config=config,
                 )
             )
         if not args.trim:
@@ -183,6 +195,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     scenery=not args.no_scenery,
                     min_stars=DEFAULT_MIN_STARS if args.min_stars is None else args.min_stars,
                     vertical=args.vertical,
+                    config=config,
                 )
             )
         return _report_trim(
@@ -194,6 +207,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 analyze_only=args.analyze_only,
                 cache_dir=args.cache_dir,
                 device=args.device,
+                config=config,
             )
         )
     except (FPVEditError, OSError) as exc:  # OSError: disk full, permission denied, ...
@@ -204,9 +218,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 130
 
 
+def _print_sources(names: Sequence[str], sources: Sequence[Source | None]) -> None:
+    for name, source in zip(names, sources, strict=False):
+        if source is not None:
+            print(f"Source:    {name}: {source.kind.label}")
+
+
 def _report_trim(result: Result) -> int:
     retained = result.edited_duration / result.original_duration if result.original_duration else 0
     print(f"Output:    {result.output}")
+    if result.source is not None:
+        print(f"Source:    {result.source.kind.label}")
     print(f"Original:  {format_duration(result.original_duration)}")
     print(f"Edited:    {format_duration(result.edited_duration)} ({retained:.0%} retained)")
     print(f"Segments:  {len(result.selection.intervals)}")
@@ -226,6 +248,7 @@ def _report_montage(result: MontageResult) -> int:
     used = len({shot.clip for shot in result.shots})
     print(f"Output:    {result.output}")
     print(f"Clips:     {len(result.clips)} given, shots from {used}")
+    _print_sources([clip.name for clip in result.clips], result.sources)
     print(f"Footage:   {format_duration(result.footage_duration)} of usable recordings")
     print(f"Montage:   {format_duration(result.edited_duration)} in {len(result.shots)} shots")
     if result.encoder is not None:
@@ -238,6 +261,7 @@ def _report_montage(result: MontageResult) -> int:
 
 def _report_lines(result: MontageResult) -> int:
     print(f"Output:    {result.output}")
+    _print_sources([clip.name for clip in result.clips], result.sources)
     for line in result.lines:
         name = result.clips[line.clip].name
         events = f"{line.events} event{'s' if line.events != 1 else ''}"

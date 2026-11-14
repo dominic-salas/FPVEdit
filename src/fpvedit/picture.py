@@ -27,6 +27,9 @@ BoolMask = NDArray[np.bool_]
 
 SAMPLE_FRAMES = 24
 MIN_FRAMES = 6
+# Sample frames of larger recordings are scaled down while decoding: finding bars and the
+# OSD needs no more detail, and a 4K grey frame is 8 MB to pipe, store and crop.
+SAMPLE_MAX_WIDTH = 1920
 
 
 @dataclass(frozen=True)
@@ -67,29 +70,61 @@ def decoded_size(info: MediaInfo) -> tuple[int, int]:
     return (height, width) if info.video.rotation % 180 == 90 else (width, height)
 
 
-def sample_frames(tools: Tools, info: MediaInfo, count: int = SAMPLE_FRAMES) -> list[GrayFrame]:
-    """Up to ``count`` full-resolution grey frames spread over the recording.
+def sample_size(info: MediaInfo, max_width: int | None = SAMPLE_MAX_WIDTH) -> tuple[int, int]:
+    """The size of `sample_frames`' frames: the decoded size, or smaller if wider than
+    ``max_width`` (the aspect ratio is kept)."""
+    width, height = decoded_size(info)
+    if max_width is None or width <= max_width:
+        return width, height
+    return max_width - max_width % 2, max(2, round(height * max_width / width / 2) * 2)
+
+
+def scale_area(area: Area, source: tuple[int, int], target: tuple[int, int]) -> Area:
+    """``area`` of a ``source``-sized frame, as the same part of a ``target``-sized one
+    (even offsets and sizes, for FFmpeg)."""
+    if source == target:
+        return area
+    fx, fy = target[0] / source[0], target[1] / source[1]
+    x0, y0 = round(area.x * fx), round(area.y * fy)
+    x1, y1 = round((area.x + area.width) * fx), round((area.y + area.height) * fy)
+    x0, y0 = x0 + x0 % 2, y0 + y0 % 2
+    x1, y1 = min(x1 - (x1 - x0) % 2, target[0]), min(y1 - (y1 - y0) % 2, target[1])
+    return Area(x0, y0, max(2, x1 - x0), max(2, y1 - y0))
+
+
+def sample_frames(
+    tools: Tools,
+    info: MediaInfo,
+    count: int = SAMPLE_FRAMES,
+    max_width: int | None = SAMPLE_MAX_WIDTH,
+) -> list[GrayFrame]:
+    """Up to ``count`` grey frames spread over the recording, at full resolution or at
+    most ``max_width`` wide (`sample_size`).
 
     Keyframes only, unless the file has too few of them (long-GOP or intra-refresh
     streams); then every frame is decoded once and frames are picked by time.
     """
     duration = info.duration or 0.0
     step = max(duration / count, 0.5) if duration > 0 else 1.0
-    frames = _grab(tools, info, step, keyframes_only=True)
+    frames = _grab(tools, info, step, max_width, keyframes_only=True)
     if len(frames) < min(MIN_FRAMES, count) and duration > step * MIN_FRAMES:
-        frames = _grab(tools, info, step, keyframes_only=False)
+        frames = _grab(tools, info, step, max_width, keyframes_only=False)
     return frames[:count]
 
 
-def _grab(tools: Tools, info: MediaInfo, step: float, *, keyframes_only: bool) -> list[GrayFrame]:
-    width, height = decoded_size(info)
+def _grab(
+    tools: Tools, info: MediaInfo, step: float, max_width: int | None, *, keyframes_only: bool
+) -> list[GrayFrame]:
+    width, height = sample_size(info, max_width)
+    full = decoded_size(info)
     pick = f"select='isnan(prev_selected_t)+gte(t-prev_selected_t,{step:.3f})'"
+    shrink = f",scale={width}:{height}:flags=area" if (width, height) != full else ""
     args = [tools.ffmpeg, "-nostdin", "-hide_banner", "-v", "quiet"]
     if keyframes_only:
         args += ["-skip_frame", "nokey"]
     args += [
         *("-i", str(info.path), "-map", f"0:{info.video.index}", "-an", "-sn", "-dn"),
-        *("-vf", f"{pick},format=gray", "-fps_mode", "passthrough"),
+        *("-vf", f"{pick}{shrink},format=gray", "-fps_mode", "passthrough"),
         *("-f", "rawvideo", "-pix_fmt", "gray", "-"),
     ]
     # Errors are not fatal here: a damaged recording simply yields fewer frames, and

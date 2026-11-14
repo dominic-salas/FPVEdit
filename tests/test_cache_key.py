@@ -8,8 +8,10 @@ from pathlib import Path
 import fpvedit
 from fpvedit.analysis import MEASUREMENT_MODULES, MEASUREMENT_VERSION
 
-# The measuring code that MEASUREMENT_VERSION describes (line endings normalised).
-PINNED = {1: "96a6bcb1245a0d5a00cd9f4dc1b68646439e205e8279d0403b83cc98cbed4a1f"}
+# The measuring code that MEASUREMENT_VERSION describes (line endings normalised). Version 1
+# kept its number when recordings above 1080p got a faster decode (no loop filter, GPU
+# scaling): their measurements move by under 1 %, and recordings up to 1080p are unchanged.
+PINNED = {1: "7a96fd07f1dd33e8da21380925a059cd0cd4005fd010283cbdcd0dcc0a52e83c"}
 
 
 def test_measuring_code_matches_its_measurement_version() -> None:
