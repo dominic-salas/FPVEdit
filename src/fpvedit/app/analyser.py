@@ -9,6 +9,7 @@ measurement cache makes the next session's analysis of the same clips quick too.
 
 from __future__ import annotations
 
+import dataclasses
 import heapq
 import logging
 import multiprocessing
@@ -33,6 +34,7 @@ from fpvedit.pipeline import (
     is_cached,
     plan_in_worker,
 )
+from fpvedit.source import AUTO, Source
 
 log = logging.getLogger("fpvedit.app")
 POLL_MS = 200
@@ -50,6 +52,12 @@ class ClipState:
     @property
     def finished(self) -> bool:
         return self.result is not None or self.error is not None
+
+    @property
+    def source(self) -> Source | None:
+        """The kind of recording, once analysed (None when nothing usable was found)."""
+        clip = self.result.clip if self.result is not None else None
+        return clip.source if clip is not None else None
 
 
 def background_priority() -> None:
@@ -83,6 +91,8 @@ class BackgroundAnalysis(QObject):
         self._config = PipelineConfig()
         self._workers = workers if workers is not None else default_workers()
         self._states: dict[Path, ClipState] = {}
+        self._choices: dict[Path, str] = {}  # clip -> kind the user named (absent: auto)
+        self._found: dict[Path, Source] = {}  # clip -> what the last automatic analysis said
         self._futures: dict[Path, Future[ClipResult]] = {}
         # Clips waiting for a worker: already measured ones (cached, seconds each) go first,
         # then the shortest, so with many clips the first results come quickly.
@@ -101,6 +111,39 @@ class BackgroundAnalysis(QObject):
     def state(self, path: Path) -> ClipState | None:
         return self._states.get(path.resolve())
 
+    def choice(self, path: Path) -> str:
+        """The kind the user named for ``path``: ``auto`` or a `SourceKind` value."""
+        return self._choices.get(path.resolve(), AUTO)
+
+    def found(self, path: Path) -> Source | None:
+        """What analysing ``path`` by itself found, also while a kind is forced."""
+        return self._found.get(path.resolve())
+
+    def set_source(self, path: Path, choice: str) -> bool:
+        """Analyse only ``path`` again with its kind forced (``auto``: found out again).
+
+        Its measurements are cached and the choice is not part of the cache key, so this
+        only repeats the editing. False when the clip is not analysed yet.
+        """
+        key = path.resolve()
+        state = self._states.get(key)
+        if state is None or not state.finished:
+            return False
+        if choice == self.choice(key):
+            return True
+        if choice == AUTO:
+            self._choices.pop(key, None)
+        else:
+            self._choices[key] = choice
+        del self._states[key]
+        self.add(state.info)
+        return True
+
+    def _config_for(self, path: Path) -> PipelineConfig:
+        """The settings for one clip: the shared ones with its own kind of recording."""
+        choice = self._choices.get(path, AUTO)
+        return self._config if choice == AUTO else dataclasses.replace(self._config, source=choice)
+
     def add(self, info: MediaInfo) -> None:
         """Start analysing ``info`` unless it is analysed, under way or waiting already."""
         path = info.path.resolve()
@@ -113,7 +156,7 @@ class BackgroundAnalysis(QObject):
         self._ids[job_id] = path
         self._states[path] = ClipState(info, job_id)
         cached = self._cache_dir is not None and is_cached(
-            self._tools, info, self._cache_dir, self._config
+            self._tools, info, self._cache_dir, self._config_for(path)
         )
         if cached:
             self._cached.append(path)
@@ -130,12 +173,13 @@ class BackgroundAnalysis(QObject):
             if state is None:
                 continue
             pool = self._start_pool()
+            config = self._config_for(path)
             job = ClipJob(
                 self._tools,
                 state.info,
                 state.job,
-                self._config,
-                self._config.montage,
+                config,
+                config.montage,
                 self._cache_dir,
             )
             self._futures[path] = pool.submit(plan_in_worker, job, self._shares, self._stop)
@@ -211,6 +255,8 @@ class BackgroundAnalysis(QObject):
             try:
                 state.result = future.result()
                 state.share = 1.0
+                if state.source is not None and path not in self._choices:
+                    self._found[path] = state.source
             except CancelledError:
                 del self._states[path]
             except FPVEditError as exc:

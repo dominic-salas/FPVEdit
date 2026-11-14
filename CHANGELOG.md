@@ -11,6 +11,11 @@
   faster: smaller sample frames, a skipped loop filter and, where an NVIDIA GPU can decode the
   file, GPU decoding with a fall back to the CPU (`FPVEDIT_NO_HWDECODE=1` turns it off).
   Analog results are unchanged. Black bars alone no longer mean analog: a clean picture with bars (HDZero in 4:3) is HDZero.
+- **Recording type on the clip cards.** Once a clip is analysed its card shows what kind of
+  recording it is (Analog, HDZero or Action cam), and hovering the card says why. If it guessed
+  wrong, right-click the card, pick Recording type and name the kind (the card then reads
+  "(set)"); only that clip is analysed again, quickly, since its measurements are kept. Auto
+  goes back to what was found.
 - **HD on-screen display.** The throttle, arming and disarming are read from recordings whose
   Betaflight display is drawn in the wide 16:9 digital layout (HD goggle recordings at 720p60,
   720p90 or 1080p30), as they are from analog ones. The character size is measured from the

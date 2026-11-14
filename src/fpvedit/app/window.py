@@ -53,10 +53,14 @@ from fpvedit.app import theme, windowchrome
 from fpvedit.app.anahdpage import AnaHDPage
 from fpvedit.app.analyser import BackgroundAnalysis
 from fpvedit.app.cliplist import (
+    BASE_TIP,
+    CHOICE,
     DETAILS,
+    FOUND,
     PATH,
     PROBLEM,
     SHARE,
+    SOURCE,
     STATUS,
     THUMB,
     ClipList,
@@ -434,6 +438,7 @@ class MainWindow(QMainWindow):
         # With clips: the list in playing order, and one next step.
         self._clips = ClipList()
         self._clips.dropped.connect(self.add_paths)
+        self._clips.source_chosen.connect(self._set_clip_source)
         self._clips.model().rowsMoved.connect(lambda *_: self._clips_changed())
         self._clips_summary = eyebrow()
         tools = QHBoxLayout()
@@ -827,6 +832,7 @@ class MainWindow(QMainWindow):
             self._unreadable[path.resolve()] = why
             for item in self._clip_items(path):
                 item.setData(DETAILS, "NOT A READABLE RECORDING")
+                item.setData(BASE_TIP, f"{path}\n{why}")
                 item.setToolTip(f"{path}\n{why}")
         self._analysis_changed()
 
@@ -871,6 +877,7 @@ class MainWindow(QMainWindow):
             item.setData(SHARE, share)
             item.setData(PROBLEM, problem)
             state = self._analysis.state(path)
+            self._show_source(item, path)
             ready += state is not None and state.finished
             info = self._infos.get(path.resolve())
             footage += (info.duration or 0.0) if info is not None else 0.0
@@ -892,6 +899,7 @@ class MainWindow(QMainWindow):
             known.add(path.resolve())
             item = QListWidgetItem(path.name)
             item.setData(PATH, str(path))
+            item.setData(BASE_TIP, str(path))
             item.setToolTip(str(path))
             self._clips.addItem(item)
             self._reader.request(path)
@@ -955,6 +963,31 @@ class MainWindow(QMainWindow):
             self._review.set_montage((), None)
         self._refresh()
 
+    def _show_source(self, item: QListWidgetItem, path: Path) -> None:
+        """The kind of recording on a clip's card, with why as its tooltip; nothing before
+        the clip is analysed."""
+        state = self._analysis.state(path)
+        source = state.source if state is not None else None
+        found = self._analysis.found(path)
+        label = None
+        if source is not None:
+            label = f"{source.kind.label} (set)" if source.forced else source.kind.label
+        item.setData(SOURCE, label)
+        item.setData(FOUND, found.kind.label if found is not None else None)
+        item.setData(CHOICE, self._analysis.choice(path))
+        tip = str(item.data(BASE_TIP) or path)
+        if source is not None:
+            tip = f"{tip}\n{source.kind.label}: {source.reason}"
+        item.setToolTip(tip)
+
+    def _set_clip_source(self, path: str, choice: str) -> None:
+        """The card's menu: analyse this clip again with its kind of recording named
+        (or found out again), leaving the other clips alone."""
+        if self._busy() or not self._analysis.set_source(Path(path), choice):
+            return
+        self._clips_changed()  # the shots found before no longer match this clip
+        self._refresh_clips()
+
     def _mirror_clips(self) -> None:
         """The progress screen's list shows the same clips, cards and progress."""
         target = self._work_clips
@@ -983,7 +1016,7 @@ class MainWindow(QMainWindow):
                 note = "NOTHING USABLE"
             self._clip_notes[info.path.resolve()] = note
             for item in self._clip_items(info.path):
-                item.setToolTip("\n".join([str(info.path), *notes]))
+                item.setData(BASE_TIP, "\n".join([str(info.path), *notes]))
         self._refresh_clips()
 
     def _set_notes(self, notes: Sequence[str]) -> None:
