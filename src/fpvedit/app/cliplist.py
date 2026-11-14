@@ -15,6 +15,7 @@ from PySide6.QtCore import (
     QModelIndex,
     QObject,
     QPersistentModelIndex,
+    QPoint,
     QRect,
     QSize,
     Qt,
@@ -23,9 +24,11 @@ from PySide6.QtCore import (
 )
 from PySide6.QtGui import (
     QColor,
+    QContextMenuEvent,
     QDragEnterEvent,
     QDragMoveEvent,
     QDropEvent,
+    QIcon,
     QPainter,
     QPaintEvent,
     QPen,
@@ -34,6 +37,7 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QListWidget,
+    QMenu,
     QStyle,
     QStyledItemDelegate,
     QStyleOptionViewItem,
@@ -43,6 +47,7 @@ from fpvedit.app import theme
 from fpvedit.app.frames import grab_frame
 from fpvedit.errors import FPVEditError
 from fpvedit.media import MediaInfo, Tools, probe
+from fpvedit.source import AUTO, SourceKind
 
 PATH = Qt.ItemDataRole.UserRole  # str: the clip's file
 DETAILS = Qt.ItemDataRole.UserRole + 1  # str: length, rate, recording time
@@ -50,6 +55,10 @@ STATUS = Qt.ItemDataRole.UserRole + 2  # str: what the analysis says, upper case
 SHARE = Qt.ItemDataRole.UserRole + 3  # float 0..1 while analysing, else None
 THUMB = Qt.ItemDataRole.UserRole + 4  # QPixmap
 PROBLEM = Qt.ItemDataRole.UserRole + 5  # bool: the status is a problem (shown in red)
+SOURCE = Qt.ItemDataRole.UserRole + 6  # str: the kind of recording, once analysed
+FOUND = Qt.ItemDataRole.UserRole + 7  # str: the kind analysis found by itself (label)
+CHOICE = Qt.ItemDataRole.UserRole + 8  # str: the kind the user named, or "auto"
+BASE_TIP = Qt.ItemDataRole.UserRole + 9  # str: the card's tooltip before the kind's reason
 
 CARD_HEIGHT = 84
 THUMB_SIZE = QSize(112, 63)
@@ -127,10 +136,12 @@ class ClipList(QListWidget):
     """The clips, in montage order: drag to reorder, drop files or folders to add."""
 
     dropped = Signal(list)
+    source_chosen = Signal(str, str)  # clip file, "auto" or a recording kind
 
     def __init__(self, *, compact: bool = False) -> None:
         """``compact``: smaller cards that only show progress (no editing, no drops)."""
         super().__init__()
+        self._compact = compact
         self.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.card = ClipCard(self, compact=compact)
         self.setItemDelegate(self.card)
@@ -160,6 +171,27 @@ class ClipList(QListWidget):
             event.acceptProposedAction()
         else:
             super().dropEvent(event)
+
+    def contextMenuEvent(self, event: QContextMenuEvent) -> None:
+        """Right-click a card whose clip is analysed: name the kind of recording."""
+        item = None if self._compact else self.itemAt(event.pos())
+        found = item.data(FOUND) if item is not None else None
+        if item is None or not found:
+            return
+        current = str(item.data(CHOICE) or AUTO)
+        menu = QMenu(self)
+        heading = menu.addAction("RECORDING TYPE")
+        heading.setEnabled(False)  # a label, not an option
+        menu.addSeparator()
+        mark = check_icon(self.card.palette.accent)
+        blank = check_icon(None)
+        options = [(f"Auto ({found})", AUTO)] + [(k.label, k.value) for k in SourceKind]
+        for text, value in options:
+            action = menu.addAction(mark if value == current else blank, text)
+            action.setData(value)
+        chosen = menu.exec(event.globalPos())
+        if chosen is not None and str(chosen.data()) != current:
+            self.source_chosen.emit(str(item.data(PATH)), str(chosen.data()))
 
     def paintEvent(self, event: QPaintEvent) -> None:
         super().paintEvent(event)
@@ -280,8 +312,23 @@ class ClipCard(QStyledItemDelegate):
         details = str(index.data(DETAILS) or "READING…")
         if self.compact:
             details = details.split("   ")[0]  # just the length
+        elif index.data(SOURCE):
+            details = f"{details}   {str(index.data(SOURCE)).upper()}"
         painter.drawText(bottom, Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft, details)
         painter.restore()
+
+
+def check_icon(color: str | None) -> QIcon:
+    """A check mark in ``color`` for the chosen menu row; None: the same space, empty."""
+    pixmap = QPixmap(14, 14)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    if color is not None:
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(QPen(QColor(color), 1.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        painter.drawPolyline([QPoint(2, 7), QPoint(5, 10), QPoint(12, 3)])
+        painter.end()
+    return QIcon(pixmap)
 
 
 def thumbnail_pixmap(png: bytes) -> QPixmap | None:

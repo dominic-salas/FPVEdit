@@ -12,6 +12,7 @@ import functools
 import random
 import time
 from collections.abc import Callable
+from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
@@ -141,6 +142,20 @@ class RatePage(QWidget):
         if self._current is None:
             self._next()
         self._show_progress()
+
+    def drop_clip(self, path: Path) -> None:
+        """Forget the queued shots of one clip (its analysis is being redone), so the shots
+        found next time are queued fresh. Ratings already saved stay."""
+        key = path.resolve()
+        self._queue = [item for item in self._queue if item[0].path.resolve() != key]
+        prefix = f"{path}|"
+        self._seen = {seen for seen in self._seen if not seen.startswith(prefix)}
+        if self._last is not None and self._last[0].path.resolve() == key:
+            self._last = None
+        if self._current is not None and self._current[0].path.resolve() == key:
+            self._next()
+        else:
+            self._show_progress()
 
     def set_waiting(self, waiting: bool) -> None:
         self._waiting = waiting

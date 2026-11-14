@@ -454,3 +454,124 @@ def test_window_switches_between_the_montage_and_the_lines_without_new_analysis(
         assert default_stem().endswith("_montage")
     finally:
         window.close()
+
+
+def test_the_card_shows_the_recording_kind_and_it_can_be_set_per_clip(tmp_path: Path) -> None:
+    pytest.importorskip("PySide6")
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    import time
+
+    from PySide6.QtCore import QSettings
+    from PySide6.QtWidgets import QApplication
+
+    from fpvedit.app.cliplist import CHOICE, FOUND, SOURCE
+    from fpvedit.app.settings import AppSettings
+    from fpvedit.app.window import MainWindow
+    from media_fixtures import make_clip
+
+    analog = make_clip(
+        tmp_path / "analog.mp4", pillarbox=True, grain=30, osd=True, seconds=5, fps=60
+    )
+    digital = make_clip(tmp_path / "digital.mp4", osd=True, seconds=5, fps=60)
+    app = QApplication.instance() or QApplication([])
+    settings = AppSettings(QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat))
+    window = MainWindow(find_tools(), tmp_path / "cache", settings)
+    window.show()
+
+    def wait(done: object, seconds: float = 120) -> None:
+        end = time.monotonic() + seconds
+        while not done() and time.monotonic() < end:  # type: ignore[operator]
+            app.processEvents()
+            time.sleep(0.05)
+        assert done(), "timed out"  # type: ignore[operator]
+
+    def analysed(path: Path) -> bool:
+        state = window._analysis.state(path)
+        return state is not None and state.finished
+
+    def card(path: Path) -> dict[str, object]:
+        (item,) = window._clip_items(path)
+        return {
+            "label": item.data(SOURCE),
+            "found": item.data(FOUND),
+            "choice": item.data(CHOICE),
+            "tip": item.toolTip(),
+        }
+
+    try:
+        window.add_paths([analog, digital])
+        # Before analysis finishes nothing extra is shown.
+        assert card(analog)["label"] is None and card(digital)["label"] is None
+        wait(lambda: analysed(analog) and analysed(digital))
+        window._refresh_clips()
+        assert (card(analog)["label"], card(digital)["label"]) == ("Analog", "HDZero")
+        assert "analog grain" in str(card(analog)["tip"])  # the reason is the tooltip
+        assert str(analog) in str(card(analog)["tip"])
+        assert "fills the frame" in str(card(digital)["tip"])
+        before = window._analysis.state(analog)
+        assert before is not None
+
+        # Naming the kind of one clip analyses only that clip again.
+        window._rated_clips.update({analog.resolve(), digital.resolve()})
+        window._set_clip_source(str(digital), "analog")
+        assert window._rated_clips == {analog.resolve()}  # only the changed clip is fed again
+        assert window._analysis.state(analog) is before
+        wait(lambda: analysed(digital))
+        window._refresh_clips()
+        named = card(digital)
+        assert named["label"] == "Analog (set)"
+        assert named["found"] == "HDZero"  # what it found by itself is kept for the menu
+        assert named["choice"] == "analog"
+        assert "chosen by the user" in str(named["tip"])
+        assert card(analog)["label"] == "Analog" and card(analog)["choice"] == "auto"
+
+        # Auto finds it out again.
+        window._set_clip_source(str(digital), "auto")
+        wait(lambda: analysed(digital))
+        window._refresh_clips()
+        assert card(digital)["label"] == "HDZero" and card(digital)["choice"] == "auto"
+        assert window._analysis.state(analog) is before
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_the_rate_page_forgets_the_shots_of_a_clip_that_is_analysed_again(tmp_path: Path) -> None:
+    pytest.importorskip("PySide6")
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    from fpvedit.app.myratings import MyRatings
+    from fpvedit.app.ratepage import RatePage
+    from media_fixtures import make_clip
+
+    app = QApplication.instance() or QApplication([])
+    tools = find_tools()
+    a = probe(tools, make_clip(tmp_path / "a.mp4", seconds=2))
+    b = probe(tools, make_clip(tmp_path / "b.mp4", seconds=2))
+    mine = MyRatings(tmp_path / "ratings.jsonl")
+    page = RatePage(tools, mine)
+    try:
+        old_a = [Shot(0, 0.0, 1.0, 1.0, ()), Shot(0, 1.0, 2.0, 1.0, ())]
+        shots_b = [Shot(0, 0.0, 1.0, 1.0, ()), Shot(0, 1.0, 2.0, 1.0, ())]
+        mine.rate(a.path, Shot(0, 5.0, 6.0, 1.0, ()), 4)  # a rating saved earlier
+        page.add_shots(a, old_a)
+        page.add_shots(b, shots_b)
+
+        def waiting() -> list[tuple[str, float]]:
+            items = [page._current, *page._queue]
+            return sorted((i.path.name, s.start) for i, s in (x for x in items if x is not None))
+
+        assert waiting() == [("a.mp4", 0.0), ("a.mp4", 1.0), ("b.mp4", 0.0), ("b.mp4", 1.0)]
+        page.drop_clip(a.path)
+        assert waiting() == [("b.mp4", 0.0), ("b.mp4", 1.0)]  # also the shot on screen
+        assert page._current is not None and page._current[0].path == b.path
+        assert mine.count == 1  # the saved rating stays
+
+        # The next feed queues the clip's new shots, even where they start as the old ones did.
+        page.add_shots(a, [Shot(0, 0.0, 1.5, 1.0, ()), Shot(0, 3.0, 4.0, 1.0, ())])
+        assert waiting() == [("a.mp4", 0.0), ("a.mp4", 3.0), ("b.mp4", 0.0), ("b.mp4", 1.0)]
+    finally:
+        page.stop()
+        page.close()
+        app.processEvents()

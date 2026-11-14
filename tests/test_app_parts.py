@@ -10,9 +10,13 @@ import pytest
 pytest.importorskip("PySide6")
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QSettings
-from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import QSettings, Qt, QTimer
+from PySide6.QtGui import QContextMenuEvent
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QApplication, QListWidgetItem, QMenu
 
+from fpvedit.app import theme
+from fpvedit.app.cliplist import CHOICE, DETAILS, FOUND, PATH, SOURCE, ClipList
 from fpvedit.app.dialogs import cache_size, clear_cache
 from fpvedit.app.settings import AppSettings
 from fpvedit.app.window import time_left, use_folders_first
@@ -430,3 +434,70 @@ def test_no_lines_shows_the_reason(tmp_path: Path) -> None:
         assert "fast flying" not in message
     finally:
         page.shutdown()
+
+
+def _card_list(*items: tuple[str, str | None, str | None]) -> ClipList:
+    """A clip list with one card per (name, kind shown, kind found), offscreen."""
+    app = QApplication.instance() or QApplication([])
+    assert isinstance(app, QApplication)
+    fonts = theme.load_fonts()  # the bundled ones: the offscreen platform has none of its own
+    app.setStyleSheet(theme.stylesheet(theme.DARK, fonts))
+    clips = ClipList()
+    clips.card.set_theme(theme.DARK, fonts)
+    clips.resize(760, 100 * len(items) + 8)
+    for name, label, found in items:
+        item = QListWidgetItem(name)
+        item.setData(PATH, name)
+        item.setData(DETAILS, "3:10   720P 60   REC 10 OCT 2026 20:38")
+        item.setData(SOURCE, label)
+        item.setData(FOUND, found)
+        item.setData(CHOICE, "auto")
+        clips.addItem(item)
+    return clips
+
+
+def test_the_card_shows_the_kind_only_once_it_is_known() -> None:
+    app = QApplication.instance() or QApplication([])
+    assert isinstance(app, QApplication)
+    pictures = []
+    for label in (None, "Analog"):
+        clips = _card_list(("a.mp4", label, None))
+        clips.show()
+        app.processEvents()
+        pictures.append(clips.viewport().grab().toImage())
+        clips.close()
+    assert not pictures[0].isNull() and pictures[0] != pictures[1]
+
+
+def test_the_card_menu_offers_auto_with_the_found_kind_and_names_a_kind() -> None:
+    app = QApplication.instance() or QApplication([])
+    assert isinstance(app, QApplication)
+    clips = _card_list(("a.mp4", None, None), ("b.mp4", "Analog", "Analog"))
+    clips.show()
+    app.processEvents()
+    chosen: list[tuple[str, str]] = []
+    clips.source_chosen.connect(lambda path, kind: chosen.append((path, kind)))
+    offered: list[list[str]] = []
+
+    def pick(text: str) -> None:
+        menu = app.activePopupWidget()
+        assert isinstance(menu, QMenu)
+        offered.append([a.text() for a in menu.actions() if a.text()])
+        menu.setActiveAction(next(a for a in menu.actions() if a.text() == text))
+        QTest.keyClick(menu, Qt.Key.Key_Return)
+
+    def right_click(row: int, then: str) -> None:
+        point = clips.visualItemRect(clips.item(row)).center()
+        if then:
+            QTimer.singleShot(50, lambda: pick(then))
+        clips.contextMenuEvent(
+            QContextMenuEvent(QContextMenuEvent.Reason.Mouse, point, clips.mapToGlobal(point))
+        )
+
+    right_click(0, "")  # not analysed yet: no menu, so nothing is offered
+    app.processEvents()
+    assert not offered and not chosen
+    right_click(1, "HDZero")
+    assert offered == [["RECORDING TYPE", "Auto (Analog)", "Analog", "HDZero", "Action cam"]]
+    assert chosen == [("b.mp4", "hdzero")]
+    clips.close()

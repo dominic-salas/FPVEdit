@@ -211,9 +211,11 @@ def stylesheet(p: Palette, fonts: Fonts) -> str:
     QMenuBar::item {{ padding: 4px 10px; border-radius: 8px; }}
     QMenuBar::item:selected {{ background: {p.surface_2}; color: {p.text}; }}
     QMenu {{ background: {p.surface}; border: 1px solid {p.border_strong}; padding: 4px;
-        border-radius: 8px; }}
+        border-radius: 8px; font-family: {mono}; font-size: 8pt; }}
     QMenu::item {{ padding: 6px 24px 6px 12px; border-radius: 6px; color: {p.text}; }}
-    QMenu::item:selected {{ background: {p.surface_2}; }}
+    QMenu::item:selected {{ background: {p.surface_2}; color: {p.text}; }}
+    QMenu::item:disabled {{ color: {p.faint}; background: transparent; }}
+    QMenu::icon {{ padding-left: 4px; }}
     QMenu::separator {{ height: 1px; background: {p.border}; margin: 4px 6px; }}
 
     QMessageBox {{ background: {p.bg}; }}
