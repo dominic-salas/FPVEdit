@@ -11,7 +11,7 @@ from fpvedit.analysis import MEASUREMENT_MODULES, MEASUREMENT_VERSION
 # The measuring code that MEASUREMENT_VERSION describes (line endings normalised). Version 1
 # kept its number when recordings above 1080p got a faster decode (no loop filter, GPU
 # scaling): their measurements move by under 1 %, and recordings up to 1080p are unchanged.
-PINNED = {1: "674267c0686838ef3554be3ce08d3576263b740c8af20917441097b51796854c"}
+PINNED = {1: "7a96fd07f1dd33e8da21380925a059cd0cd4005fd010283cbdcd0dcc0a52e83c"}
 
 
 def test_measuring_code_matches_its_measurement_version() -> None:

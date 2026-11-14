@@ -11,6 +11,14 @@
   faster: smaller sample frames, a skipped loop filter and, where an NVIDIA GPU can decode the
   file, GPU decoding with a fall back to the CPU (`FPVEDIT_NO_HWDECODE=1` turns it off).
   Analog results are unchanged. Black bars alone no longer mean analog: a clean picture with bars (HDZero in 4:3) is HDZero.
+- **HD on-screen display.** The throttle, arming and disarming are read from recordings whose
+  Betaflight display is drawn in the wide 16:9 digital layout (HD goggle recordings at 720p60,
+  720p90 or 1080p30), as they are from analog ones. The character size is measured from the
+  recording instead of assumed, and text the goggles add themselves (channel, power) no longer
+  hides the layout going away. Fixed on analog too: a throttle read from a flight under a
+  minute long came out one digit too high (0 read as 1, 49 as 60); it is read again, once
+  per recording, with the right digits. Checked on generated HD recordings and two real analog
+  ones; not yet on real HD footage.
 - **Longest lines in the Edit tab.** A Montage | Longest lines switch above the preview shows
   the same analysis as each recording's longest lines. Each line's panel shows its length, its
   events and how it ended; trim, swap, remove, loop, music and vertical export work as for
