@@ -193,9 +193,10 @@ def test_tags_naming_the_device_are_read_from_the_probe() -> None:
 class TestOnRecordings:
     """Generated recordings, analysed for real."""
 
-    @pytest.fixture(scope="class")
-    def folder(self, tmp_path_factory: pytest.TempPathFactory) -> Path:
-        return tmp_path_factory.mktemp("sources")
+    @pytest.fixture
+    def folder(self, tmp_path: Path) -> Path:
+        (tmp_path / "clips").mkdir()
+        return tmp_path / "clips"
 
     def analyse(self, path: Path, config: AnalysisConfig = KEEP_ALL) -> Analysis:
         return analyze(find_tools(), probe(find_tools(), path), config)
