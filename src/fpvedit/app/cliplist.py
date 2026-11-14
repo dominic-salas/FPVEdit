@@ -15,6 +15,7 @@ from PySide6.QtCore import (
     QModelIndex,
     QObject,
     QPersistentModelIndex,
+    QPoint,
     QRect,
     QSize,
     Qt,
@@ -27,6 +28,7 @@ from PySide6.QtGui import (
     QDragEnterEvent,
     QDragMoveEvent,
     QDropEvent,
+    QIcon,
     QPainter,
     QPaintEvent,
     QPen,
@@ -178,13 +180,14 @@ class ClipList(QListWidget):
             return
         current = str(item.data(CHOICE) or AUTO)
         menu = QMenu(self)
-        menu.addAction("Recording type").setEnabled(False)
+        heading = menu.addAction("RECORDING TYPE")
+        heading.setEnabled(False)  # a label, not an option
         menu.addSeparator()
+        mark = check_icon(self.card.palette.accent)
+        blank = check_icon(None)
         options = [(f"Auto ({found})", AUTO)] + [(k.label, k.value) for k in SourceKind]
         for text, value in options:
-            action = menu.addAction(text)
-            action.setCheckable(True)
-            action.setChecked(value == current)
+            action = menu.addAction(mark if value == current else blank, text)
             action.setData(value)
         chosen = menu.exec(event.globalPos())
         if chosen is not None and str(chosen.data()) != current:
@@ -313,6 +316,19 @@ class ClipCard(QStyledItemDelegate):
             details = f"{details}   {str(index.data(SOURCE)).upper()}"
         painter.drawText(bottom, Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft, details)
         painter.restore()
+
+
+def check_icon(color: str | None) -> QIcon:
+    """A check mark in ``color`` for the chosen menu row; None: the same space, empty."""
+    pixmap = QPixmap(14, 14)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    if color is not None:
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(QPen(QColor(color), 1.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        painter.drawPolyline([QPoint(2, 7), QPoint(5, 10), QPoint(12, 3)])
+        painter.end()
+    return QIcon(pixmap)
 
 
 def thumbnail_pixmap(png: bytes) -> QPixmap | None:

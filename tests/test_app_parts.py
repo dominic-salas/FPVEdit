@@ -498,6 +498,6 @@ def test_the_card_menu_offers_auto_with_the_found_kind_and_names_a_kind() -> Non
     app.processEvents()
     assert not offered and not chosen
     right_click(1, "HDZero")
-    assert offered == [["Recording type", "Auto (Analog)", "Analog", "HDZero", "Action cam"]]
+    assert offered == [["RECORDING TYPE", "Auto (Analog)", "Analog", "HDZero", "Action cam"]]
     assert chosen == [("b.mp4", "hdzero")]
     clips.close()
