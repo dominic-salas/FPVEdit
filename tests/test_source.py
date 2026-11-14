@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 from contextlib import closing
 from dataclasses import replace
 from fractions import Fraction
@@ -114,6 +115,16 @@ def test_bars_around_a_noisy_picture_are_analog() -> None:
     assert "bars" in source.reason
 
 
+def test_bars_around_a_clean_picture_are_hdzero_in_4_3() -> None:
+    """HDZero cameras can be 4:3 and record with bars: bars alone do not mean analog."""
+    clean = PictureEvidence(active_aspect=4 / 3, bars_share=0.26, noise=0.0008, osd_found=True)
+    source = classify(info(), clean, gyro_log=False)
+    assert source.kind is SourceKind.DIGITAL
+    assert "clean picture" in source.reason and "no analog grain" in source.reason
+    unmeasured = PictureEvidence(4 / 3, 0.26, None, osd_found=True)
+    assert classify(info(), unmeasured, gyro_log=False).kind is SourceKind.ANALOG
+
+
 def test_a_wide_analog_picture_with_thin_bars_is_analog() -> None:
     thin = PictureEvidence(active_aspect=1.65, bars_share=0.07, noise=0.002, osd_found=True)
     assert classify(info(), thin, gyro_log=False).kind is SourceKind.ANALOG
@@ -203,12 +214,19 @@ class TestOnRecordings:
 
     def test_a_pillarboxed_picture_with_analog_noise_is_analog(self, folder: Path) -> None:
         path = make_clip(
-            folder / "analog.mp4", pillarbox=True, grain=12, osd=True, seconds=5, fps=60
+            folder / "analog.mp4", pillarbox=True, grain=30, osd=True, seconds=5, fps=60
         )
         analysis = self.analyse(path)
         assert analysis.source.kind is SourceKind.ANALOG
         assert analysis.flight.has_osd, "an analog recording is still read by its OSD"
         assert (analysis.area.width, analysis.area.height) == (948, 720)
+
+    def test_a_clean_picture_with_bars_is_hdzero_not_analog(self, folder: Path) -> None:
+        path = make_clip(folder / "four_three.mp4", pillarbox=True, osd=True, seconds=5, fps=60)
+        analysis = self.analyse(path)
+        assert analysis.source.kind is SourceKind.DIGITAL
+        assert (analysis.area.width, analysis.area.height) == (948, 720)
+        assert analysis.flight.has_osd
 
     def test_a_clean_full_frame_720p_picture_is_hdzero(self, folder: Path) -> None:
         path = make_clip(folder / "digital.mp4", osd=True, seconds=5, fps=60)
@@ -257,7 +275,7 @@ class TestOnRecordings:
         assert ".gcsv" in source.reason
 
     def test_the_users_choice_wins(self, folder: Path) -> None:
-        path = make_clip(folder / "forced.mp4", pillarbox=True, grain=12, osd=True, seconds=5)
+        path = make_clip(folder / "forced.mp4", pillarbox=True, grain=30, osd=True, seconds=5)
         selection = KEEP_ALL.selection
         forced = self.analyse(path, AnalysisConfig(selection=selection, source="action"))
         assert forced.source.kind is SourceKind.ACTION_CAM
@@ -267,7 +285,7 @@ class TestOnRecordings:
         assert digital.source.kind is SourceKind.DIGITAL and digital.flight.has_osd
 
     def test_changing_the_choice_does_not_measure_again(self, folder: Path, tmp_path: Path) -> None:
-        path = make_clip(folder / "cached.mp4", pillarbox=True, grain=12, osd=True, seconds=5)
+        path = make_clip(folder / "cached.mp4", pillarbox=True, grain=30, osd=True, seconds=5)
         tools, media = find_tools(), probe(find_tools(), path)
         auto = AnalysisConfig(selection=KEEP_ALL.selection)
         forced = AnalysisConfig(selection=KEEP_ALL.selection, source="action")
@@ -283,7 +301,7 @@ class TestOnRecordings:
     def test_the_command_line_names_the_kind(
         self, folder: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        path = make_clip(folder / "cli.mp4", pillarbox=True, grain=12, osd=True, seconds=5)
+        path = make_clip(folder / "cli.mp4", pillarbox=True, grain=30, osd=True, seconds=5)
         analysis_file = tmp_path / "cli.mp4"
         code = main(["--trim", "--analyze-only", str(path), "-o", str(analysis_file)])
         assert code == 0
@@ -449,3 +467,43 @@ def test_gpu_and_cpu_decoding_agree(tmp_path: Path, monkeypatch: pytest.MonkeyPa
         measure.nvidia_decoding.cache_clear()
     assert best.shape == cpu.shape
     assert float(np.abs(best - cpu).mean()) < 2.0
+
+
+@pytest.mark.integration
+@needs_ffmpeg
+@pytest.mark.parametrize(
+    ("delivered", "exit_code"),
+    [(5, 0), (18, 1), (0, 1)],
+    ids=["well short, clean exit", "nearly all, error exit", "none, error exit"],
+)
+def test_a_partial_gpu_decode_carries_on_with_the_cpu(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, delivered: int, exit_code: int
+) -> None:
+    clip = make_clip(tmp_path / "big.mp4", width=2560, height=1440, fps=10, seconds=2, osd=True)
+    tools, media = find_tools(), probe(find_tools(), clip)
+    area, size = Area(0, 0, 2560, 1440), (640, 360)
+    monkeypatch.setenv(measure.HARDWARE_OFF, "1")
+    measure.nvidia_decoding.cache_clear()
+    try:
+        with closing(decode_frames(tools, media, area, size, 10.0, measure.DecodeReport())) as it:
+            expected = [frame.copy() for frame in it]
+    finally:
+        measure.nvidia_decoding.cache_clear()
+    assert len(expected) == 20
+
+    code = f"import sys; sys.stdout.buffer.write(bytes(640*360*{delivered})); sys.exit({exit_code})"
+
+    def breaks_part_way(*_args: object) -> list[str]:
+        return [sys.executable, "-c", code]
+
+    monkeypatch.setattr(measure, "hardware_decode_args", breaks_part_way)
+    report = measure.DecodeReport()
+    with closing(decode_frames(tools, media, area, size, 10.0, report)) as it:
+        got = [frame.copy() for frame in it]
+    assert len(got) == 20 and report.frames == 20, "no frame lost or repeated"
+    assert report.warnings == []
+    for number, (frame, cpu) in enumerate(zip(got, expected, strict=True)):
+        if number >= delivered:  # the rest are the CPU's own
+            assert np.array_equal(frame, cpu)
+        else:  # the first ones are what the GPU run had delivered
+            assert not frame.any()

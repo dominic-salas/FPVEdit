@@ -10,7 +10,7 @@
   of any size and rate (540p to 4K, 25 to 120 fps) are accepted, and 4K ones are analysed
   faster: smaller sample frames, a skipped loop filter and, where an NVIDIA GPU can decode the
   file, GPU decoding with a fall back to the CPU (`FPVEDIT_NO_HWDECODE=1` turns it off).
-  Analog results are unchanged.
+  Analog results are unchanged. Black bars alone no longer mean analog: a clean picture with bars (HDZero in 4:3) is HDZero.
 - **Longest lines in the Edit tab.** A Montage | Longest lines switch above the preview shows
   the same analysis as each recording's longest lines. Each line's panel shows its length, its
   events and how it ended; trim, swap, remove, loop, music and vertical export work as for

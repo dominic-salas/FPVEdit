@@ -71,9 +71,9 @@ you are editing.
 FPVEdit reads recordings of any size and frame rate (540p to 4K, 25 to 120 fps, 16:9 or 4:3,
 with or without sound) and works out for itself what made each one:
 
-- **Analog**: goggle recordings with the picture inside black bars. The Betaflight OSD burned
+- **Analog**: goggle recordings with analog grain, usually with the picture inside black bars. The Betaflight OSD burned
   into the picture marks arming, disarming and crashes.
-- **HDZero**: digital goggle recordings, where the picture fills the frame.
+- **HDZero**: digital goggle recordings: a clean picture, filling the frame or, in 4:3, inside bars.
 - **Action cam** (for example a RunCam Thumb 2): recognised by a frame size or rate the goggles
   never record, by the maker named in the file, or by a `.gcsv` gyro file with the same name
   beside it (the file is not read). An action cam has no OSD, so it is edited by its motion

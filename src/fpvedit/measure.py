@@ -271,6 +271,7 @@ class DecodeReport:
 FULL_HD = 1920 * 1080  # pixels; larger recordings are decoded the fast way
 HARDWARE_CODECS = ("h264", "hevc")
 HARDWARE_OFF = "FPVEDIT_NO_HWDECODE"  # set (to anything) to always decode on the CPU
+SHORT_RUN = 0.9  # a GPU run with fewer frames than this share of the expected count is redone
 
 
 def decode_args(
@@ -348,17 +349,22 @@ def decode_frames(
 ) -> Generator[GrayFrame, None, None]:
     """Every frame of the active picture at ``fps``, grey, at ``size``.
 
-    A large recording is decoded on the GPU when it can be; if that gives no frames at all
-    (no GPU, no driver, a stream it cannot decode), it is decoded on the CPU as usual.
+    A large recording is decoded on the GPU when it can be. If that run fails (no GPU, no
+    driver, a stream it cannot decode, an error part way) or ends well short of the
+    expected frame count, the CPU decodes the recording and carries on after the frames
+    already delivered, so the result is the same frames either way.
     """
-    commands = [decode_args(tools, info, area, size, fps)]
+    cpu = decode_args(tools, info, area, size, fps)
     hardware = hardware_decode_args(tools, info, area, size, fps)
     if hardware is not None:
-        commands.insert(0, hardware)
-    for number, args in enumerate(commands):
-        returncode, stderr = yield from _decode_process(args, size, report)
-        if report.frames > 0 or number == len(commands) - 1:
-            break
+        returncode, stderr = yield from _decode_process(hardware, size, report)
+        expected = round(fps * info.duration) if info.duration else 0
+        if returncode == 0 and report.frames >= SHORT_RUN * expected and report.frames > 0:
+            return
+    else:
+        returncode, stderr = 0, ""
+    done = report.frames
+    returncode, stderr = yield from _decode_process(cpu, size, report, skip=done)
     if report.frames == 0:
         raise MediaToolError(f"decoding {info.path.name}", returncode or 1, stderr)
     if returncode != 0 or stderr.strip():
@@ -369,9 +375,10 @@ def decode_frames(
 
 
 def _decode_process(
-    args: list[str], size: tuple[int, int], report: DecodeReport
+    args: list[str], size: tuple[int, int], report: DecodeReport, skip: int = 0
 ) -> Generator[GrayFrame, None, tuple[int, str]]:
-    """Run one decoding command, yielding its frames; returns its exit code and messages."""
+    """Run one decoding command, yielding its frames after the first ``skip`` (which an
+    earlier command already delivered); returns its exit code and messages."""
     width, height = size
     frame_bytes = width * height
     with tempfile.TemporaryFile() as stderr_file:
@@ -381,10 +388,14 @@ def _decode_process(
         if process.stdout is None:  # pragma: no cover - guaranteed by stdout=PIPE
             raise RuntimeError("ffmpeg stdout pipe was not created")
         try:
+            seen = 0
             while True:
                 chunk = process.stdout.read(frame_bytes)
                 if len(chunk) < frame_bytes:
                     break
+                seen += 1
+                if seen <= skip:
+                    continue
                 report.frames += 1
                 yield np.frombuffer(chunk, dtype=np.uint8).reshape(height, width)
         finally:

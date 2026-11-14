@@ -76,6 +76,9 @@ class SourceConfig:
     four_three: tuple[float, float] = (1.25, 1.45)
     # Analog grain when there are no bars: luma detail (measure.py's `noise`) above this.
     analog_noise: float = 0.008
+    # With bars (HDZero can record 4:3 with bars too), grain decides: real analog recordings
+    # measured 0.0026 to 0.0143, clean generated digital pictures under 0.001.
+    barred_noise: float = 0.0015
     # Goggle DVRs write 1280x720 at 50, 60 and 90 fps; HDZero may write 1080p30.
     goggle_max_rate: float = 90.5
     camera_min_height: int = 1440  # 2.7K, 4K: more than any goggle writes
@@ -139,7 +142,9 @@ def _rate_text(rate: float) -> str:
 def looks_analog(evidence: PictureEvidence, config: SourceConfig) -> str | None:
     """Why the picture looks like analog video, or None."""
     if evidence.bars_share >= config.bars_share:
-        return "black bars around a picture that does not fill the frame"
+        if evidence.noise is None or evidence.noise >= config.barred_noise:
+            return "analog grain in a picture with black bars around it"
+        return None  # bars, but clean: HDZero in 4:3
     low, high = config.four_three
     if low <= evidence.active_aspect <= high:
         return "a 4:3 picture"
@@ -181,6 +186,10 @@ def classify(
     if analog is not None:
         return Source(SourceKind.ANALOG, analog)
     note = "" if evidence.osd_found else "; no OSD was found, so it is edited by its motion"
+    if evidence.bars_share >= config.bars_share:
+        return Source(
+            SourceKind.DIGITAL, f"black bars around a clean picture, no analog grain{note}"
+        )
     return Source(SourceKind.DIGITAL, f"the picture fills the frame and is clean{note}")
 
 
