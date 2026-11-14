@@ -986,6 +986,8 @@ class MainWindow(QMainWindow):
         if self._busy() or not self._analysis.set_source(Path(path), choice):
             return
         self._clips_changed()  # the shots found before no longer match this clip
+        self._rate.drop_clip(Path(path))
+        self._rated_clips.discard(Path(path).resolve())  # its new shots go to the Rate page
         self._refresh_clips()
 
     def _mirror_clips(self) -> None:
