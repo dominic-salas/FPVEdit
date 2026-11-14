@@ -41,7 +41,7 @@ from fpvedit.picture import Area
 FloatArray = NDArray[np.float64]
 Strip = NDArray[np.float32]
 
-VERSION = 1  # bump when the readings change (it names the throttle cache)
+VERSION = 2  # bump when the readings change (it names the throttle cache)
 FPS = 12.0  # throttle samples per second
 WIDTH, HEIGHT = 960, 720  # a 4:3 picture is read at this size (analog OSD: 32 px a character)
 SAMPLES = 150  # frames sampled to find the OSD elements
