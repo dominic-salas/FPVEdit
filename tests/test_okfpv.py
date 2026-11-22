@@ -136,3 +136,134 @@ def test_small_dot_text_is_drawn_solid_and_can_change_size() -> None:
     assert min(column) == 255  # no gaps between the dots of a stroke
     title.set_cell(6)
     assert title.height() == 9 * 6
+
+
+def _side_click(window, button) -> None:  # type: ignore[no-untyped-def]
+    from PySide6.QtTest import QTest
+
+    QTest.mouseClick(window._pages.currentWidget(), button)
+    window._side_press = 0.0  # the next click is a new one
+
+
+def _back(window) -> None:  # type: ignore[no-untyped-def]
+    from PySide6.QtCore import Qt
+
+    _side_click(window, Qt.MouseButton.BackButton)
+
+
+def _forward(window) -> None:  # type: ignore[no-untyped-def]
+    from PySide6.QtCore import Qt
+
+    _side_click(window, Qt.MouseButton.ForwardButton)
+
+
+def _with_shots(window, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Pretend a montage was found and exported, so Review and Done can be shown."""
+    monkeypatch.setattr(window, "_current_shots", lambda: [object()])
+    monkeypatch.setattr(window._review, "refresh", lambda: None)
+    window._last_output = Path("montage.mp4")
+
+
+def test_back_walks_review_done_and_forward_redoes(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    window = make_window(tmp_path, combined=False)
+    _with_shots(window, monkeypatch)
+    window._show_page(window.DONE)
+    _back(window)
+    assert window._pages.currentIndex() == window.REVIEW
+    _back(window)
+    assert window._pages.currentIndex() == window.CLIPS
+    _back(window)  # nothing before the first page
+    assert window._pages.currentIndex() == window.CLIPS
+    _forward(window)
+    assert window._pages.currentIndex() == window.REVIEW
+    _forward(window)
+    assert window._pages.currentIndex() == window.DONE
+    _forward(window)
+    assert window._pages.currentIndex() == window.DONE
+
+
+def test_navigating_another_way_clears_forward(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    window = make_window(tmp_path, combined=False)
+    _with_shots(window, monkeypatch)
+    window._show_page(window.REVIEW)
+    _back(window)
+    window._show_page(window.RATE)
+    _forward(window)
+    assert window._pages.currentIndex() == window.RATE
+    _back(window)
+    assert window._pages.currentIndex() == window.CLIPS
+
+
+def test_back_keys_work_and_one_click_acts_once(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    window = make_window(tmp_path, combined=False)
+    _with_shots(window, monkeypatch)
+    window._show_page(window.DONE)
+    QTest.keyClick(window._pages.currentWidget(), Qt.Key.Key_Back)
+    assert window._pages.currentIndex() == window.REVIEW
+    QTest.keyClick(window._pages.currentWidget(), Qt.Key.Key_Forward)
+    assert window._pages.currentIndex() == window.DONE
+    # a key right after the button press is the same click
+    QTest.mouseClick(window._pages.currentWidget(), Qt.MouseButton.BackButton)
+    QTest.keyClick(window._pages.currentWidget(), Qt.Key.Key_Back)
+    assert window._pages.currentIndex() == window.REVIEW
+
+
+def test_rate_and_pilot_go_back_to_clips_in_fpvedit(tmp_path: Path) -> None:
+    window = make_window(tmp_path, combined=False)
+    window._show_page(window.RATE)
+    _back(window)
+    assert window._pages.currentIndex() == window.CLIPS
+    if window._pilot is not None:
+        window._show_page(window.PILOT)
+        _back(window)
+        assert window._pages.currentIndex() == window.CLIPS
+
+
+def test_okfpv_modules_go_back_home_and_forward_returns(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    window = make_window(tmp_path, combined=True)
+    window._open_edit()
+    assert window._pages.currentIndex() == window.CLIPS
+    _back(window)
+    assert window._pages.currentIndex() == window.HOME
+    _back(window)  # Home is the top
+    assert window._pages.currentIndex() == window.HOME
+    _forward(window)
+    assert window._pages.currentIndex() == window.CLIPS
+    _with_shots(window, monkeypatch)
+    window._show_page(window.REVIEW)
+    _back(window)
+    assert window._pages.currentIndex() == window.CLIPS  # not the Edit tab's remembered page
+    if window._pilot is not None:
+        window._open_pilot()
+        _back(window)
+        assert window._pages.currentIndex() == window.HOME
+
+
+def test_side_buttons_are_ignored_while_working(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    window = make_window(tmp_path, combined=False)
+    _with_shots(window, monkeypatch)
+    window._show_page(window.REVIEW)
+    monkeypatch.setattr(window, "_busy", lambda: True)
+    _back(window)
+    assert window._pages.currentIndex() == window.REVIEW
+    monkeypatch.undo()
+    window._pages.setCurrentIndex(window.WORK)
+    _back(window)
+    assert window._pages.currentIndex() == window.WORK
+
+
+def test_back_closes_a_review_side_panel_first(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    window = make_window(tmp_path, combined=False)
+    _with_shots(window, monkeypatch)
+    window._show_page(window.REVIEW)
+    review = window._review
+    monkeypatch.setattr(review, "_play_montage", lambda *_: None)
+    review._choosing = "swap"
+    _back(window)
+    assert review._choosing is None
+    assert window._pages.currentIndex() == window.REVIEW
+    _back(window)
+    assert window._pages.currentIndex() == window.CLIPS

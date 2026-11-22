@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Mouse side buttons.** The Back and Forward buttons on the side of the mouse (and the Back and
+  Forward keys) now work in FPVEdit and okFPV. Back does what the page's own back control does:
+  Review goes to Clips (first closing an open shot editor, chooser or finder panel), Done to
+  Review, Rate and Pilot to Clips, and in okFPV the Edit, Pilot and AnaHD tabs to Home. Forward
+  redoes the last Back until you go somewhere else. Both do nothing while work is running. Over
+  the AnaHD window itself the click goes to AnaHD.
 - **Analog, HDZero and action-camera recordings.** FPVEdit now tells which kind each recording
   is (analog goggles, HDZero digital goggles or an action camera such as a RunCam Thumb 2) from
   its size, frame rate, the maker named in the file, a `.gcsv` file beside it and its picture,

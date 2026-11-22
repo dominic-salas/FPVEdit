@@ -18,7 +18,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QPointF, QStandardPaths, Qt, QThread, QUrl, Signal
+from PySide6.QtCore import QEvent, QObject, QPointF, QStandardPaths, Qt, QThread, QUrl, Signal
 from PySide6.QtGui import (
     QAction,
     QCloseEvent,
@@ -26,7 +26,9 @@ from PySide6.QtGui import (
     QDesktopServices,
     QDragEnterEvent,
     QDropEvent,
+    QKeyEvent,
     QKeySequence,
+    QMouseEvent,
     QPainter,
     QPaintEvent,
 )
@@ -279,6 +281,9 @@ class MainWindow(QMainWindow):
         super().__init__()
         self._product = product or FPVEDIT
         self._edit_page = self.CLIPS  # where the Edit tab returns to
+        self._forward_pages: list[int] = []  # pages left by Back, newest last
+        self._navigating = False  # a Back or Forward is moving between pages
+        self._side_press = 0.0  # when a mouse side button last acted
         self._closing_anahd = False
         self.setWindowTitle(f"{self._product.name} {__version__}")
         self.setWindowIcon(app_icon())
@@ -401,6 +406,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(header)
         layout.addWidget(self._pages, 1)
         self.setCentralWidget(central)
+        QApplication.instance().installEventFilter(self)  # type: ignore[union-attr]
 
     def _build_clips_page(self) -> QWidget:
         # Empty: one big drop target that says what to do.
@@ -646,6 +652,8 @@ class MainWindow(QMainWindow):
     # ----- steps -----
 
     def _show_page(self, page: int) -> None:
+        if not self._navigating:
+            self._forward_pages.clear()
         if page == self.CLIPS:
             self._refresh_clips()  # catch up on progress made while another page was shown
         if page != self.REVIEW:
@@ -661,6 +669,95 @@ class MainWindow(QMainWindow):
             self._edit_page = page
         self._refresh_modes()
         self._refresh_steps()
+
+    # ----- mouse side buttons -----
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        """The mouse's Back and Forward buttons (and the Back/Forward keys) move between pages."""
+        kind = event.type()
+        if isinstance(event, QMouseEvent) and kind in (
+            QEvent.Type.MouseButtonPress,
+            QEvent.Type.MouseButtonRelease,
+            QEvent.Type.MouseButtonDblClick,
+        ):
+            side = event.button()
+            if side not in (Qt.MouseButton.BackButton, Qt.MouseButton.ForwardButton):
+                return False
+            if not isinstance(watched, QWidget) or watched.window() is not self:
+                return False
+            if kind != QEvent.Type.MouseButtonRelease:
+                self._side_press = time.monotonic()
+                self._navigate(side == Qt.MouseButton.BackButton)
+            return True
+        if isinstance(event, QKeyEvent) and kind == QEvent.Type.KeyPress:
+            if event.key() not in (Qt.Key.Key_Back, Qt.Key.Key_Forward):
+                return False
+            if not isinstance(watched, QWidget) or watched.window() is not self:
+                return False
+            # Windows can report one click as both a button and a key
+            if time.monotonic() - self._side_press > 0.05:
+                self._navigate(event.key() == Qt.Key.Key_Back)
+            return True
+        return False
+
+    def _navigate(self, back: bool) -> None:
+        if self._busy() or self._pages.currentIndex() == self.WORK:
+            return
+        if QApplication.activeModalWidget() is not None:
+            return
+        if back:
+            self._go_back()
+        else:
+            self._go_forward()
+
+    def _back_page(self) -> int | None:
+        """Where the on-screen back control of the current page leads."""
+        page = self._pages.currentIndex()
+        if self._product.modes and page in (self.CLIPS, self.PILOT, self.ANAHD):
+            return self.HOME
+        return {
+            self.REVIEW: self.CLIPS,
+            self.DONE: self.REVIEW,
+            self.RATE: self.CLIPS,
+            self.PILOT: self.CLIPS,
+        }.get(page)
+
+    def _go_back(self) -> None:
+        page = self._pages.currentIndex()
+        if page == self.REVIEW and self._review.close_side_panel():
+            return
+        target = self._back_page()
+        if target is not None and self._move_to(target):
+            self._forward_pages.append(page)
+
+    def _go_forward(self) -> None:
+        if self._forward_pages and self._move_to(self._forward_pages[-1]):
+            self._forward_pages.pop()
+
+    def _move_to(self, page: int) -> bool:
+        """Go to a page the way its own button does, so the state is the same."""
+        before = self._pages.currentIndex()
+        self._navigating = True
+        try:
+            if page == self.HOME:
+                self._open_home()
+            elif page == self.PILOT:
+                self._open_pilot()
+            elif page == self.ANAHD:
+                self._open_anahd()
+            elif page == self.REVIEW:
+                self._go_to_step(2)
+            elif page == self.DONE:
+                self._go_to_step(3)
+            elif page == self.RATE:
+                self._open_rating()
+            elif self._product.modes and before == self.HOME:
+                self._open_edit()
+            else:
+                self._show_page(self.CLIPS)
+        finally:
+            self._navigating = False
+        return self._pages.currentIndex() != before
 
     def _home_link(self, mark: QLabel, logo: DotTitle) -> QPushButton:
         """The icon and name, which lead back to Home."""
@@ -1506,6 +1603,7 @@ class MainWindow(QMainWindow):
             self._task.cancel()
             QApplication.processEvents()
             self._task.wait()
+        QApplication.instance().removeEventFilter(self)  # type: ignore[union-attr]
         self._settings.geometry = self.saveGeometry()
         self._analysis.shutdown()
         self._reader.stop()
