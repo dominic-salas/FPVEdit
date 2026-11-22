@@ -1255,6 +1255,18 @@ class ReviewPage(QWidget):
         self._selected = index
         self._play_montage(shot_starts(shots)[index] + share * shots[index].duration)
 
+    def close_side_panel(self) -> bool:
+        """Return the side panel to the overview the way its own back control does.
+
+        False when it already shows the overview."""
+        if self._choosing is not None:
+            self._close_chooser()
+        elif self._selected is not None:
+            self._deselect()
+        else:
+            return False
+        return True
+
     def _deselect(self) -> None:
         self._selected = None
         if self._mode == "shot":
